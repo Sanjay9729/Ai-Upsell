@@ -1,0 +1,55 @@
+{
+  "name": "ai-upsell-main-server",
+  "version": "1.0.0",
+  "description": "AI Upsell Main Server - MongoDB + Express API with Groq AI",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "shopify app dev",
+    "dev:remix": "remix vite:dev",
+    "dev:alt": "PORT=3001 npx nodemon server.js",
+    "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "sync": "node -e \"import('./backend/database/collections.js').then(m=>m.syncProductsToMongoDB(process.env.SHOP_CUSTOM_DOMAIN, process.env.SHOPIFY_ACCESS_TOKEN)).then(r=>console.log('Synced', r, 'products')).catch(console.error)\"",
+    "test:ai": "node test-integration.js"
+  },
+  "keywords": [
+    "ai",
+    "upsell",
+    "shopify",
+    "mongodb",
+    "express",
+    "groq"
+  ],
+  "author": "Sanjay Vaghela",
+  "license": "MIT",
+  "dependencies": {
+    "@shopify/app-bridge-react": "^4.2.8",
+    "@shopify/polaris": "^13.9.5",
+    "@shopify/shopify-app-remix": "^4.1.0",
+    "@shopify/shopify-app-session-storage-mongodb": "^5.0.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "mongodb": "^6.3.0",
+    "node-fetch": "^3.3.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@remix-run/dev": "^2.17.2",
+    "@remix-run/eslint-config": "^2.17.2",
+    "@remix-run/node": "^2.17.2",
+    "@remix-run/serve": "^2.17.2",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "nodemon": "^3.0.2",
+    "prettier": "^3.7.4",
+    "vite": "^6.4.1",
+    "vite-tsconfig-paths": "^6.0.3"
+  }
+}

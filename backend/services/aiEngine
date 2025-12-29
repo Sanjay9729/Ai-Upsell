@@ -1,0 +1,225 @@
+import { ProductService } from './productService.js';
+
+export class AIEngine {
+  constructor() {
+    this.productService = new ProductService();
+  }
+
+  /**
+   * Find similar or complementary products for upselling
+   * Uses simple similarity scoring based on product features
+   */
+  async findUpsellProducts(shopId, currentProductId, limit = 4) {
+    try {
+      const allProducts = await this.productService.getProductsByShop(shopId);
+      const currentProduct = allProducts.find(p => p.productId === currentProductId);
+      
+      if (!currentProduct) {
+        throw new Error('Current product not found');
+      }
+
+      // Calculate similarity scores for all products except current
+      const productsWithScores = allProducts
+        .filter(product => product.productId !== currentProductId)
+        .map(product => ({
+          ...product,
+          similarityScore: this.calculateSimilarity(currentProduct, product)
+        }))
+        .sort((a, b) => b.similarityScore - a.similarityScore);
+
+      // Select top products and ensure diversity in recommendations
+      const upsellProducts = this.selectDiverseRecommendations(productsWithScores, limit);
+      
+      return upsellProducts.map(product => ({
+        productId: product.productId,
+        title: product.title,
+        similarityScore: product.similarityScore,
+        reason: this.generateUpsellReason(currentProduct, product)
+      }));
+
+    } catch (error) {
+      console.error('AI Engine error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Calculate similarity score between two products
+   */
+  calculateSimilarity(product1, product2) {
+    let score = 0;
+    
+    // Category/Product Type similarity (40% weight)
+    if (product1.aiData.category && product2.aiData.category) {
+      if (product1.aiData.category === product2.aiData.category) {
+        score += 40;
+      } else if (this.areRelatedCategories(product1.aiData.category, product2.aiData.category)) {
+        score += 20;
+      }
+    }
+
+    // Vendor/Brand similarity (25% weight)
+    if (product1.aiData.brand && product2.aiData.brand) {
+      if (product1.aiData.brand === product2.aiData.brand) {
+        score += 25;
+      }
+    }
+
+    // Color similarity (15% weight)
+    if (product1.aiData.color && product2.aiData.color) {
+      if (product1.aiData.color === product2.aiData.color) {
+        score += 15;
+      } else if (this.areComplementaryColors(product1.aiData.color, product2.aiData.color)) {
+        score += 10;
+      }
+    }
+
+    // Style similarity (10% weight)
+    if (product1.aiData.style && product2.aiData.style) {
+      if (product1.aiData.style === product2.aiData.style) {
+        score += 10;
+      }
+    }
+
+    // Keyword overlap (10% weight)
+    const keywordOverlap = this.calculateKeywordOverlap(product1.aiData.keywords, product2.aiData.keywords);
+    score += keywordOverlap * 10;
+
+    return Math.min(score, 100); // Cap at 100
+  }
+
+  /**
+   * Calculate keyword overlap percentage
+   */
+  calculateKeywordOverlap(keywords1, keywords2) {
+    if (!keywords1 || !keywords2 || keywords1.length === 0 || keywords2.length === 0) {
+      return 0;
+    }
+
+    const set1 = new Set(keywords1);
+    const set2 = new Set(keywords2);
+    const intersection = new Set([...set1].filter(x => set2.has(x)));
+    
+    return intersection.size / Math.max(set1.size, set2.size);
+  }
+
+  /**
+   * Check if categories are related
+   */
+  areRelatedCategories(category1, category2) {
+    const categoryMap = {
+      'clothing': ['accessories', 'shoes', 'bags'],
+      'electronics': ['accessories', 'computers'],
+      'home': ['decor', 'furniture'],
+      'beauty': ['health', 'personal care'],
+      'sports': ['fitness', 'outdoor'],
+      'books': ['education', 'entertainment']
+    };
+
+    const categories = [category1.toLowerCase(), category2.toLowerCase()];
+    
+    for (const [main, related] of Object.entries(categoryMap)) {
+      if (categories.includes(main) && related.some(r => categories.includes(r))) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Check if colors are complementary
+   */
+  areComplementaryColors(color1, color2) {
+    const complementaryPairs = [
+      ['red', 'green'], ['blue', 'orange'], ['yellow', 'purple'],
+      ['black', 'white'], ['navy', 'beige'], ['brown', 'cream'],
+      ['pink', 'gray'], ['gold', 'silver']
+    ];
+
+    const colors = [color1.toLowerCase(), color2.toLowerCase()];
+    return complementaryPairs.some(pair => 
+      pair.every(color => colors.includes(color))
+    );
+  }
+
+  /**
+   * Select diverse recommendations to avoid showing very similar products
+   */
+  selectDiverseRecommendations(products, limit) {
+    const selected = [];
+    const usedCategories = new Set();
+    const usedBrands = new Set();
+
+    for (const product of products) {
+      if (selected.length >= limit) break;
+
+      const category = product.aiData.category;
+      const brand = product.aiData.brand;
+
+      // Prioritize variety in categories and brands
+      if (!usedCategories.has(category) || !usedBrands.has(brand) || selected.length < limit - 1) {
+        selected.push(product);
+        usedCategories.add(category);
+        usedBrands.add(brand);
+      }
+    }
+
+    return selected;
+  }
+
+  /**
+   * Generate reason for upsell recommendation
+   */
+  generateUpsellReason(currentProduct, upsellProduct) {
+    const reasons = [];
+
+    if (currentProduct.aiData.category === upsellProduct.aiData.category) {
+      reasons.push('Same category');
+    }
+    
+    if (currentProduct.aiData.brand === upsellProduct.aiData.brand) {
+      reasons.push('Same brand');
+    }
+    
+    if (currentProduct.aiData.color === upsellProduct.aiData.color) {
+      reasons.push('Matching color');
+    }
+    
+    if (currentProduct.aiData.style === upsellProduct.aiData.style) {
+      reasons.push('Similar style');
+    }
+
+    // Return the most relevant reason
+    if (reasons.includes('Same category')) {
+      return 'Customers who bought this also bought';
+    } else if (reasons.includes('Same brand')) {
+      return 'More from this brand';
+    } else if (reasons.includes('Matching color')) {
+      return 'Perfect color match';
+    } else if (reasons.includes('Similar style')) {
+      return 'Complementary style';
+    } else {
+      return 'Recommended for you';
+    }
+  }
+
+  /**
+   * Generate AI embeddings for products (simplified version)
+   * In production, this would use a proper embedding model like OpenAI or local model
+   */
+  async generateProductEmbedding(product) {
+    // Simplified embedding generation
+    // In production, use: OpenAI embeddings, SentenceTransformers, or local models
+    const text = `${product.title} ${product.aiData.category} ${product.aiData.brand} ${product.aiData.style} ${product.aiData.color}`;
+    
+    // Generate a simple hash-based embedding for demo
+    const embedding = [];
+    for (let i = 0; i < 384; i++) {
+      const char = text.charCodeAt(i % text.length);
+      embedding.push((char % 100) / 100 - 0.5); // Normalize to -0.5 to 0.5
+    }
+    
+    return embedding;
+  }
+}
