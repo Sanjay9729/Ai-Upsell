@@ -1,11 +1,28 @@
 import { useEffect } from "react";
-import { useFetcher } from "react-router";
+import { useFetcher } from "@remix-run/react";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { boundary } from "@shopify/shopify-app-react-router/server";
+import { boundary } from "@shopify/shopify-app-remix/server";
 import { authenticate } from "../shopify.server";
+import { syncProductsWithGraphQL, getProductsByShop } from "../../backend/database/collections.js";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+
+  // Automatically sync products to MongoDB on first app load
+  try {
+    // Check if products already exist for this shop
+    const existingProducts = await getProductsByShop(session.shop);
+
+    if (existingProducts.length === 0) {
+      console.log(`🔄 First time setup - syncing products with images for ${session.shop}`);
+      const syncedCount = await syncProductsWithGraphQL(session.shop, admin.graphql);
+      console.log(`✅ Initial sync completed: ${syncedCount} products with images synced to MongoDB`);
+    } else {
+      console.log(`📦 Found ${existingProducts.length} existing products in MongoDB`);
+    }
+  } catch (error) {
+    console.error('❌ Error during initial product sync:', error);
+  }
 
   return null;
 };
@@ -206,8 +223,8 @@ export default function Index() {
         </s-paragraph>
         <s-paragraph>
           <s-text>Database: </s-text>
-          <s-link href="https://www.prisma.io/" target="_blank">
-            Prisma
+          <s-link href="https://www.mongodb.com/" target="_blank">
+            MongoDB
           </s-link>
         </s-paragraph>
       </s-section>

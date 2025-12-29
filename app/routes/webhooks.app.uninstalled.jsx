@@ -1,15 +1,24 @@
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { getDb } from "../../backend/database/connection.js";
 
 export const action = async ({ request }) => {
   const { shop, session, topic } = await authenticate.webhook(request);
 
-  console.log(`Received ${topic} webhook for ${shop}`);
+  console.log(`✅ Received ${topic} webhook for ${shop}`);
 
-  // Webhook requests can trigger multiple times and after an app has already been uninstalled.
-  // If this webhook already ran, the session may have been deleted previously.
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
+  // Clean up MongoDB data when app is uninstalled
+  if (shop) {
+    try {
+      const db = await getDb();
+
+      // Delete all products for this shop
+      const productsResult = await db.collection('products').deleteMany({ shopId: shop });
+      console.log(`🗑️ Deleted ${productsResult.deletedCount} products for shop ${shop}`);
+
+      console.log(`✅ Cleanup completed for shop ${shop}`);
+    } catch (error) {
+      console.error(`❌ Error cleaning up MongoDB data:`, error);
+    }
   }
 
   return new Response();

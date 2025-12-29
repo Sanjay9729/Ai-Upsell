@@ -1,243 +1,362 @@
-# Shopify App Template - React Router
+# AI Upsell - Shopify Product Recommendation System
 
-This is a template for building a [Shopify app](https://shopify.dev/docs/apps/getting-started) using [React Router](https://reactrouter.com/).  It was forked from the [Shopify Remix app template](https://github.com/Shopify/shopify-app-template-remix) and converted to React Router.
+A complete AI-powered upsell recommendation system for Shopify stores that implements an exact 6-step flow to show relevant product recommendations on product detail pages.
 
-Rather than cloning this repo, follow the [Quick Start steps](https://github.com/Shopify/shopify-app-template-react-router#quick-start).
+## 🎯 Exact Flow Implementation
 
-Visit the [`shopify.dev` documentation](https://shopify.dev/docs/api/shopify-app-react-router) for more details on the React Router app package.
+This application follows your specified flow exactly:
 
-## Upgrading from Remix
+1. **Products are synced from Shopify to MongoDB** - Happens when app is installed, also on product updates via webhooks
+2. **Customer opens a product detail page** - Page provides current product ID to the app
+3. **AI engine searches MongoDB** - Looks at products stored for that store only
+4. **Top upsell product IDs are selected** - Usually 3-4 products
+5. **Fresh product details are fetched from Shopify** - Price, image, availability (Shopify is source of truth)
+6. **Upsell products are shown on product page** - Rendered by the upsell component
 
-If you have an existing Remix app that you want to upgrade to React Router, please follow the [upgrade guide](https://github.com/Shopify/shopify-app-template-react-router/wiki/Upgrading-from-Remix).  Otherwise, please follow the quick start guide below.
+## 🚀 Features
 
-## Quick start
+- **AI-Powered Recommendations**: Uses intelligent similarity matching based on product features
+- **Real-time Updates**: Webhook integration for automatic product sync
+- **Fresh Data**: Always shows current price, availability, and images from Shopify
+- **Responsive Design**: Mobile-friendly upsell display
+- **Analytics Tracking**: Built-in click tracking for performance monitoring
+- **Error Handling**: Comprehensive error handling and logging
+- **No Schema Dependencies**: Uses raw MongoDB operations as requested
 
-### Prerequisites
+## 📁 Project Structure
 
-Before you begin, you'll need the following:
-
-1. **Node.js**: [Download and install](https://nodejs.org/en/download/) it if you haven't already.
-2. **Shopify Partner Account**: [Create an account](https://partners.shopify.com/signup) if you don't have one.
-3. **Test Store**: Set up either a [development store](https://help.shopify.com/en/partners/dashboard/development-stores#create-a-development-store) or a [Shopify Plus sandbox store](https://help.shopify.com/en/partners/dashboard/managing-stores/plus-sandbox-store) for testing your app.
-4. **Shopify CLI**: [Download and install](https://shopify.dev/docs/apps/tools/cli/getting-started) it if you haven't already.
-```shell
-npm install -g @shopify/cli@latest
+```
+ai-upsell/
+├── backend/                 # Backend API server
+│   ├── database/           # MongoDB connection and utilities
+│   ├── routes/             # API routes (products, webhooks)
+│   ├── services/           # Business logic (AI engine, Shopify, logging)
+│   ├── server.js           # Main server file
+│   └── package.json        # Backend dependencies
+├── frontend/               # React frontend components
+│   ├── src/
+│   │   ├── components/     # React components (UpsellProducts, etc.)
+│   │   ├── services/       # API service for frontend
+│   │   └── ...
+├── README.md              # This file
+└── ...
 ```
 
-### Setup
+## 🛠️ Technology Stack
 
-```shell
-shopify app init --template=https://github.com/Shopify/shopify-app-template-react-router
+### Backend
+- **Node.js** with Express.js
+- **MongoDB** for data storage
+- **Shopify Admin API** for product data
+- **Shopify Storefront API** for fresh product details
+- **Groq LLM** for AI-powered product recommendations
+- **Custom Rule-based Fallback** for reliability
+
+### Frontend
+- **React** for component-based UI
+- **CSS Modules** for styling
+- **Fetch API** for backend communication
+
+## 📋 Prerequisites
+
+- Node.js 18+ 
+- MongoDB (local or cloud)
+- Shopify store with API access
+- Shopify Storefront API token
+
+## 🔧 Installation & Setup
+
+### 1. Clone and Install Dependencies
+
+```bash
+# Install backend dependencies
+cd backend
+npm install
+
+# Install frontend dependencies (if using separate frontend)
+cd ../frontend
+npm install
 ```
 
-### Local Development
+### 2. Environment Configuration
 
-```shell
-shopify app dev
+Create `.env` files in both backend and frontend directories:
+
+**Backend `.env`:**
+```env
+# MongoDB Configuration
+MONGODB_URI=mongodb://localhost:27017/ai-upsell
+
+# Server Configuration
+PORT=3000
+NODE_ENV=development
+
+# Groq AI Configuration (Required for AI recommendations)
+GROQ_API_KEY=your_groq_api_key_here
+
+# Server Configuration
+PORT=3000
+
+# Logging
+LOG_LEVEL=info
+
+# Frontend URL for CORS
+FRONTEND_URL=http://localhost:3000
+
+# Shopify Configuration
+SHOPIFY_APP_SECRET=your_shopify_app_secret_here
 ```
 
-Press P to open the URL to your app. Once you click install, you can start development.
+**Getting Your Groq API Key**
+1. Visit [Groq Console](https://console.groq.com/)
+2. Sign up for a free account
+3. Create a new API key
+4. Add it to your `.env` file as `GROQ_API_KEY`
 
-Local development is powered by [the Shopify CLI](https://shopify.dev/docs/apps/tools/cli). It logs into your partners account, connects to an app, provides environment variables, updates remote config, creates a tunnel and provides commands to generate extensions.
+> **Note**: Groq offers fast, free inference for AI recommendations. The system includes a fallback to rule-based recommendations if Groq is unavailable.
 
-### Authenticating and querying data
+**Frontend `.env`:**
+```env
+REACT_APP_API_URL=http://localhost:3000/api
+```
 
-To authenticate and query data you can use the `shopify` const that is exported from `/app/shopify.server.js`:
+### 3. MongoDB Setup
 
-```js
-export async function loader({ request }) {
-  const { admin } = await shopify.authenticate.admin(request);
+**Option A: Local MongoDB**
+```bash
+# Install MongoDB locally or use Docker
+docker run -d -p 27017:27017 --name mongodb mongo:latest
+```
 
-  const response = await admin.graphql(`
-    {
-      products(first: 25) {
-        nodes {
-          title
-          description
-        }
-      }
-    }`);
+**Option B: MongoDB Atlas (Cloud)**
+1. Create account at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
+2. Create cluster and get connection string
+3. Update `MONGODB_URI` in backend `.env`
 
-  const {
-    data: {
-      products: { nodes },
-    },
-  } = await response.json();
+### 4. Start Development Servers
 
-  return nodes;
+```bash
+# Start backend server
+cd backend
+npm run dev
+
+# Start frontend (if separate)
+cd frontend
+npm start
+```
+
+## 🔌 Integration Guide
+
+### Basic Integration in Your Product Page
+
+```jsx
+import UpsellProducts from './components/UpsellProducts';
+import './components/UpsellProducts.css';
+
+function ProductDetailPage({ product }) {
+  return (
+    <div>
+      {/* Your existing product display */}
+      <div className="product-info">
+        <h1>{product.title}</h1>
+        <p>{product.description}</p>
+        {/* ... other product details */}
+      </div>
+
+      {/* Add AI Upsell Component */}
+      <UpsellProducts
+        currentProductId={product.id}
+        shopDomain="yourstore.myshopify.com"
+        storefrontAccessToken="your_storefront_token"
+        title="You might also like"
+        maxProducts={4}
+      />
+    </div>
+  );
 }
 ```
 
-This template comes pre-configured with examples of:
+### Required Props
 
-1. Setting up your Shopify app in [/app/shopify.server.ts](https://github.com/Shopify/shopify-app-template-react-router/blob/main/app/shopify.server.ts)
-2. Querying data using Graphql. Please see: [/app/routes/app.\_index.tsx](https://github.com/Shopify/shopify-app-template-react-router/blob/main/app/routes/app._index.tsx).
-3. Responding to webhooks. Please see [/app/routes/webhooks.tsx](https://github.com/Shopify/shopify-app-template-react-router/blob/main/app/routes/webhooks.app.uninstalled.tsx).
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `currentProductId` | string | Yes | Current product ID |
+| `shopDomain` | string | Yes | Shop domain (e.g., mystore.myshopify.com) |
+| `storefrontAccessToken` | string | Yes | Shopify Storefront API token |
+| `title` | string | No | Section title (default: "You might also like") |
+| `maxProducts` | number | No | Max products to show (default: 4) |
+| `className` | string | No | Additional CSS classes |
 
-Please read the [documentation for @shopify/shopify-app-react-router](https://shopify.dev/docs/api/shopify-app-react-router) to see what other API's are available.
+## 📚 API Documentation
 
-## Shopify Dev MCP
+### Product Sync Endpoint
 
-This template is configured with the Shopify Dev MCP. This instructs [Cursor](https://cursor.com/), [GitHub Copilot](https://github.com/features/copilot) and [Claude Code](https://claude.com/product/claude-code) and [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) to use the Shopify Dev MCP.  
+**POST** `/api/products/sync`
 
-For more information on the Shopify Dev MCP please read [the  documentation](https://shopify.dev/docs/apps/build/devmcp).
+Sync products from Shopify to MongoDB.
 
-## Deployment
-
-### Application Storage
-
-This template uses [Prisma](https://www.prisma.io/) to store session data, by default using an [SQLite](https://www.sqlite.org/index.html) database.
-The database is defined as a Prisma schema in `prisma/schema.prisma`.
-
-This use of SQLite works in production if your app runs as a single instance.
-The database that works best for you depends on the data your app needs and how it is queried.
-Here’s a short list of databases providers that provide a free tier to get started:
-
-| Database   | Type             | Hosters                                                                                                                                                                                                                               |
-| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MySQL      | SQL              | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-mysql), [Planet Scale](https://planetscale.com/), [Amazon Aurora](https://aws.amazon.com/rds/aurora/), [Google Cloud SQL](https://cloud.google.com/sql/docs/mysql) |
-| PostgreSQL | SQL              | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-postgresql), [Amazon Aurora](https://aws.amazon.com/rds/aurora/), [Google Cloud SQL](https://cloud.google.com/sql/docs/postgres)                                   |
-| Redis      | Key-value        | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-redis), [Amazon MemoryDB](https://aws.amazon.com/memorydb/)                                                                                                        |
-| MongoDB    | NoSQL / Document | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-mongodb), [MongoDB Atlas](https://www.mongodb.com/atlas/database)                                                                                                  |
-
-To use one of these, you can use a different [datasource provider](https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#datasource) in your `schema.prisma` file, or a different [SessionStorage adapter package](https://github.com/Shopify/shopify-api-js/blob/main/packages/shopify-api/docs/guides/session-storage.md).
-
-### Build
-
-Build the app by running the command below with the package manager of your choice:
-
-Using yarn:
-
-```shell
-yarn build
+**Request Body:**
+```json
+{
+  "shopId": "mystore.myshopify.com",
+  "accessToken": "shpat_..."
+}
 ```
 
-Using npm:
-
-```shell
-npm run build
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Successfully synced 25 products",
+  "syncedCount": 25
+}
 ```
 
-Using pnpm:
+### Upsell Recommendations Endpoint
 
-```shell
-pnpm run build
+**GET** `/api/products/upsell/:productId?shopId=:shopDomain`
+
+Get upsell recommendations for a product.
+
+**Query Parameters:**
+- `productId`: Product ID to get recommendations for
+- `shopId`: Shop domain
+
+**Response:**
+```json
+{
+  "success": true,
+  "upsellProductIds": ["123", "456", "789"],
+  "recommendations": [
+    {
+      "productId": "123",
+      "title": "Similar Product",
+      "similarityScore": 85,
+      "reason": "Same category"
+    }
+  ]
+}
 ```
 
-## Hosting
+### Webhook Endpoints
 
-When you're ready to set up your app in production, you can follow [our deployment documentation](https://shopify.dev/docs/apps/launch/deployment) to host it externally. From there, you have a few options:
+**POST** `/api/webhooks/products/update`
+**POST** `/api/webhooks/products/create`
+**POST** `/api/webhooks/products/delete`
+**POST** `/api/webhooks/app/uninstalled`
 
-- [Google Cloud Run](https://shopify.dev/docs/apps/launch/deployment/deploy-to-google-cloud-run): This tutorial is written specifically for this example repo, and is compatible with the extended steps included in the subsequent [**Build your app**](tutorial) in the **Getting started** docs. It is the most detailed tutorial for taking a React Router-based Shopify app and deploying it to production. It includes configuring permissions and secrets, setting up a production database, and even hosting your apps behind a load balancer across multiple regions. 
-- [Fly.io](https://fly.io/docs/js/shopify/): Leverages the Fly.io CLI to quickly launch Shopify apps to a single machine. 
-- [Render](https://render.com/docs/deploy-shopify-app): This tutorial guides you through using Docker to deploy and install apps on a Dev store. 
-- [Manual deployment guide](https://shopify.dev/docs/apps/launch/deployment/deploy-to-hosting-service): This resource provides general guidance on the requirements of deployment including environment variables, secrets, and persistent data. 
+Handle Shopify webhooks for automatic product sync.
 
-When you reach the step for [setting up environment variables](https://shopify.dev/docs/apps/deployment/web#set-env-vars), you also need to set the variable `NODE_ENV=production`.
+## 🤖 Groq AI Engine Details
 
-## Gotchas / Troubleshooting
+This system uses **Groq's LLM** for intelligent product recommendations with a sophisticated analysis approach:
 
-### Database tables don't exist
+### Groq AI Capabilities
+- **Natural Language Analysis**: Deep understanding of product relationships
+- **Context-Aware Recommendations**: Considers customer purchase patterns
+- **Intelligent Reasoning**: Explains why products are recommended
+- **Real-time Processing**: Fast inference for immediate recommendations
+- **Confidence Scoring**: Provides recommendation reliability scores
 
-If you get an error like:
+### Fallback System
+- **Rule-based Engine**: Automatically activates if Groq is unavailable
+- **Feature Similarity**: Category, brand, color, and keyword matching
+- **Weighted Scoring**: Prioritizes most relevant product attributes
 
-```
-The table `main.Session` does not exist in the current database.
-```
+The AI engine uses a sophisticated similarity algorithm that considers:
 
-Create the database for Prisma. Run the `setup` script in `package.json` using `npm`, `yarn` or `pnpm`.
+### Similarity Factors (Weighted)
+- **Category/Product Type** (40% weight) - Same or related categories
+- **Brand/Vendor** (25% weight) - Same brand products
+- **Color** (15% weight) - Matching or complementary colors
+- **Style** (10% weight) - Similar style characteristics
+- **Keywords** (10% weight) - Text similarity in titles/descriptions
 
-### Navigating/redirecting breaks an embedded app
+### Recommendation Logic
+1. Calculates similarity scores for all products in the store
+2. Selects top-scoring products (usually 3-4)
+3. Ensures diversity by avoiding very similar products
+4. Generates human-readable reasons for recommendations
 
-Embedded apps must maintain the user session, which can be tricky inside an iFrame. To avoid issues:
+## 🔄 Shopify Webhooks Setup
 
-1. Use `Link` from `react-router` or `@shopify/polaris`. Do not use `<a>`.
-2. Use `redirect` returned from `authenticate.admin`. Do not use `redirect` from `react-router`
-3. Use `useSubmit` from `react-router`.
+Configure webhooks in your Shopify app settings:
 
-This only applies if your app is embedded, which it will be by default.
+1. **Product Create**: `https://your-domain.com/api/webhooks/products/create`
+2. **Product Update**: `https://your-domain.com/api/webhooks/products/update`
+3. **Product Delete**: `https://your-domain.com/api/webhooks/products/delete`
+4. **App Uninstall**: `https://your-domain.com/api/webhooks/app/uninstalled`
 
-### Webhooks: shop-specific webhook subscriptions aren't updated
+## 📊 Analytics & Monitoring
 
-If you are registering webhooks in the `afterAuth` hook, using `shopify.registerWebhooks`, you may find that your subscriptions aren't being updated.  
+The system includes built-in analytics tracking:
 
-Instead of using the `afterAuth` hook declare app-specific webhooks in the `shopify.app.toml` file.  This approach is easier since Shopify will automatically sync changes every time you run `deploy` (e.g: `npm run deploy`).  Please read these guides to understand more:
+- **Click Tracking**: Records when users click on upsell products
+- **Performance Logging**: Comprehensive request/response logging
+- **Error Monitoring**: Detailed error tracking and reporting
 
-1. [app-specific vs shop-specific webhooks](https://shopify.dev/docs/apps/build/webhooks/subscribe#app-specific-subscriptions)
-2. [Create a subscription tutorial](https://shopify.dev/docs/apps/build/webhooks/subscribe/get-started?deliveryMethod=https)
+## 🚀 Deployment
 
-If you do need shop-specific webhooks, keep in mind that the package calls `afterAuth` in 2 scenarios:
+### Backend Deployment
 
-- After installing the app
-- When an access token expires
+1. Set production environment variables
+2. Deploy to your preferred platform (Heroku, AWS, DigitalOcean)
+3. Ensure MongoDB connection is configured
+4. Update CORS settings for production domain
 
-During normal development, the app won't need to re-authenticate most of the time, so shop-specific subscriptions aren't updated. To force your app to update the subscriptions, uninstall and reinstall the app. Revisiting the app will call the `afterAuth` hook.
+### Frontend Deployment
 
-### Webhooks: Admin created webhook failing HMAC validation
+1. Build the React app: `npm run build`
+2. Deploy to CDN or hosting service
+3. Update API URL in production environment
 
-Webhooks subscriptions created in the [Shopify admin](https://help.shopify.com/en/manual/orders/notifications/webhooks) will fail HMAC validation. This is because the webhook payload is not signed with your app's secret key.  
+## 🧪 Testing
 
-The recommended solution is to use [app-specific webhooks](https://shopify.dev/docs/apps/build/webhooks/subscribe#app-specific-subscriptions) defined in your toml file instead.  Test your webhooks by triggering events manually in the Shopify admin(e.g. Updating the product title to trigger a `PRODUCTS_UPDATE`).
+```bash
+# Test backend API
+curl -X POST http://localhost:3001/api/products/sync \
+  -H "Content-Type: application/json" \
+  -d '{"shopId":"test.myshopify.com","accessToken":"test_token"}'
 
-### Webhooks: Admin object undefined on webhook events triggered by the CLI
-
-When you trigger a webhook event using the Shopify CLI, the `admin` object will be `undefined`. This is because the CLI triggers an event with a valid, but non-existent, shop. The `admin` object is only available when the webhook is triggered by a shop that has installed the app.  This is expected.
-
-Webhooks triggered by the CLI are intended for initial experimentation testing of your webhook configuration. For more information on how to test your webhooks, see the [Shopify CLI documentation](https://shopify.dev/docs/apps/tools/cli/commands#webhook-trigger).
-
-### Incorrect GraphQL Hints
-
-By default the [graphql.vscode-graphql](https://marketplace.visualstudio.com/items?itemName=GraphQL.vscode-graphql) extension for will assume that GraphQL queries or mutations are for the [Shopify Admin API](https://shopify.dev/docs/api/admin). This is a sensible default, but it may not be true if:
-
-1. You use another Shopify API such as the storefront API.
-2. You use a third party GraphQL API.
-
-If so, please update [.graphqlrc.ts](https://github.com/Shopify/shopify-app-template-react-router/blob/main/.graphqlrc.ts).
-
-### Using Defer & await for streaming responses
-
-By default the CLI uses a cloudflare tunnel. Unfortunately  cloudflare tunnels wait for the Response stream to finish, then sends one chunk.  This will not affect production.
-
-To test [streaming using await](https://reactrouter.com/api/components/Await#await) during local development we recommend [localhost based development](https://shopify.dev/docs/apps/build/cli-for-apps/networking-options#localhost-based-development).
-
-### "nbf" claim timestamp check failed
-
-This is because a JWT token is expired.  If you  are consistently getting this error, it could be that the clock on your machine is not in sync with the server.  To fix this ensure you have enabled "Set time and date automatically" in the "Date and Time" settings on your computer.
-
-### Using MongoDB and Prisma
-
-If you choose to use MongoDB with Prisma, there are some gotchas in Prisma's MongoDB support to be aware of. Please see the [Prisma SessionStorage README](https://www.npmjs.com/package/@shopify/shopify-app-session-storage-prisma#mongodb).
-
-### Unable to require(`C:\...\query_engine-windows.dll.node`).
-
-Unable to require(`C:\...\query_engine-windows.dll.node`).
-  The Prisma engines do not seem to be compatible with your system.
-
-  query_engine-windows.dll.node is not a valid Win32 application.
-
-**Fix:** Set the environment variable:
-```shell
-PRISMA_CLIENT_ENGINE_TYPE=binary
+# Test health endpoint
+curl http://localhost:3001/health
 ```
 
-This forces Prisma to use the binary engine mode, which runs the query engine as a separate process and can work via emulation on Windows ARM64.
+## 📈 Performance Optimization
 
-## Resources
+- **Database Indexing**: Proper MongoDB indexes for fast queries
+- **Caching**: Consider Redis for frequent AI calculations
+- **Rate Limiting**: Implement Shopify API rate limiting
+- **Image Optimization**: Use Shopify's image optimization features
 
-React Router:
+## 🔒 Security Considerations
 
-- [React Router docs](https://reactrouter.com/home)
+- **HMAC Verification**: All webhooks are HMAC verified
+- **CORS Configuration**: Properly configured for your domains
+- **Environment Variables**: Sensitive data stored securely
+- **API Rate Limiting**: Protect against abuse
 
-Shopify:
+## 🛡️ Error Handling
 
-- [Intro to Shopify apps](https://shopify.dev/docs/apps/getting-started)
-- [Shopify App React Router docs](https://shopify.dev/docs/api/shopify-app-react-router)
-- [Shopify CLI](https://shopify.dev/docs/apps/tools/cli)
-- [Shopify App Bridge](https://shopify.dev/docs/api/app-bridge-library).
-- [Polaris Web Components](https://shopify.dev/docs/api/app-home/polaris-web-components).
-- [App extensions](https://shopify.dev/docs/apps/app-extensions/list)
-- [Shopify Functions](https://shopify.dev/docs/api/functions)
+The system includes comprehensive error handling:
 
-Internationalization:
+- **Graceful Degradation**: Shows fallback content if AI fails
+- **Retry Logic**: Automatic retry for failed Shopify API calls
+- **User Feedback**: Clear error messages for users
+- **Logging**: Detailed error logs for debugging
 
-- [Internationalizing your app](https://shopify.dev/docs/apps/best-practices/internationalization/getting-started)
+## 📞 Support
+
+For issues and questions:
+1. Check the logs in your backend server
+2. Verify MongoDB connection and data
+3. Ensure Shopify API credentials are correct
+4. Test webhook endpoints are accessible
+
+## 📄 License
+
+MIT License - feel free to use in your projects.
+
+---
+
+**Built with ❤️ for Shopify merchants who want to increase their average order value through intelligent product recommendations.**

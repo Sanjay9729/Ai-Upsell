@@ -1,7 +1,4 @@
-package.json
-.shadowenv.d
-.vscode
 node_modules
-prisma
+.build
+dist
 public
-.shopify
