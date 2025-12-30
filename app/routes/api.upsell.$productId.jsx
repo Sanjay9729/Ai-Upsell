@@ -39,7 +39,9 @@ export const loader = async ({ params, request }) => {
       reason: product.aiReason,
       confidence: product.confidence,
       type: product.recommendationType,
-      url: `https://${shop}/products/${product.handle}`
+      url: `https://${shop}/products/${product.handle}`,
+      availableForSale: product.status === 'active', // Use product status from Shopify
+      variantId: product.variants?.[0]?.id || null
     }));
 
     return json({
