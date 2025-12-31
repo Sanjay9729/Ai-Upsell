@@ -19,6 +19,48 @@
     const PRODUCT_ID = '{{ product.id }}';
     const MAX_PRODUCTS = {{ block.settings.max_products }};
 
+    // Robust root and cart-count updater for all Dawn variants
+    const SHOPIFY_ROOT = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) ? window.Shopify.routes.root : '/';
+
+    function updateCartCountBubble(count) {
+      try {
+        const targets = document.querySelectorAll('#cart-icon-bubble');
+        targets.forEach((target) => {
+          if (!target) return;
+
+          let bubble = target.querySelector('.cart-count-bubble');
+          if (!bubble) {
+            bubble = document.createElement('div');
+            bubble.className = 'cart-count-bubble';
+
+            const vis = document.createElement('span');
+            vis.setAttribute('aria-hidden', 'true');
+            const hidden = document.createElement('span');
+            hidden.className = 'visually-hidden';
+
+            bubble.appendChild(vis);
+            bubble.appendChild(hidden);
+            target.appendChild(bubble);
+          }
+
+          const visEl = bubble.querySelector('[aria-hidden]') || bubble.querySelector('.cart-count-bubble__count');
+          let hiddenEl = bubble.querySelector('.visually-hidden');
+          if (!hiddenEl) {
+            hiddenEl = document.createElement('span');
+            hiddenEl.className = 'visually-hidden';
+            bubble.appendChild(hiddenEl);
+          }
+
+          if (visEl) visEl.textContent = String(count);
+          hiddenEl.textContent = `${count} ${count === 1 ? 'item' : 'items'}`;
+
+          bubble.hidden = count <= 0;
+        });
+      } catch (err) {
+        console.warn('Cart bubble update failed:', err);
+      }
+    }
+
     async function loadAIUpsells() {
       const loadingEl = widget.querySelector('.ai-upsell-loading');
       const contentEl = widget.querySelector('.ai-upsell-content');
@@ -172,8 +214,11 @@
                     })
                   );
 
+                  // Always ensure the header cart count reflects the latest cart
+                  updateCartCountBubble(cart.item_count);
+
                   // Force reload cart drawer sections
-                  fetch(`/?sections=cart-drawer,cart-icon-bubble`)
+                  fetch(`${SHOPIFY_ROOT}?sections=cart-drawer,cart-icon-bubble`)
                     .then(res => res.json())
                     .then(sections => {
                       // Update cart drawer by replacing the entire element
@@ -200,8 +245,13 @@
                           const newBubble = fragment.querySelector('#cart-icon-bubble');
                           if (newBubble) {
                             cartBubble.replaceWith(newBubble);
+                            // Ensure count is visible/accurate even if theme markup differs
+                            updateCartCountBubble(cart.item_count);
                           }
                         }
+                      } else {
+                        // Fallback when section HTML is not returned by the theme
+                        updateCartCountBubble(cart.item_count);
                       }
 
                       // Now open the cart drawer
