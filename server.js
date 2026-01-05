@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import { getAllProducts, syncProductsToMongoDB } from './backend/database/collections.js';
 import { connectToMongoDB } from './backend/database/connection.js';
 
@@ -137,6 +138,137 @@ app.get('/api/health', (req, res) => {
     message: 'AI Upsell API server is running',
     version: '1.0.0'
   });
+});
+
+// =============================================================================
+// SHOPIFY WEBHOOK HANDLERS
+// =============================================================================
+
+/**
+ * Verify Shopify webhook HMAC signature
+ */
+function verifyShopifyWebhook(req, res, next) {
+  const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
+  const shopifySecret = process.env.SHOPIFY_API_SECRET;
+  
+  if (!hmacHeader || !shopifySecret) {
+    console.warn('❌ Missing HMAC or secret for webhook verification');
+    return res.status(401).json({ error: 'Missing HMAC or secret' });
+  }
+
+  const body = JSON.stringify(req.body);
+  const calculatedHmac = crypto
+    .createHmac('sha256', shopifySecret)
+    .update(body, 'utf8')
+    .digest('base64');
+
+  if (calculatedHmac !== hmacHeader) {
+    console.warn('❌ Invalid HMAC signature for webhook');
+    return res.status(401).json({ error: 'Invalid HMAC signature' });
+  }
+
+  console.log('✅ Webhook HMAC verified successfully');
+  next();
+}
+
+// Product Create Webhook
+app.post('/api/webhooks/products/create', verifyShopifyWebhook, async (req, res) => {
+  try {
+    const { shop_id, shop_domain } = req.body;
+    const productId = req.body.id;
+    const accessToken = req.get('X-Shopify-Access-Token');
+    
+    console.log(`📦 Received product create webhook for product ${productId} from shop ${shop_domain}`);
+    
+    if (!shop_id || !accessToken) {
+      return res.status(400).json({ error: 'Missing shop_id or access token' });
+    }
+
+    // Sync the single product to MongoDB
+    const syncedCount = await syncProductsToMongoDB(shop_domain, accessToken);
+    
+    console.log(`✅ Product ${productId} synced for shop ${shop_domain}`);
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Product create webhook processed',
+      syncedCount 
+    });
+    
+  } catch (error) {
+    console.error('❌ Product create webhook error:', error);
+    res.status(500).json({ 
+      error: 'Failed to process product create webhook',
+      details: error.message 
+    });
+  }
+});
+
+// Product Update Webhook
+app.post('/api/webhooks/products/update', verifyShopifyWebhook, async (req, res) => {
+  try {
+    const { shop_id, shop_domain } = req.body;
+    const productId = req.body.id;
+    const accessToken = req.get('X-Shopify-Access-Token');
+    
+    console.log(`📦 Received product update webhook for product ${productId} from shop ${shop_domain}`);
+    
+    if (!shop_id || !accessToken) {
+      return res.status(400).json({ error: 'Missing shop_id or access token' });
+    }
+
+    // Sync the updated product to MongoDB
+    const syncedCount = await syncProductsToMongoDB(shop_domain, accessToken);
+    
+    console.log(`✅ Product ${productId} updated for shop ${shop_domain}`);
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Product update webhook processed',
+      syncedCount 
+    });
+    
+  } catch (error) {
+    console.error('❌ Product update webhook error:', error);
+    res.status(500).json({ 
+      error: 'Failed to process product update webhook',
+      details: error.message 
+    });
+  }
+});
+
+// Product Delete Webhook
+app.post('/api/webhooks/products/delete', verifyShopifyWebhook, async (req, res) => {
+  try {
+    const { shop_id, shop_domain } = req.body;
+    const productId = req.body.id;
+    
+    console.log(`📦 Received product delete webhook for product ${productId} from shop ${shop_domain}`);
+    
+    if (!shop_id) {
+      return res.status(400).json({ error: 'Missing shop_id' });
+    }
+
+    // Remove product from MongoDB
+    await connectToMongoDB();
+    const { deleteProduct } = await import('./backend/database/collections.js');
+    
+    await deleteProduct(shop_domain, productId);
+    
+    console.log(`🗑️ Product ${productId} deleted for shop ${shop_domain}`);
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Product delete webhook processed' 
+    });
+    
+  } catch (error) {
+    console.error('❌ Product delete webhook error:', error);
+    res.status(500).json({ 
+      error: 'Failed to process product delete webhook',
+      details: error.message 
+    });
+  }
 });
 
 // Start server

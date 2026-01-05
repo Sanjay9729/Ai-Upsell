@@ -274,15 +274,40 @@ export async function updateProduct(shopId, productId, updateData) {
 
 /**
  * Delete a product from MongoDB
+ * Handles both string and number product IDs to ensure compatibility
  */
 export async function deleteProduct(shopId, productId) {
   const db = await getDb();
   const productsCollection = db.collection('products');
   
   try {
-    const result = await productsCollection.deleteOne({ shopId, productId });
-    console.log(`🗑️ Deleted product ${productId} for shop ${shopId}`);
-    return result;
+    // Try multiple query patterns to handle both string and number IDs
+    const deleteFilters = [
+      { shopId, productId: productId.toString() },
+      { shopId, productId: parseInt(productId, 10) },
+      { shopId, productId: Number(productId) }
+    ];
+    
+    let totalDeleted = 0;
+    let lastResult = null;
+    
+    for (const filter of deleteFilters) {
+      const result = await productsCollection.deleteOne(filter);
+      if (result.deletedCount > 0) {
+        totalDeleted += result.deletedCount;
+        lastResult = result;
+        console.log(`🗑️ Deleted product ${productId} for shop ${shopId} using filter:`, filter);
+        break; // Stop after first successful deletion
+      }
+    }
+    
+    if (totalDeleted === 0) {
+      console.log(`⚠️ No product found to delete for ID ${productId} and shop ${shopId}`);
+      // Return a result indicating no deletion occurred
+      return { acknowledged: true, deletedCount: 0 };
+    }
+    
+    return lastResult || { acknowledged: true, deletedCount: totalDeleted };
   } catch (error) {
     console.error('❌ Error deleting product:', error);
     throw error;
@@ -331,20 +356,30 @@ export async function createIndexes() {
  * Fetch products from Shopify Admin API
  */
 async function fetchShopifyProducts(shopId, accessToken) {
-  const baseUrl = `https://${process.env.SHOP_CUSTOM_DOMAIN || shopId}/admin/api/2024-01`;
+  // Use the latest stable API version
+  const baseUrl = `https://${shopId}/admin/api/2024-10`;
+  
+  console.log(`🔗 Making API call to: ${baseUrl}/products.json`);
+  console.log(`🔑 Using access token: ${accessToken.substring(0, 10)}...`);
   
   const response = await fetch(`${baseUrl}/products.json`, {
+    method: 'GET',
     headers: {
       'X-Shopify-Access-Token': accessToken,
       'Content-Type': 'application/json'
     }
   });
   
+  console.log(`📡 Shopify API response status: ${response.status} ${response.statusText}`);
+  
   if (!response.ok) {
-    throw new Error(`Shopify API error: ${response.status} ${response.statusText}`);
+    const errorText = await response.text();
+    console.error(`❌ Shopify API error details:`, errorText);
+    throw new Error(`Shopify API error: ${response.status} ${response.statusText} - ${errorText}`);
   }
   
   const data = await response.json();
+  console.log(`📦 Successfully fetched ${data.products?.length || 0} products from Shopify`);
   return data.products || [];
 }
 
