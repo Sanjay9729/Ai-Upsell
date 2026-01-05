@@ -119,9 +119,11 @@
         let html = `
           <div class="ai-upsell-header">
             <h2 class="ai-upsell-title">{{ block.settings.heading }}</h2>
+            {% comment %}
             {% if block.settings.show_ai_badge %}
             <span class="ai-badge">🤖 AI Powered</span>
             {% endif %}
+            {% endcomment %}
           </div>
           <div class="ai-upsell-grid ai-upsell-grid-${MAX_PRODUCTS}">
         `;
@@ -143,7 +145,9 @@
               <a href="${product.url}" class="ai-upsell-link">
                 <div class="ai-upsell-image-wrapper">
                   ${product.image ? `<img src="${product.image}" alt="${product.title}" class="ai-upsell-image" loading="lazy" />` : ''}
+                  {% comment %}
                   <span class="ai-upsell-badge">${badge}</span>
+                  {% endcomment %}
                 </div>
                 <div class="ai-upsell-info">
                   <h3 class="ai-upsell-product-title">${product.title}</h3>
@@ -346,6 +350,7 @@
     margin: 0;
   }
 
+  {% comment %}
   .ai-badge {
     background: {{ block.settings.primary_color }};
     color: white;
@@ -354,6 +359,7 @@
     font-size: 13px;
     font-weight: 600;
   }
+  {% endcomment %}
 
   .ai-upsell-grid {
     display: grid;
@@ -380,7 +386,6 @@
 
   .ai-upsell-card {
     background: {{ block.settings.card_background }};
-    border: 1px solid {{ block.settings.card_border_color }};
     border-radius: {{ block.settings.card_border_radius }}px;
     overflow: hidden;
     transition: transform 0.3s ease, box-shadow 0.3s ease;
@@ -419,6 +424,7 @@
     transform: scale(1.05);
   }
 
+  {% comment %}
   .ai-upsell-badge {
     position: absolute;
     top: 12px;
@@ -431,6 +437,7 @@
     font-weight: 600;
     backdrop-filter: blur(10px);
   }
+  {% endcomment %}
 
   .ai-upsell-info {
     padding: {{ block.settings.card_padding }}px;
@@ -495,8 +502,8 @@
 
   .ai-add-to-cart-btn {
     width: 100%;
-    background: #008060;
-    color: white;
+    background: {{ block.settings.add_to_cart_bg }};
+    color: {{ block.settings.add_to_cart_text }};
     border: none;
     padding: 12px 20px;
     border-radius: 4px;
@@ -508,13 +515,14 @@
   }
 
   .ai-add-to-cart-btn:hover:not(:disabled) {
-    background: #006e52;
+    background: {{ block.settings.add_to_cart_hover_bg }};
+    color: {{ block.settings.add_to_cart_hover_text }};
     transform: translateY(-1px);
   }
 
   .ai-add-to-cart-btn:disabled {
-    background: #e0e0e0;
-    color: #999;
+    background: {{ block.settings.add_to_cart_disabled_bg }};
+    color: {{ block.settings.add_to_cart_disabled_text }};
     cursor: not-allowed;
   }
 
@@ -530,7 +538,7 @@
   "settings": [
     {
       "type": "header",
-      "content": "Display Settings"
+      "content": "Display"
     },
     {
       "type": "text",
@@ -551,7 +559,7 @@
     {
       "type": "range",
       "id": "max_products",
-      "label": "Maximum Products",
+      "label": "Max Products",
       "min": 1,
       "max": 4,
       "step": 1,
@@ -559,55 +567,9 @@
     },
     {
       "type": "checkbox",
-      "id": "show_ai_badge",
-      "label": "Show AI Badge",
-      "default": true
-    },
-    {
-      "type": "checkbox",
       "id": "show_reason",
-      "label": "Show Recommendation Reason",
+      "label": "Show Reason",
       "default": true
-    },
-    {
-      "type": "checkbox",
-      "id": "show_confidence",
-      "label": "Show Confidence Score",
-      "default": true
-    },
-    {
-      "type": "header",
-      "content": "Badge Labels"
-    },
-    {
-      "type": "text",
-      "id": "badge_complementary",
-      "label": "Complementary Badge",
-      "default": "✨ Perfect Match"
-    },
-    {
-      "type": "text",
-      "id": "badge_similar",
-      "label": "Similar Badge",
-      "default": "🔄 Similar"
-    },
-    {
-      "type": "text",
-      "id": "badge_upgrade",
-      "label": "Upgrade Badge",
-      "default": "⬆️ Upgrade"
-    },
-    {
-      "type": "text",
-      "id": "badge_bundle",
-      "label": "Bundle Badge",
-      "default": "📦 Bundle"
-    },
-    {
-      "type": "text",
-      "id": "badge_default",
-      "label": "Default Badge",
-      "default": "⭐ Recommended"
     },
     {
       "type": "text",
@@ -622,38 +584,32 @@
     {
       "type": "color",
       "id": "background_color",
-      "label": "Background Color",
+      "label": "Background",
       "default": "#f9f9f9"
     },
     {
       "type": "color",
       "id": "heading_color",
-      "label": "Heading Color",
+      "label": "Heading",
       "default": "#000000"
     },
     {
       "type": "color",
       "id": "text_color",
-      "label": "Text Color",
+      "label": "Text",
       "default": "#333333"
     },
     {
       "type": "color",
       "id": "primary_color",
-      "label": "Primary Color",
+      "label": "Primary/AI Badge",
       "default": "#667eea"
     },
     {
       "type": "color",
       "id": "price_color",
-      "label": "Price Color",
+      "label": "Price",
       "default": "#2c6ecb"
-    },
-    {
-      "type": "color",
-      "id": "reason_color",
-      "label": "Reason Text Color",
-      "default": "#666666"
     },
     {
       "type": "color",
@@ -662,26 +618,48 @@
       "default": "#ffffff"
     },
     {
+      "type": "header",
+      "content": "Button Colors"
+    },
+    {
       "type": "color",
-      "id": "card_border_color",
-      "label": "Card Border Color",
+      "id": "add_to_cart_bg",
+      "label": "Button Background",
+      "default": "#008060"
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_text",
+      "label": "Button Text",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_hover_bg",
+      "label": "Button Hover BG",
+      "default": "#006e52"
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_hover_text",
+      "label": "Button Hover Text",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_disabled_bg",
+      "label": "Disabled BG",
       "default": "#e0e0e0"
     },
     {
       "type": "color",
-      "id": "badge_background",
-      "label": "Badge Background",
-      "default": "rgba(0,0,0,0.8)"
-    },
-    {
-      "type": "color",
-      "id": "badge_text_color",
-      "label": "Badge Text Color",
-      "default": "#ffffff"
+      "id": "add_to_cart_disabled_text",
+      "label": "Disabled Text",
+      "default": "#999999"
     },
     {
       "type": "header",
-      "content": "Spacing & Layout"
+      "content": "Layout"
     },
     {
       "type": "range",
@@ -736,19 +714,9 @@
     {
       "type": "range",
       "id": "border_radius",
-      "label": "Container Border Radius",
+      "label": "Container Radius",
       "min": 0,
       "max": 30,
-      "step": 2,
-      "default": 8,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "card_border_radius",
-      "label": "Card Border Radius",
-      "min": 0,
-      "max": 20,
       "step": 2,
       "default": 8,
       "unit": "px"
@@ -760,7 +728,7 @@
     {
       "type": "range",
       "id": "product_title_size",
-      "label": "Product Title Size",
+      "label": "Title Size",
       "min": 12,
       "max": 24,
       "step": 1,
@@ -780,7 +748,7 @@
     {
       "type": "range",
       "id": "reason_size",
-      "label": "Reason Text Size",
+      "label": "Reason Size",
       "min": 11,
       "max": 16,
       "step": 1,
@@ -788,8 +756,10 @@
       "unit": "px"
     },
     {
-      "type": "header",
-      "content": "Hover Effects"
+      "type": "text",
+      "id": "hover_shadow",
+      "label": "Hover Shadow",
+      "default": "0 8px 20px rgba(0,0,0,0.1)"
     },
     {
       "type": "range",
@@ -800,12 +770,6 @@
       "step": 2,
       "default": 4,
       "unit": "px"
-    },
-    {
-      "type": "text",
-      "id": "hover_shadow",
-      "label": "Hover Shadow",
-      "default": "0 8px 20px rgba(0,0,0,0.1)"
     }
   ]
 }

@@ -137,9 +137,11 @@
         let html = `
           <div class="ai-cart-upsell-header">
             <h2 class="ai-cart-upsell-title">{{ block.settings.heading }}</h2>
+            {% comment %}
             {% if block.settings.show_ai_badge %}
             <span class="ai-badge">🤖 AI Powered</span>
             {% endif %}
+            {% endcomment %}
           </div>
           <div class="ai-cart-upsell-grid ai-cart-upsell-grid-${MAX_PRODUCTS}">
         `;
@@ -161,7 +163,9 @@
               <a href="${product.url}" class="ai-cart-upsell-link">
                 <div class="ai-cart-upsell-image-wrapper">
                   ${product.image ? `<img src="${product.image}" alt="${product.title}" class="ai-cart-upsell-image" loading="lazy" />` : ''}
+                  {% comment %}
                   <span class="ai-cart-upsell-badge">${badge}</span>
+                  {% endcomment %}
                 </div>
                 <div class="ai-cart-upsell-info">
                   <h3 class="ai-cart-upsell-product-title">${product.title}</h3>
@@ -379,6 +383,7 @@
     margin: 0;
   }
 
+  {% comment %}
   .ai-badge {
     background: {{ block.settings.primary_color }};
     color: white;
@@ -387,6 +392,7 @@
     font-size: 13px;
     font-weight: 600;
   }
+  {% endcomment %}
 
   .ai-cart-upsell-grid {
     display: grid;
@@ -421,7 +427,7 @@
 
   .ai-cart-upsell-card:hover {
     transform: translateY(-{{ block.settings.hover_lift }}px);
-    box-shadow: {{ block.settings.hover_shadow }};
+    box-shadow: {{ block.settings.hover_shadow_x }}px {{ block.settings.hover_shadow_y }}px {{ block.settings.hover_shadow_blur }}px {{ block.settings.hover_shadow_color | color_modify: 'alpha', block.settings.hover_shadow_opacity | divided_by: 100.0 }};
   }
 
   .ai-cart-upsell-link {
@@ -452,6 +458,7 @@
     transform: scale(1.05);
   }
 
+  {% comment %}
   .ai-cart-upsell-badge {
     position: absolute;
     top: 12px;
@@ -464,6 +471,7 @@
     font-weight: 600;
     backdrop-filter: blur(10px);
   }
+  {% endcomment %}
 
   .ai-cart-upsell-info {
     padding: {{ block.settings.card_padding }}px;
@@ -542,6 +550,7 @@
 
 .ai-cart-add-to-cart-btn:hover:not(:disabled) {
   background: {{ block.settings.add_to_cart_hover_bg }};
+  color: {{ block.settings.add_to_cart_hover_text }};
   transform: translateY(-1px);
 }
 
@@ -554,22 +563,6 @@
 .ai-cart-add-to-cart-btn:active:not(:disabled) {
   transform: translateY(0);
 }
-
-
-  .ai-cart-add-to-cart-btn:hover:not(:disabled) {
-    background: #006e52;
-    transform: translateY(-1px);
-  }
-
-  .ai-cart-add-to-cart-btn:disabled {
-    background: #e0e0e0;
-    color: #999;
-    cursor: not-allowed;
-  }
-
-  .ai-cart-add-to-cart-btn:active:not(:disabled) {
-    transform: translateY(0);
-  }
 </style>
 
 {% schema %}
@@ -608,12 +601,6 @@
     },
     {
       "type": "checkbox",
-      "id": "show_ai_badge",
-      "label": "Show AI Badge",
-      "default": true
-    },
-    {
-      "type": "checkbox",
       "id": "show_reason",
       "label": "Show Recommendation Reason",
       "default": true
@@ -623,41 +610,6 @@
       "id": "show_confidence",
       "label": "Show Confidence Score",
       "default": true
-    },
-
-    {
-      "type": "header",
-      "content": "Badge Labels"
-    },
-    {
-      "type": "text",
-      "id": "badge_complementary",
-      "label": "Complementary Badge",
-      "default": "✨ Perfect Match"
-    },
-    {
-      "type": "text",
-      "id": "badge_similar",
-      "label": "Similar Badge",
-      "default": "🔄 Similar"
-    },
-    {
-      "type": "text",
-      "id": "badge_upgrade",
-      "label": "Upgrade Badge",
-      "default": "⬆️ Upgrade"
-    },
-    {
-      "type": "text",
-      "id": "badge_bundle",
-      "label": "Bundle Badge",
-      "default": "📦 Bundle"
-    },
-    {
-      "type": "text",
-      "id": "badge_default",
-      "label": "Default Badge",
-      "default": "⭐ Recommended"
     },
     {
       "type": "text",
@@ -745,8 +697,14 @@
     {
       "type": "color",
       "id": "add_to_cart_hover_bg",
-      "label": "Button Hover",
+      "label": "Button Hover Background",
       "default": "#006e52"
+    },
+    {
+      "type": "color",
+      "id": "add_to_cart_hover_text",
+      "label": "Button Hover Text",
+      "default": "#ffffff"
     },
     {
       "type": "color",
@@ -885,10 +843,50 @@
       "unit": "px"
     },
     {
-      "type": "text",
-      "id": "hover_shadow",
-      "label": "Hover Shadow",
-      "default": "0 8px 20px rgba(0,0,0,0.1)"
+      "type": "range",
+      "id": "hover_shadow_x",
+      "label": "Shadow Horizontal Offset",
+      "min": -20,
+      "max": 20,
+      "step": 1,
+      "default": 0,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "hover_shadow_y",
+      "label": "Shadow Vertical Offset",
+      "min": -20,
+      "max": 20,
+      "step": 1,
+      "default": 8,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "hover_shadow_blur",
+      "label": "Shadow Blur",
+      "min": 0,
+      "max": 50,
+      "step": 2,
+      "default": 20,
+      "unit": "px"
+    },
+    {
+      "type": "color",
+      "id": "hover_shadow_color",
+      "label": "Shadow Color",
+      "default": "#000000"
+    },
+    {
+      "type": "range",
+      "id": "hover_shadow_opacity",
+      "label": "Shadow Opacity",
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "default": 10,
+      "unit": "%"
     }
   ]
 }
