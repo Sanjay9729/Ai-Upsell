@@ -84,7 +84,7 @@
           return `gid://shopify/Product/${productId}`;
         });
 
-        // Use Shopify App Proxy URL format for cart-based recommendations
+        // Use backend API directly for development
         const apiUrl = `/apps/ai-upsell/cart?ids=${encodeURIComponent(JSON.stringify(cartProductIds))}`;
         const response = await fetch(apiUrl);
 
@@ -175,7 +175,12 @@
                 </div>
               </a>
               <div class="ai-cart-upsell-actions">
-                <button class="ai-cart-add-to-cart-btn" data-variant-id="${variantId}" ${!product.availableForSale ? 'disabled' : ''}>
+                <button class="ai-cart-add-to-cart-btn"
+                        data-variant-id="${variantId}"
+                        data-product-id="${product.id}"
+                        data-recommendation-type="${product.type}"
+                        data-confidence="${product.confidence}"
+                        ${!product.availableForSale ? 'disabled' : ''}>
                   ${product.availableForSale ? 'Add to Cart' : 'Out of Stock'}
                 </button>
               </div>
@@ -189,6 +194,8 @@
         contentEl.innerHTML = html;
         contentEl.style.display = 'block';
 
+        // View events removed - only tracking cart add events
+
         // Add event listeners to "Add to cart" buttons
         const addToCartButtons = contentEl.querySelectorAll('.ai-cart-add-to-cart-btn');
         addToCartButtons.forEach(button => {
@@ -197,7 +204,15 @@
             e.stopPropagation();
 
             const variantId = button.getAttribute('data-variant-id');
+            const upsellProductId = button.getAttribute('data-product-id');
+            const recommendationType = button.getAttribute('data-recommendation-type');
+            const confidence = button.getAttribute('data-confidence');
             const originalText = button.textContent;
+
+            // Get the product title from the button's parent card
+            const productCard = button.closest('.ai-cart-upsell-card');
+            const productTitleElement = productCard.querySelector('.ai-cart-upsell-product-title');
+            const productTitle = productTitleElement ? productTitleElement.textContent : 'Unknown Product';
 
             try {
               button.disabled = true;
@@ -217,6 +232,38 @@
               if (!response.ok) throw new Error('Failed to add to cart');
 
               const result = await response.json();
+
+              // Track upsell cart addition event
+              // Get current cart to determine source products
+              fetch('/cart.js')
+                .then(r => r.json())
+                .then(cartData => {
+                  const cartProductIds = cartData.items.map(item => item.product_id);
+                  fetch('{{ shop.metafields.ai_upsell.api_url | default: "https://your-backend-url.com" }}/api/analytics/track', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      eventType: 'cart_add',
+                      shopId: '{{ shop.permanent_domain }}',
+                      sourceProductId: cartProductIds.length > 0 ? cartProductIds[0].toString() : null,
+                      upsellProductId: upsellProductId,
+                      upsellProductName: productTitle,
+                      variantId: variantId,
+                      recommendationType: recommendationType,
+                      confidence: parseFloat(confidence),
+                      quantity: 1,
+                      metadata: {
+                        cartProductIds: cartProductIds,
+                        location: 'cart_page',
+                        sourceProductTitle: 'Cart Items', // Could be enhanced to get actual titles
+                        upsellProductTitle: productTitle
+                      }
+                    })
+                  }).catch(err => console.log('Analytics tracking failed:', err));
+                })
+                .catch(err => console.log('Failed to get cart data for tracking:', err));
 
               // Use Shopify's publish/subscribe system to update the cart
               // This is the recommended way to update cart in Dawn theme

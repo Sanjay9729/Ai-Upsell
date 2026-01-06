@@ -1,6 +1,7 @@
 import { json } from "@remix-run/node";
 import crypto from "crypto";
 import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
+import { storeUpsellRecommendations } from "../../backend/services/upsellRecommendationsService.js";
 
 /**
  * Shopify App Proxy Handler
@@ -65,6 +66,22 @@ export const loader = async ({ request }) => {
 
     // Get AI-powered upsell recommendations
     const recommendations = await aiEngine.findUpsellProducts(shop, productId, 4);
+    
+    // Get source product title from the AI engine (which already fetched it)
+    let sourceProductTitle = `Product ${productId}`;
+    
+    // The AI engine already fetched the current product, so let's get it from there
+    try {
+      const currentProduct = await aiEngine.getProductById(shop, productId);
+      if (currentProduct && currentProduct.title) {
+        sourceProductTitle = currentProduct.title;
+        console.log(`🤖 Got source product title from AI engine: ${sourceProductTitle}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Could not get source product title:`, error);
+    }
+    
+    console.log(`📝 Final source product title: ${sourceProductTitle}`);
 
     // Format response for frontend
     const formattedRecommendations = recommendations.map(product => ({
@@ -78,6 +95,28 @@ export const loader = async ({ request }) => {
       type: product.recommendationType,
       url: `/products/${product.handle}`
     }));
+
+    // Store recommendations in MongoDB for analytics
+    try {
+      const storageData = {
+        shopId: shop,
+        sourceProductId: productId.toString(),
+        sourceProductName: sourceProductTitle,
+        recommendations: formattedRecommendations,
+        recommendationContext: 'product_detail',
+        metadata: {
+          apiEndpoint: 'proxy.ai-upsell',
+          generatedBy: 'groqAIEngine'
+        }
+      };
+      console.log('📦 Storing recommendations from working proxy route...');
+      
+      const storeResult = await storeUpsellRecommendations(storageData);
+      console.log('✅ Recommendations stored successfully from proxy:', storeResult);
+    } catch (storeError) {
+      console.error('❌ Failed to store recommendations from proxy:', storeError);
+      // Don't fail the entire request if storage fails
+    }
 
     // Return response in Liquid-compatible format
     return json({

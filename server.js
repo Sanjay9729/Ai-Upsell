@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { getAllProducts, syncProductsToMongoDB } from './backend/database/collections.js';
 import { connectToMongoDB } from './backend/database/connection.js';
+import { initializeCollections } from './backend/database/mongodb.js';
+import analyticsRouter from './backend/routes/analytics.js';
 
 // Load environment variables
 dotenv.config();
@@ -19,6 +21,7 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // API Routes
+app.use('/api/analytics', analyticsRouter);
 
 // Get all products from MongoDB
 app.get('/api/products', async (req, res) => {
@@ -138,6 +141,84 @@ app.get('/api/health', (req, res) => {
     message: 'AI Upsell API server is running',
     version: '1.0.0'
   });
+});
+
+// Analytics Dashboard API
+app.get('/api/analytics/dashboard/:shopId', async (req, res) => {
+  try {
+    const { shopId } = req.params;
+    const { limit = 100 } = req.query;
+    
+    // Connect to MongoDB
+    await connectToMongoDB();
+    const { getDb } = await import('./backend/database/connection.js');
+    const db = await getDb();
+    
+    // Get events from MongoDB
+    const events = await db.collection('upsell_events')
+      .find({ shopId })
+      .sort({ timestamp: -1 })
+      .limit(parseInt(limit))
+      .toArray();
+    
+    res.json({
+      success: true,
+      analytics: {
+        events,
+        count: events.length
+      },
+      stats: null,
+      period: {
+        startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        endDate: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Error in analytics dashboard endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      analytics: { events: [], count: 0 },
+      stats: null
+    });
+  }
+});
+
+// Recent Analytics Events API
+app.get('/api/analytics/recent/:shopId', async (req, res) => {
+  try {
+    const { shopId } = req.params;
+    const { limit = 20 } = req.query;
+    
+    // Connect to MongoDB
+    await connectToMongoDB();
+    const { getDb } = await import('./backend/database/connection.js');
+    const db = await getDb();
+    
+    // Get recent events from MongoDB
+    const events = await db.collection('upsell_events')
+      .find({ 
+        shopId,
+        timestamp: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+      })
+      .sort({ timestamp: -1 })
+      .limit(parseInt(limit))
+      .toArray();
+    
+    res.json({
+      success: true,
+      events,
+      count: events.length
+    });
+  } catch (error) {
+    console.error('Error in recent events endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      events: [],
+      count: 0
+    });
+  }
 });
 
 // =============================================================================
@@ -271,37 +352,53 @@ app.post('/api/webhooks/products/delete', verifyShopifyWebhook, async (req, res)
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log('');
-  console.log('╭─ info ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮');
-  console.log('│                                                                                                                                                │');
-  console.log('│  AI Upsell API Server Started Successfully                                                                                                   │');
-  console.log('│                                                                                                                                                │');
-  console.log('│   • Server URL:     http://localhost:' + PORT + '                                                                                                │');
-  console.log('│   • MongoDB:        Ready to connect                                                                                                           │');
-  console.log('│   • Groq AI:        Active with your API key                                                                                                    │');
-  console.log('│   • Shopify:        Configured with your credentials                                                                                            │');
-  console.log('│                                                                                                                                                │');
-  console.log('╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯');
-  console.log('');
-  console.log('╭─ API Endpoints ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮');
-  console.log('│                                                                                                                                                │');
-  console.log('│   [GET]  Products API:                    http://localhost:' + PORT + '/api/products                                                             │');
-  console.log('│   [POST] Product Sync API:                http://localhost:' + PORT + '/api/products/sync                                                        │');
-  console.log('│   [GET]  Upsell Recommendations:          http://localhost:' + PORT + '/api/products/upsell/:productId                                          │');
-  console.log('│   [GET]  Health Check:                    http://localhost:' + PORT + '/api/health                                                              │');
-  console.log('│                                                                                                                                                │');
-  console.log('╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯');
-  console.log('');
-  console.log('╭─ Quick Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮');
-  console.log('│                                                                                                                                                │');
-  console.log('│   🔄 Sync Shopify Products:              npm run sync                                                                                           │');
-  console.log('│   🧪 Test AI Integration:                npm run test:ai                                                                                        │');
-  console.log('│   ❤️  Health Check:                       curl http://localhost:' + PORT + '/api/health                                                           │');
-  console.log('│                                                                                                                                                │');
-  console.log('╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯');
-  console.log('');
-  console.log('✅ Ready, watching for changes in your AI Upsell system                                                                                           ');
-  console.log('');
-});
+// Initialize collections and indexes
+async function startServer() {
+  try {
+    // Connect to MongoDB and initialize collections
+    await connectToMongoDB();
+    await initializeCollections();
+    console.log('📊 All collections and indexes initialized successfully');
+    
+    // Start the Express server
+    app.listen(PORT, () => {
+      console.log('');
+      console.log('╭─ info ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮');
+      console.log('│                                                                                                                                                │');
+      console.log('│  AI Upsell API Server Started Successfully                                                                                                   │');
+      console.log('│                                                                                                                                                │');
+      console.log('│   • Server URL:     http://localhost:' + PORT + '                                                                                                │');
+      console.log('│   • MongoDB:        Connected and initialized                                                                                                   │');
+      console.log('│   • Groq AI:        Active with your API key                                                                                                    │');
+      console.log('│   • Shopify:        Configured with your credentials                                                                                            │');
+      console.log('│                                                                                                                                                │');
+      console.log('╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯');
+      console.log('');
+      console.log('╭─ API Endpoints ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮');
+      console.log('│                                                                                                                                                │');
+      console.log('│   [GET]  Products API:                    http://localhost:' + PORT + '/api/products                                                             │');
+      console.log('│   [POST] Product Sync API:                http://localhost:' + PORT + '/api/products/sync                                                        │');
+      console.log('│   [GET]  Upsell Recommendations:          http://localhost:' + PORT + '/api/products/upsell/1234567890?shopId=your-store.myshopify.com        │');
+      console.log('│   [GET]  Health Check:                    http://localhost:' + PORT + '/api/health                                                              │');
+      console.log('│                                                                                                                                                │');
+      console.log('╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯');
+      console.log('');
+      console.log('╭─ Quick Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮');
+      console.log('│                                                                                                                                                │');
+      console.log('│   🔄 Sync Shopify Products:              npm run sync                                                                                           │');
+      console.log('│   🧪 Test AI Integration:                npm run test:ai                                                                                        │');
+      console.log('│   ❤️  Health Check:                       curl http://localhost:' + PORT + '/api/health                                                           │');
+      console.log('│                                                                                                                                                │');
+      console.log('╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯');
+      console.log('');
+      console.log('✅ Ready, watching for changes in your AI Upsell system                                                                                           ');
+      console.log('');
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Start the server
+startServer();
