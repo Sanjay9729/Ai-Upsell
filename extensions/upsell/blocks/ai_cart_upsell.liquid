@@ -97,6 +97,11 @@
           return;
         }
 
+        // Store source title for analytics - use actual cart product titles
+        const cartProductTitles = cart.items.map(item => item.product_title).join(', ');
+        const sourceTitle = cartProductTitles || 'Cart Items';
+        widget.dataset.sourceTitle = sourceTitle;
+
         let products = data.recommendations.slice(0, MAX_PRODUCTS);
 
         // Fetch fresh product data from Shopify to get real-time availability
@@ -218,6 +223,16 @@
               button.disabled = true;
               button.textContent = 'Adding...';
 
+              // IMPORTANT: Capture cart state BEFORE adding the product
+              // This ensures we track what the customer was actually viewing
+              const preAddCartResponse = await fetch('/cart.js');
+              const preAddCart = await preAddCartResponse.json();
+              const originalCartProductIds = preAddCart.items.map(item => item.product_id);
+
+              // Get all product titles from the cart
+              const allProductTitles = preAddCart.items.map(item => item.product_title).join(', ');
+              const originalSourceTitle = allProductTitles || 'Cart Items';
+
               const response = await fetch('/cart/add.js', {
                 method: 'POST',
                 headers: {
@@ -233,37 +248,48 @@
 
               const result = await response.json();
 
-              // Track upsell cart addition event
-              // Get current cart to determine source products
-              fetch('/cart.js')
-                .then(r => r.json())
-                .then(cartData => {
-                  const cartProductIds = cartData.items.map(item => item.product_id);
-                  fetch('{{ shop.metafields.ai_upsell.api_url | default: "https://your-backend-url.com" }}/api/analytics/track', {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                      eventType: 'cart_add',
-                      shopId: '{{ shop.permanent_domain }}',
-                      sourceProductId: cartProductIds.length > 0 ? cartProductIds[0].toString() : null,
-                      upsellProductId: upsellProductId,
-                      upsellProductName: productTitle,
-                      variantId: variantId,
-                      recommendationType: recommendationType,
-                      confidence: parseFloat(confidence),
-                      quantity: 1,
-                      metadata: {
-                        cartProductIds: cartProductIds,
-                        location: 'cart_page',
-                        sourceProductTitle: 'Cart Items', // Could be enhanced to get actual titles
-                        upsellProductTitle: productTitle
-                      }
-                    })
-                  }).catch(err => console.log('Analytics tracking failed:', err));
+              // Track upsell cart addition event using App Proxy
+              // Use /apps/ai-upsell/analytics/track which routes to api.proxy.analytics.track.jsx
+              console.log('📊 Tracking upsell cart add:', {
+                url: '/apps/ai-upsell/analytics/track',
+                product: productTitle
+              });
+
+              fetch('/apps/ai-upsell/analytics/track', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  eventType: 'cart_add',
+                  shopId: '{{ shop.permanent_domain }}',
+                  sourceProductId: originalCartProductIds.length > 0 ? originalCartProductIds[0].toString() : null,
+                  sourceProductName: originalSourceTitle,
+                  upsellProductId: upsellProductId,
+                  upsellProductName: productTitle,
+                  variantId: variantId,
+                  recommendationType: recommendationType,
+                  confidence: parseFloat(confidence),
+                  quantity: 1,
+                  metadata: {
+                    cartProductIds: originalCartProductIds,
+                    location: 'cart_page',
+                    sourceProductTitle: originalSourceTitle,
+                    upsellProductTitle: productTitle
+                  }
                 })
-                .catch(err => console.log('Failed to get cart data for tracking:', err));
+              })
+              .then(async (res) => {
+                const text = await res.text();
+                console.log('✅ Tracking response:', res.status, text);
+                try {
+                   const data = JSON.parse(text);
+                   console.log('✅ Tracking data:', data);
+                } catch (e) {
+                   console.warn('⚠️ Tracking response not JSON:', text);
+                }
+              })
+              .catch(err => console.error('❌ Analytics tracking failed:', err));
 
               // Use Shopify's publish/subscribe system to update the cart
               // This is the recommended way to update cart in Dawn theme

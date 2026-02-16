@@ -86,23 +86,24 @@ export const loader = async ({ request }) => {
 
     // Get AI-powered cart upsell recommendations
     const recommendations = await aiEngine.findCartUpsellProducts(shop, productIds, 4);
-    
-    // Get source product title from cart items using AI engine
+
+    // Get all product titles from cart items using AI engine
     let cartSourceTitle = 'Cart Items';
     try {
-      // Get first cart product from AI engine
+      // Get cart products from AI engine
       const cartProducts = await aiEngine.getProductsByShop(shop);
       const validCartProducts = cartProducts.filter(p => productIds.includes(p.productId));
-      
+
       if (validCartProducts.length > 0) {
-        const firstProductTitle = validCartProducts[0].title;
-        cartSourceTitle = productIds.length === 1 ? firstProductTitle : `${firstProductTitle} + ${productIds.length - 1} more`;
-        console.log(`🛒 Got cart source title from AI engine: ${cartSourceTitle}`);
+        // Get ALL product titles, not just the first one
+        const allProductTitles = validCartProducts.map(p => p.title).join(', ');
+        cartSourceTitle = allProductTitles;
+        console.log(`🛒 Got cart source titles from AI engine: ${cartSourceTitle}`);
       }
     } catch (error) {
       console.warn(`⚠️ Could not get cart source title:`, error);
     }
-    
+
     console.log(`📝 Final cart source title: ${cartSourceTitle}`);
 
     // Format response for frontend
@@ -150,6 +151,7 @@ export const loader = async ({ request }) => {
       success: true,
       cartProductIds: productIds,
       shop,
+      sourceTitle: cartSourceTitle, // <--- Added source title for frontend tracking
       recommendations: formattedRecommendations,
       count: formattedRecommendations.length
     }, {
