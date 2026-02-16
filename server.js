@@ -22,6 +22,7 @@ app.use(express.static('public'));
 
 // API Routes
 app.use('/api/analytics', analyticsRouter);
+app.use('/api/proxy/analytics', analyticsRouter); // Handle proxy requests
 
 // Get all products from MongoDB
 app.get('/api/products', async (req, res) => {
@@ -42,7 +43,7 @@ app.get('/api/products', async (req, res) => {
     });
   } catch (error) {
     console.error("Error in products API:", error);
-    
+
     res.status(500).json({
       success: false,
       message: "Failed to fetch products from MongoDB",
@@ -58,7 +59,7 @@ app.get('/api/products', async (req, res) => {
 app.post('/api/products/sync', async (req, res) => {
   try {
     const { shopId, accessToken } = req.body;
-    
+
     if (!shopId || !accessToken) {
       return res.status(400).json({
         success: false,
@@ -80,7 +81,7 @@ app.post('/api/products/sync', async (req, res) => {
     });
   } catch (error) {
     console.error("Error in products sync API:", error);
-    
+
     res.status(500).json({
       success: false,
       message: "Failed to sync products from Shopify",
@@ -95,7 +96,7 @@ app.get('/api/products/upsell/:productId', async (req, res) => {
   try {
     const { productId } = req.params;
     const { shopId } = req.query;
-    
+
     if (!shopId) {
       return res.status(400).json({
         success: false,
@@ -109,10 +110,10 @@ app.get('/api/products/upsell/:productId', async (req, res) => {
     // Import Groq AI engine here to avoid circular dependencies
     const { GroqAIEngine } = await import('./backend/services/groqAIEngine.js');
     const aiEngine = new GroqAIEngine();
-    
+
     // Get upsell recommendations from AI engine
     const upsellProducts = await aiEngine.findUpsellProducts(shopId, productId, 4);
-    
+
     // Return product IDs (Step 4 of flow)
     res.json({
       success: true,
@@ -123,7 +124,7 @@ app.get('/api/products/upsell/:productId', async (req, res) => {
     });
   } catch (error) {
     console.error("Error in upsell API:", error);
-    
+
     res.status(500).json({
       success: false,
       message: "Failed to get upsell recommendations",
@@ -148,19 +149,19 @@ app.get('/api/analytics/dashboard/:shopId', async (req, res) => {
   try {
     const { shopId } = req.params;
     const { limit = 100 } = req.query;
-    
+
     // Connect to MongoDB
     await connectToMongoDB();
     const { getDb } = await import('./backend/database/connection.js');
     const db = await getDb();
-    
+
     // Get events from MongoDB
     const events = await db.collection('upsell_events')
       .find({ shopId })
       .sort({ timestamp: -1 })
       .limit(parseInt(limit))
       .toArray();
-    
+
     res.json({
       success: true,
       analytics: {
@@ -189,22 +190,22 @@ app.get('/api/analytics/recent/:shopId', async (req, res) => {
   try {
     const { shopId } = req.params;
     const { limit = 20 } = req.query;
-    
+
     // Connect to MongoDB
     await connectToMongoDB();
     const { getDb } = await import('./backend/database/connection.js');
     const db = await getDb();
-    
+
     // Get recent events from MongoDB
     const events = await db.collection('upsell_events')
-      .find({ 
+      .find({
         shopId,
         timestamp: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
       })
       .sort({ timestamp: -1 })
       .limit(parseInt(limit))
       .toArray();
-    
+
     res.json({
       success: true,
       events,
@@ -231,7 +232,7 @@ app.get('/api/analytics/recent/:shopId', async (req, res) => {
 function verifyShopifyWebhook(req, res, next) {
   const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
   const shopifySecret = process.env.SHOPIFY_API_SECRET;
-  
+
   if (!hmacHeader || !shopifySecret) {
     console.warn('❌ Missing HMAC or secret for webhook verification');
     return res.status(401).json({ error: 'Missing HMAC or secret' });
@@ -258,29 +259,29 @@ app.post('/api/webhooks/products/create', verifyShopifyWebhook, async (req, res)
     const { shop_id, shop_domain } = req.body;
     const productId = req.body.id;
     const accessToken = req.get('X-Shopify-Access-Token');
-    
+
     console.log(`📦 Received product create webhook for product ${productId} from shop ${shop_domain}`);
-    
+
     if (!shop_id || !accessToken) {
       return res.status(400).json({ error: 'Missing shop_id or access token' });
     }
 
     // Sync the single product to MongoDB
     const syncedCount = await syncProductsToMongoDB(shop_domain, accessToken);
-    
+
     console.log(`✅ Product ${productId} synced for shop ${shop_domain}`);
-    
-    res.status(200).json({ 
-      success: true, 
+
+    res.status(200).json({
+      success: true,
       message: 'Product create webhook processed',
-      syncedCount 
+      syncedCount
     });
-    
+
   } catch (error) {
     console.error('❌ Product create webhook error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to process product create webhook',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -291,29 +292,29 @@ app.post('/api/webhooks/products/update', verifyShopifyWebhook, async (req, res)
     const { shop_id, shop_domain } = req.body;
     const productId = req.body.id;
     const accessToken = req.get('X-Shopify-Access-Token');
-    
+
     console.log(`📦 Received product update webhook for product ${productId} from shop ${shop_domain}`);
-    
+
     if (!shop_id || !accessToken) {
       return res.status(400).json({ error: 'Missing shop_id or access token' });
     }
 
     // Sync the updated product to MongoDB
     const syncedCount = await syncProductsToMongoDB(shop_domain, accessToken);
-    
+
     console.log(`✅ Product ${productId} updated for shop ${shop_domain}`);
-    
-    res.status(200).json({ 
-      success: true, 
+
+    res.status(200).json({
+      success: true,
       message: 'Product update webhook processed',
-      syncedCount 
+      syncedCount
     });
-    
+
   } catch (error) {
     console.error('❌ Product update webhook error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to process product update webhook',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -323,9 +324,9 @@ app.post('/api/webhooks/products/delete', verifyShopifyWebhook, async (req, res)
   try {
     const { shop_id, shop_domain } = req.body;
     const productId = req.body.id;
-    
+
     console.log(`📦 Received product delete webhook for product ${productId} from shop ${shop_domain}`);
-    
+
     if (!shop_id) {
       return res.status(400).json({ error: 'Missing shop_id' });
     }
@@ -333,21 +334,21 @@ app.post('/api/webhooks/products/delete', verifyShopifyWebhook, async (req, res)
     // Remove product from MongoDB
     await connectToMongoDB();
     const { deleteProduct } = await import('./backend/database/collections.js');
-    
+
     await deleteProduct(shop_domain, productId);
-    
+
     console.log(`🗑️ Product ${productId} deleted for shop ${shop_domain}`);
-    
-    res.status(200).json({ 
-      success: true, 
-      message: 'Product delete webhook processed' 
+
+    res.status(200).json({
+      success: true,
+      message: 'Product delete webhook processed'
     });
-    
+
   } catch (error) {
     console.error('❌ Product delete webhook error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to process product delete webhook',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -359,7 +360,7 @@ async function startServer() {
     await connectToMongoDB();
     await initializeCollections();
     console.log('📊 All collections and indexes initialized successfully');
-    
+
     // Start the Express server
     app.listen(PORT, () => {
       console.log('');
