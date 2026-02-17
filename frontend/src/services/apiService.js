@@ -212,23 +212,76 @@ class ApiService {
    */
   async trackUpsellAnalytics(productId, shopId, upsellProductIds, clickedProductIds = []) {
     try {
-      await fetch(`${API_BASE_URL}/analytics/upsell`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          productId,
-          shopId,
-          upsellProductIds,
-          clickedProductIds,
-          timestamp: new Date().toISOString()
-        })
+      // Track views for all displayed upsell products
+      for (const upsellProductId of upsellProductIds) {
+        await this.trackSingleEvent('view', shopId, productId, upsellProductId);
+      }
+      
+      // Track clicks for clicked products
+      for (const clickedProductId of clickedProductIds) {
+        await this.trackSingleEvent('click', shopId, productId, clickedProductId);
+      }
+      
+      console.log('✅ Upsell analytics tracked:', {
+        views: upsellProductIds.length,
+        clicks: clickedProductIds.length,
+        sourceProductId: productId
       });
     } catch (error) {
       console.error('Error tracking upsell analytics:', error);
       // Don't throw - analytics failure shouldn't break the user experience
     }
+  }
+
+  /**
+   * Track a single upsell event directly
+   */
+  async trackSingleEvent(eventType, shopId, sourceProductId, upsellProductId) {
+    try {
+      // Use the working /api/analytics/track endpoint
+      const response = await fetch(`${API_BASE_URL}/analytics/track`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          eventType,
+          shopId,
+          sourceProductId,
+          upsellProductId
+        })
+      });
+      
+      if (response.ok) {
+        console.log(`✅ ${eventType} tracked: ${sourceProductId} → ${upsellProductId}`);
+      } else {
+        console.warn(`Analytics endpoint returned ${response.status}`);
+        this.storeAnalyticsLocally(eventType, shopId, sourceProductId, upsellProductId);
+      }
+    } catch (error) {
+      console.warn('Analytics API unavailable, storing locally:', error.message);
+      this.storeAnalyticsLocally(eventType, shopId, sourceProductId, upsellProductId);
+    }
+  }
+
+  /**
+   * Store analytics data locally as fallback
+   */
+  storeAnalyticsLocally(eventType, shopId, sourceProductId, upsellProductId) {
+    // Store in localStorage for manual sync later
+    const key = 'upsell_analytics';
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    
+    existing.push({
+      eventType,
+      shopId,
+      sourceProductId,
+      upsellProductId,
+      timestamp: new Date().toISOString()
+    });
+    
+    localStorage.setItem(key, JSON.stringify(existing));
+    console.log('📊 Analytics stored locally:', { eventType, sourceProductId, upsellProductId });
   }
 }
 

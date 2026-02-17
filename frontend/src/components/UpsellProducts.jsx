@@ -25,6 +25,23 @@ const UpsellProducts = ({
     loadUpsellProducts();
   }, [currentProductId, shopDomain, storefrontAccessToken]);
 
+  // Track views when upsell products are loaded
+  useEffect(() => {
+    if (upsellProducts.length > 0 && currentProductId && shopDomain) {
+      // Track views for all displayed upsell products
+      const upsellProductIds = upsellProducts.map(p => p.id);
+      
+      apiService.trackUpsellAnalytics(
+        currentProductId,
+        shopDomain,
+        upsellProductIds, // All products that were shown
+        [] // No clicks yet
+      ).catch(error => {
+        console.error('Error tracking upsell views:', error);
+      });
+    }
+  }, [upsellProducts, currentProductId, shopDomain]);
+
   const loadUpsellProducts = async () => {
     try {
       setLoading(true);
@@ -51,13 +68,16 @@ const UpsellProducts = ({
     newClickedProducts.add(productId);
     setClickedProducts(newClickedProducts);
 
-    // Track analytics
+    // Track clicks (already tracked views from useEffect above)
+    const upsellProductIds = upsellProducts.map(p => p.id);
     apiService.trackUpsellAnalytics(
       currentProductId,
       shopDomain,
-      upsellProducts.map(p => p.id),
-      [productId]
-    );
+      upsellProductIds, // All products that were shown
+      [productId] // Only the clicked product
+    ).catch(error => {
+      console.error('Error tracking upsell clicks:', error);
+    });
   };
 
   if (loading) {

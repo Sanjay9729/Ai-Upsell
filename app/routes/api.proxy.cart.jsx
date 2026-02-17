@@ -1,6 +1,7 @@
 import { json } from "@remix-run/node";
 import crypto from "crypto";
 import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
+import { storeUpsellRecommendations } from "../../backend/services/upsellRecommendationsService.js";
 
 /**
  * Shopify App Proxy Handler for Cart Page
@@ -86,6 +87,25 @@ export const loader = async ({ request }) => {
     // Get AI-powered cart upsell recommendations
     const recommendations = await aiEngine.findCartUpsellProducts(shop, productIds, 4);
 
+    // Get all product titles from cart items using AI engine
+    let cartSourceTitle = 'Cart Items';
+    try {
+      // Get cart products from AI engine
+      const cartProducts = await aiEngine.getProductsByShop(shop);
+      const validCartProducts = cartProducts.filter(p => productIds.includes(p.productId));
+
+      if (validCartProducts.length > 0) {
+        // Get ALL product titles, not just the first one
+        const allProductTitles = validCartProducts.map(p => p.title).join(', ');
+        cartSourceTitle = allProductTitles;
+        console.log(`🛒 Got cart source titles from AI engine: ${cartSourceTitle}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Could not get cart source title:`, error);
+    }
+
+    console.log(`📝 Final cart source title: ${cartSourceTitle}`);
+
     // Format response for frontend
     const formattedRecommendations = recommendations.map(product => ({
       id: product.productId,
@@ -99,11 +119,39 @@ export const loader = async ({ request }) => {
       url: `/products/${product.handle}`
     }));
 
+    console.log('📊 Formatted cart recommendations for storage:', JSON.stringify(formattedRecommendations, null, 2));
+
+    // Store formatted recommendations in MongoDB for analytics
+    try {
+      const storageData = {
+        shopId: shop,
+        sourceProductId: productIds[0]?.toString(), // Use first product as primary source
+        sourceProductName: cartSourceTitle,
+        recommendations: formattedRecommendations,
+        recommendationContext: 'cart',
+        cartProductIds: productIds,
+        metadata: {
+          apiEndpoint: 'proxy.cart',
+          generatedBy: 'groqAIEngine',
+          totalSourceProducts: productIds.length
+        }
+      };
+      console.log('📤 Calling storeUpsellRecommendations with:', JSON.stringify(storageData, null, 2));
+
+      const storeResult = await storeUpsellRecommendations(storageData);
+      console.log('✅ Cart recommendations stored successfully:', storeResult);
+    } catch (storeError) {
+      console.error('❌ Failed to store cart recommendations:', storeError);
+      console.error('❌ Error stack:', storeError.stack);
+      // Don't fail the entire request if storage fails
+    }
+
     // Return response in Liquid-compatible format
     return json({
       success: true,
       cartProductIds: productIds,
       shop,
+      sourceTitle: cartSourceTitle, // <--- Added source title for frontend tracking
       recommendations: formattedRecommendations,
       count: formattedRecommendations.length
     }, {

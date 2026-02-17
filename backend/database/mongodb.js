@@ -38,18 +38,33 @@ export async function closeMongoDB() {
 export const collections = {
   products: 'products',
   stores: 'stores',
-  upsells: 'upsells'
+  upsells: 'upsells',
+  upsellEvents: 'upsell_events',
+  cartEvents: 'cart_events',
+  upsellRecommendations: 'upsell_recommendations'
 };
 
 export async function initializeCollections() {
   const database = await getDb();
-  
+
   // Create indexes for better performance
   await database.collection(collections.products).createIndex({ shopId: 1, productId: 1 }, { unique: true });
   await database.collection(collections.products).createIndex({ shopId: 1, tags: 1 });
   await database.collection(collections.products).createIndex({ shopId: 1, vendor: 1 });
   await database.collection(collections.products).createIndex({ shopId: 1, productType: 1 });
   await database.collection(collections.upsells).createIndex({ shopId: 1, sourceProductId: 1 });
-  
+
+  // Upsell events collection indexes
+  await database.collection(collections.upsellEvents).createIndex({ shopId: 1, timestamp: -1 });
+  await database.collection(collections.upsellEvents).createIndex({ shopId: 1, eventType: 1 });
+  await database.collection(collections.upsellEvents).createIndex({ shopId: 1, sourceProductId: 1 });
+  await database.collection(collections.upsellEvents).createIndex({ shopId: 1, upsellProductId: 1 });
+  await database.collection(collections.upsellEvents).createIndex({ isUpsellEvent: 1 });
+
+  // Upsell recommendations collection indexes
+  await database.collection(collections.upsellRecommendations).createIndex({ shopId: 1, timestamp: -1 });
+  await database.collection(collections.upsellRecommendations).createIndex({ shopId: 1, sourceProductId: 1 });
+  await database.collection(collections.upsellRecommendations).createIndex({ shopId: 1, recommendationType: 1 });
+
   console.log('MongoDB collections initialized');
 }

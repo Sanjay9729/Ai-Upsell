@@ -157,7 +157,12 @@
                 </div>
               </a>
               <div class="ai-upsell-actions">
-                <button class="ai-add-to-cart-btn" data-variant-id="${variantId}" ${!product.availableForSale ? 'disabled' : ''}>
+                <button class="ai-add-to-cart-btn"
+                        data-variant-id="${variantId}"
+                        data-product-id="${product.id}"
+                        data-recommendation-type="${product.type}"
+                        data-confidence="${product.confidence}"
+                        ${!product.availableForSale ? 'disabled' : ''}>
                   ${product.availableForSale ? 'Add to Cart' : 'Out of Stock'}
                 </button>
               </div>
@@ -171,6 +176,8 @@
         contentEl.innerHTML = html;
         contentEl.style.display = 'block';
 
+        // View events removed - only tracking cart add events
+
         // Add event listeners to "Add to cart" buttons
         const addToCartButtons = contentEl.querySelectorAll('.ai-add-to-cart-btn');
         addToCartButtons.forEach(button => {
@@ -179,7 +186,15 @@
             e.stopPropagation();
 
             const variantId = button.getAttribute('data-variant-id');
+            const upsellProductId = button.getAttribute('data-product-id');
+            const recommendationType = button.getAttribute('data-recommendation-type');
+            const confidence = button.getAttribute('data-confidence');
             const originalText = button.textContent;
+
+            // Get the product title from the button's parent card
+            const productCard = button.closest('.ai-upsell-card');
+            const productTitleElement = productCard.querySelector('.ai-upsell-product-title');
+            const productTitle = productTitleElement ? productTitleElement.textContent : 'Unknown Product';
 
             try {
               button.disabled = true;
@@ -199,6 +214,42 @@
               if (!response.ok) throw new Error('Failed to add to cart');
 
               const result = await response.json();
+
+              // Track upsell cart addition event using App Proxy
+              // Use /apps/ai-upsell/analytics/track which routes to api.proxy.analytics.track.jsx
+              console.log('📊 Tracking upsell cart add (Product Page):', {
+                url: '/apps/ai-upsell/analytics/track',
+                product: productTitle
+              });
+
+              fetch('/apps/ai-upsell/analytics/track', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  eventType: 'cart_add',
+                  shopId: '{{ shop.permanent_domain }}',
+                  sourceProductId: PRODUCT_ID,
+                  sourceProductName: '{{ product.title }}',
+                  upsellProductId: upsellProductId,
+                  upsellProductName: productTitle,
+                  variantId: variantId,
+                  recommendationType: recommendationType,
+                  confidence: parseFloat(confidence),
+                  quantity: 1,
+                  metadata: {
+                    location: 'product_detail_page',
+                    sourceProductTitle: '{{ product.title }}',
+                    upsellProductTitle: productTitle
+                  }
+                })
+              })
+              .then(async (res) => {
+                const text = await res.text();
+                console.log('✅ Tracking response:', res.status, text);
+              })
+              .catch(err => console.error('❌ Analytics tracking failed:', err));
 
               // Use Shopify's publish/subscribe system to update the cart
               // This is the recommended way to update cart in Dawn theme
