@@ -81,40 +81,12 @@
 
         let products = data.recommendations.slice(0, MAX_PRODUCTS);
 
-        // Fetch fresh product data from Shopify to get real-time availability
-        const shopifyProducts = await Promise.all(
-          products.map(async (product) => {
-            try {
-              // Extract numeric product ID from handle or use existing ID
-              const productHandle = product.handle;
-
-              // Fetch product data directly from Shopify product page JSON
-              const productResponse = await fetch(`/products/${productHandle}.js`);
-              if (!productResponse.ok) {
-                console.warn(`Failed to fetch product ${productHandle}`);
-                return product;
-              }
-
-              const shopifyProduct = await productResponse.json();
-
-              // Get first available variant
-              const firstVariant = shopifyProduct.variants?.[0];
-
-              return {
-                ...product,
-                availableForSale: shopifyProduct.available,
-                variantId: firstVariant?.id,
-                price: firstVariant ? (firstVariant.price / 100).toFixed(2) : product.price,
-                compareAtPrice: firstVariant?.compare_at_price ? (firstVariant.compare_at_price / 100).toFixed(2) : null
-              };
-            } catch (error) {
-              console.error(`Error fetching Shopify data for ${product.handle}:`, error);
-              return { ...product, availableForSale: true }; // Default to available if fetch fails
-            }
-          })
-        );
-
-        products = shopifyProducts;
+        console.log('📦 Received products with inventory from backend:', products.map(p => ({
+          handle: p.handle,
+          inventoryQuantity: p.inventoryQuantity,
+          inventoryPolicy: p.inventoryPolicy,
+          availableForSale: p.availableForSale
+        })));
 
         let html = `
           <div class="ai-upsell-header">
@@ -138,10 +110,17 @@
           const badge = badgeLabels[product.type] || '{{ block.settings.badge_default }}';
           const confidence = Math.round((product.confidence || 0.8) * 100);
 
-          const variantId = product.variantId || product.id;
+          let variantId = product.variantId || product.id;
+          // Extract numeric ID from GID format (gid://shopify/ProductVariant/123 → 123)
+          if (typeof variantId === 'string' && variantId.includes('/')) {
+            variantId = variantId.split('/').pop();
+          }
 
           html += `
-            <div class="ai-upsell-card" data-product-id="${product.id}">
+            <div class="ai-upsell-card" 
+                 data-product-id="${product.id}"
+                 data-inventory-quantity="${product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999}"
+                 data-inventory-policy="${product.inventoryPolicy || 'continue'}">
               <a href="${product.url}" class="ai-upsell-link">
                 <div class="ai-upsell-image-wrapper">
                   ${product.image ? `<img src="${product.image}" alt="${product.title}" class="ai-upsell-image" loading="lazy" />` : ''}
@@ -157,6 +136,14 @@
                 </div>
               </a>
               <div class="ai-upsell-actions">
+                <div class="ai-upsell-quantity">
+                  <span class="ai-qty-label">Quantity</span>
+                  <div class="ai-qty-controls">
+                    <button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">−</button>
+                    <input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly />
+                    <button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button>
+                  </div>
+                </div>
                 <button class="ai-add-to-cart-btn"
                         data-variant-id="${variantId}"
                         data-product-id="${product.id}"
@@ -178,6 +165,38 @@
 
         // View events removed - only tracking cart add events
 
+        // Add event listeners to quantity buttons
+        contentEl.querySelectorAll('.ai-qty-minus').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = btn.parentElement.querySelector('.ai-qty-input');
+            const val = parseInt(input.value);
+            if (val > 1) input.value = val - 1;
+          });
+        });
+        contentEl.querySelectorAll('.ai-qty-plus').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const card = btn.closest('.ai-upsell-card');
+            const input = btn.parentElement.querySelector('.ai-qty-input');
+            const val = parseInt(input.value);
+            
+            const inventoryQty = parseInt(card.dataset.inventoryQuantity);
+            const inventoryPolicy = card.dataset.inventoryPolicy;
+            
+            if (inventoryPolicy === 'deny' && val >= inventoryQty) {
+              console.log('🛑 Limit reached for', card.dataset.productId, 'Qty:', inventoryQty);
+              btn.style.opacity = '0.5';
+              setTimeout(() => btn.style.opacity = '1', 200);
+              return;
+            }
+            
+            console.log('Inventory Check:', { val, inventoryQty, inventoryPolicy });
+            
+            if (val < 99) input.value = val + 1;
+          });
+        });
+
         // Add event listeners to "Add to cart" buttons
         const addToCartButtons = contentEl.querySelectorAll('.ai-add-to-cart-btn');
         addToCartButtons.forEach(button => {
@@ -191,8 +210,10 @@
             const confidence = button.getAttribute('data-confidence');
             const originalText = button.textContent;
 
-            // Get the product title from the button's parent card
+            // Get the product title and quantity from the button's parent card
             const productCard = button.closest('.ai-upsell-card');
+            const qtyInput = productCard.querySelector('.ai-qty-input');
+            const quantity = qtyInput ? parseInt(qtyInput.value) : 1;
             const productTitleElement = productCard.querySelector('.ai-upsell-product-title');
             const productTitle = productTitleElement ? productTitleElement.textContent : 'Unknown Product';
 
@@ -207,7 +228,7 @@
                 },
                 body: JSON.stringify({
                   id: variantId,
-                  quantity: 1
+                  quantity: quantity
                 })
               });
 
@@ -237,7 +258,7 @@
                   variantId: variantId,
                   recommendationType: recommendationType,
                   confidence: parseFloat(confidence),
-                  quantity: 1,
+                  quantity: quantity,
                   metadata: {
                     location: 'product_detail_page',
                     sourceProductTitle: '{{ product.title }}',
@@ -579,6 +600,63 @@
 
   .ai-add-to-cart-btn:active:not(:disabled) {
     transform: translateY(0);
+  }
+
+  .ai-upsell-quantity {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: #f5f5f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px 10px;
+  }
+
+  .ai-qty-label {
+    font-size: 13px;
+    color: {{ block.settings.text_color }};
+  }
+
+  .ai-qty-controls {
+    display: flex;
+    align-items: center;
+  }
+
+  .ai-qty-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: {{ block.settings.text_color }};
+    transition: opacity 0.2s;
+  }
+
+  .ai-qty-btn:hover {
+    opacity: 0.7;
+  }
+
+  .ai-qty-input {
+    width: 36px;
+    text-align: center;
+    border: none;
+    background: transparent;
+    font-size: 14px;
+    font-weight: 600;
+    color: {{ block.settings.text_color }};
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .ai-qty-input::-webkit-outer-spin-button,
+  .ai-qty-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
 </style>
 

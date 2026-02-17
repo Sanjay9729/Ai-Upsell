@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import crypto from "crypto";
+import { authenticate } from "../shopify.server";
 import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
 import { storeUpsellRecommendations } from "../../backend/services/upsellRecommendationsService.js";
 
@@ -93,8 +94,80 @@ export const loader = async ({ request }) => {
       reason: product.aiReason,
       confidence: product.confidence,
       type: product.recommendationType,
-      url: `/products/${product.handle}`
+      url: `/products/${product.handle}`,
+      availableForSale: product.status?.toUpperCase() === 'ACTIVE',
+      variantId: product.variants?.[0]?.id || null
     }));
+
+    // Enrich with live inventory from Shopify Admin API
+    try {
+      const { admin } = await authenticate.public.appProxy(request);
+      if (admin) {
+        const productGids = formattedRecommendations.map(r => `gid://shopify/Product/${r.id}`);
+        const gqlResponse = await admin.graphql(
+          `#graphql
+          query getInventory($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on Product {
+                id
+                status
+                totalInventory
+                variants(first: 1) {
+                  edges {
+                    node {
+                      id
+                      inventoryPolicy
+                      inventoryQuantity
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { variables: { ids: productGids } }
+        );
+        const gqlData = await gqlResponse.json();
+        console.log('📦 Shopify inventory response:', JSON.stringify(gqlData.data?.nodes?.map(n => ({
+          id: n?.id, status: n?.status, totalInventory: n?.totalInventory
+        })), null, 2));
+
+        const inventoryMap = {};
+        for (const node of gqlData.data?.nodes || []) {
+          if (!node || !node.id) continue;
+          const numericId = node.id.match(/Product\/(\d+)/)?.[1];
+          if (numericId) {
+            const variant = node.variants?.edges?.[0]?.node;
+            const policy = variant?.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
+            const totalInv = node.totalInventory ?? variant?.inventoryQuantity ?? 0;
+            inventoryMap[numericId] = {
+              availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
+              inventoryQuantity: totalInv,
+              inventoryPolicy: policy,
+              variantId: variant?.id || null
+            };
+          }
+        }
+        console.log('📦 Inventory map:', inventoryMap);
+
+        // Merge inventory into recommendations
+        formattedRecommendations.forEach((rec, i) => {
+          const live = inventoryMap[String(rec.id)] || {};
+          if (live.availableForSale !== undefined) {
+            formattedRecommendations[i] = {
+              ...rec,
+              availableForSale: live.availableForSale,
+              inventoryQuantity: live.inventoryQuantity,
+              inventoryPolicy: live.inventoryPolicy,
+              variantId: live.variantId || rec.variantId
+            };
+          }
+        });
+      } else {
+        console.warn('⚠️ No admin client from appProxy auth');
+      }
+    } catch (invError) {
+      console.error('⚠️ Inventory enrichment failed:', invError.message);
+    }
 
     // Store recommendations in MongoDB for analytics
     try {
