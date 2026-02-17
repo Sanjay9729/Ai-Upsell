@@ -1,7 +1,64 @@
 import { json } from "@remix-run/node";
 import crypto from "crypto";
+import { authenticate } from "../shopify.server";
 import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
 import { storeUpsellRecommendations } from "../../backend/services/upsellRecommendationsService.js";
+
+/**
+ * Fetch live inventory using authenticated admin client from appProxy
+ */
+async function fetchLiveInventory(admin, productIds) {
+  const inventoryMap = {};
+  if (!admin) return inventoryMap;
+
+  try {
+    const productGids = productIds.map(id => `gid://shopify/Product/${id}`);
+    const response = await admin.graphql(
+      `#graphql
+      query getInventory($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on Product {
+            id
+            status
+            totalInventory
+            variants(first: 1) {
+              edges {
+                node {
+                  id
+                  inventoryPolicy
+                  inventoryQuantity
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { variables: { ids: productGids } }
+    );
+
+    const data = await response.json();
+    for (const node of data.data?.nodes || []) {
+      if (!node || !node.id) continue;
+      const numericId = node.id.match(/Product\/(\d+)/)?.[1];
+      if (numericId) {
+        const variant = node.variants?.edges?.[0]?.node;
+        const policy = variant?.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
+        const totalInv = node.totalInventory ?? variant?.inventoryQuantity ?? 0;
+        inventoryMap[numericId] = {
+          availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
+          inventoryQuantity: totalInv,
+          inventoryPolicy: policy,
+          variantId: variant?.id || null
+        };
+      }
+    }
+    console.log('🛒 Live inventory map for cart:', inventoryMap);
+  } catch (err) {
+    console.error('⚠️ Failed to fetch live inventory for cart:', err.message);
+  }
+
+  return inventoryMap;
+}
 
 /**
  * Shopify App Proxy Handler for Cart Page
@@ -106,18 +163,38 @@ export const loader = async ({ request }) => {
 
     console.log(`📝 Final cart source title: ${cartSourceTitle}`);
 
+    // Get admin client from appProxy auth for inventory fetch
+    let adminClient = null;
+    try {
+      const { admin } = await authenticate.public.appProxy(request);
+      adminClient = admin;
+    } catch (authErr) {
+      console.error('⚠️ Cart appProxy auth failed:', authErr.message);
+    }
+
+    // Fetch live inventory from Shopify Admin API
+    const recProductIds = recommendations.map(p => p.productId);
+    const inventoryMap = await fetchLiveInventory(adminClient, recProductIds);
+
     // Format response for frontend
-    const formattedRecommendations = recommendations.map(product => ({
-      id: product.productId,
-      title: product.title,
-      handle: product.handle,
-      price: product.aiData?.price || "0",
-      image: product.images?.[0]?.src || product.image?.src || "",
-      reason: product.aiReason,
-      confidence: product.confidence,
-      type: product.recommendationType,
-      url: `/products/${product.handle}`
-    }));
+    const formattedRecommendations = recommendations.map(product => {
+      const live = inventoryMap[product.productId] || {};
+      return {
+        id: product.productId,
+        title: product.title,
+        handle: product.handle,
+        price: product.aiData?.price || "0",
+        image: product.images?.[0]?.src || product.image?.src || "",
+        reason: product.aiReason,
+        confidence: product.confidence,
+        type: product.recommendationType,
+        url: `/products/${product.handle}`,
+        availableForSale: live.availableForSale ?? (product.status?.toUpperCase() === 'ACTIVE'),
+        inventoryQuantity: live.inventoryQuantity ?? 0,
+        inventoryPolicy: live.inventoryPolicy ?? 'continue',
+        variantId: live.variantId || product.variants?.[0]?.id || null
+      };
+    });
 
     console.log('📊 Formatted cart recommendations for storage:', JSON.stringify(formattedRecommendations, null, 2));
 

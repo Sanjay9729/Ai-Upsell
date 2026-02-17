@@ -5,6 +5,9 @@ import { storeUpsellRecommendations } from "../../backend/services/upsellRecomme
 /**
  * API endpoint to get AI-powered upsell recommendations
  * GET /api/upsell/:productId?shop=shop-domain.myshopify.com
+ *
+ * Note: Inventory enrichment happens in apps.ai-upsell.jsx (the proxy route)
+ * using authenticate.public.appProxy() for proper token management.
  */
 export const loader = async ({ params, request }) => {
   try {
@@ -30,7 +33,7 @@ export const loader = async ({ params, request }) => {
       4 // Number of recommendations
     );
 
-    // Format response for frontend
+    // Format response for frontend (inventory will be enriched by proxy route)
     const formattedRecommendations = recommendations.map(product => ({
       id: product.productId,
       title: product.title,
@@ -41,11 +44,14 @@ export const loader = async ({ params, request }) => {
       confidence: product.confidence,
       type: product.recommendationType,
       url: `https://${shop}/products/${product.handle}`,
-      availableForSale: product.status === 'active', // Use product status from Shopify
+      availableForSale: product.status?.toUpperCase() === 'ACTIVE',
       variantId: product.variants?.[0]?.id || null
     }));
 
-    console.log('📊 Formatted recommendations for storage:', JSON.stringify(formattedRecommendations, null, 2));
+    console.log('📊 Recommendations (before inventory enrichment):', formattedRecommendations.map(r => ({
+      title: r.title,
+      availableForSale: r.availableForSale
+    })));
 
     // Store formatted recommendations in MongoDB for analytics
     try {
@@ -59,13 +65,11 @@ export const loader = async ({ params, request }) => {
           generatedBy: 'groqAIEngine'
         }
       };
-      console.log('📤 Calling storeUpsellRecommendations with:', JSON.stringify(storageData, null, 2));
 
       const storeResult = await storeUpsellRecommendations(storageData);
       console.log('✅ Recommendations stored successfully:', storeResult);
     } catch (storeError) {
       console.error('❌ Failed to store recommendations:', storeError);
-      console.error('❌ Error stack:', storeError.stack);
       // Don't fail the entire request if storage fails
     }
 
