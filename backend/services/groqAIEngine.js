@@ -1,5 +1,32 @@
 import { getDb } from '../database/connection.js';
 
+// Simple in-memory cache with TTL for recommendations
+const recommendationCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCacheKey(type, shopId, productId) {
+  return `${type}:${shopId}:${productId}`;
+}
+
+function getFromCache(key) {
+  const entry = recommendationCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    recommendationCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCache(key, data) {
+  // Prevent unbounded growth — evict oldest entries if cache exceeds 500
+  if (recommendationCache.size > 500) {
+    const firstKey = recommendationCache.keys().next().value;
+    recommendationCache.delete(firstKey);
+  }
+  recommendationCache.set(key, { data, timestamp: Date.now() });
+}
+
 /**
  * AI Engine powered by Groq LLM for intelligent upsell recommendations
  * Uses Groq's fast inference for real-time product suggestions
@@ -20,14 +47,24 @@ export class GroqAIEngine {
     try {
       console.log(`🤖 Starting Groq AI analysis for product ${currentProductId}`);
 
-      // Get current product details from MongoDB
-      const currentProduct = await this.getProductById(shopId, currentProductId);
+      // Check cache first
+      const cacheKey = getCacheKey('product', shopId, currentProductId);
+      const cached = getFromCache(cacheKey);
+      if (cached) {
+        console.log(`⚡ Cache hit for product ${currentProductId}`);
+        return cached;
+      }
+
+      // Get current product and all shop products in parallel
+      const [currentProduct, allProducts] = await Promise.all([
+        this.getProductById(shopId, currentProductId),
+        this.getProductsByShop(shopId)
+      ]);
+
       if (!currentProduct) {
         throw new Error('Current product not found');
       }
 
-      // Get all other products from the same shop
-      const allProducts = await this.getProductsByShop(shopId);
       const otherProducts = allProducts.filter(p => p.productId !== currentProductId);
 
       if (otherProducts.length === 0) {
@@ -37,7 +74,14 @@ export class GroqAIEngine {
       // Use Groq to intelligently analyze and recommend products
       const recommendations = await this.analyzeWithGroq(currentProduct, otherProducts, limit);
 
+      // Attach source product info so callers don't need to re-fetch
+      recommendations._sourceProduct = currentProduct;
+
       console.log(`✅ Groq AI found ${recommendations.length} upsell recommendations`);
+
+      // Cache the result
+      setCache(cacheKey, recommendations);
+
       return recommendations;
 
     } catch (error) {
@@ -55,21 +99,25 @@ export class GroqAIEngine {
     try {
       console.log(`🛒 Starting Groq AI analysis for ${cartProductIds.length} cart products`);
 
-      // Get cart product details from MongoDB
-      const cartProducts = await Promise.all(
-        cartProductIds.map(id => this.getProductById(shopId, id))
-      );
+      // Check cache (sort IDs for consistent key)
+      const sortedIds = [...cartProductIds].sort().join(',');
+      const cacheKey = getCacheKey('cart', shopId, sortedIds);
+      const cached = getFromCache(cacheKey);
+      if (cached) {
+        console.log(`⚡ Cache hit for cart [${sortedIds}]`);
+        return cached;
+      }
 
-      // Filter out any null products
-      const validCartProducts = cartProducts.filter(p => p !== null);
+      // Fetch all products in one query — cart products + candidates come from the same collection
+      const allProducts = await this.getProductsByShop(shopId);
+
+      const cartProductIdSet = new Set(cartProductIds.map(String));
+      const validCartProducts = allProducts.filter(p => cartProductIdSet.has(String(p.productId)));
+      const otherProducts = allProducts.filter(p => !cartProductIdSet.has(String(p.productId)));
 
       if (validCartProducts.length === 0) {
         throw new Error('No valid cart products found');
       }
-
-      // Get all other products from the same shop
-      const allProducts = await this.getProductsByShop(shopId);
-      const otherProducts = allProducts.filter(p => !cartProductIds.includes(p.productId));
 
       if (otherProducts.length === 0) {
         return [];
@@ -78,7 +126,14 @@ export class GroqAIEngine {
       // Use Groq to intelligently analyze and recommend products based on cart
       const recommendations = await this.analyzeCartWithGroq(validCartProducts, otherProducts, limit);
 
+      // Attach cart product info so callers don't need to re-fetch
+      recommendations._cartProducts = validCartProducts;
+
       console.log(`✅ Groq AI found ${recommendations.length} cart upsell recommendations`);
+
+      // Cache the result
+      setCache(cacheKey, recommendations);
+
       return recommendations;
 
     } catch (error) {

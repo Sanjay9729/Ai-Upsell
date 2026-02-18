@@ -169,9 +169,13 @@
         contentEl.querySelectorAll('.ai-qty-minus').forEach(btn => {
           btn.addEventListener('click', (e) => {
             e.preventDefault();
+            const card = btn.closest('.ai-upsell-card');
             const input = btn.parentElement.querySelector('.ai-qty-input');
             const val = parseInt(input.value);
-            if (val > 1) input.value = val - 1;
+            if (val > 1) {
+              input.value = val - 1;
+              updatePrice(card, val - 1);
+            }
           });
         });
         contentEl.querySelectorAll('.ai-qty-plus').forEach(btn => {
@@ -193,9 +197,36 @@
             
             console.log('Inventory Check:', { val, inventoryQty, inventoryPolicy });
             
-            if (val < 99) input.value = val + 1;
+            if (val < 99) {
+              input.value = val + 1;
+              updatePrice(card, val + 1);
+            }
           });
         });
+
+        // Helper function to update price display based on quantity
+        function updatePrice(card, quantity) {
+          const priceEl = card.querySelector('.ai-upsell-price');
+          if (!priceEl) return;
+          
+          const originalPrice = priceEl.getAttribute('data-original-price') || priceEl.textContent;
+          const priceMatch = originalPrice.match(/[\d,]+\.?\d*/);
+          if (!priceMatch) return;
+          
+          const numericPrice = parseFloat(priceMatch[0].replace(/,/g, ''));
+          const totalPrice = numericPrice * quantity;
+          
+          // Format the price with the same currency symbol
+          const currencySymbol = originalPrice.match(/[^\d\s,\.]+/)?.[0] || '$';
+          const formattedPrice = currencySymbol + totalPrice.toFixed(2);
+          
+          priceEl.textContent = formattedPrice;
+          
+          // Store original price on first update
+          if (!priceEl.hasAttribute('data-original-price')) {
+            priceEl.setAttribute('data-original-price', originalPrice);
+          }
+        }
 
         // Add event listeners to "Add to cart" buttons
         const addToCartButtons = contentEl.querySelectorAll('.ai-add-to-cart-btn');
