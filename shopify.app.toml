@@ -2,7 +2,7 @@
 
 client_id = "ff2cbc055629c8491a3d0320e1f028e9"
 name = "AI Upsell"
-application_url = "https://example.com"
+application_url = "https://ai-upsell.onrender.com/"
 embedded = true
 
 [build]
@@ -36,9 +36,9 @@ api_version = "2026-01"
 scopes = "write_products,read_products"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://ai-upsell.onrender.com/api/auth" ]
 
 [app_proxy]
-url = "https://example.com/api/proxy"
+url = "https://ai-upsell.onrender.com/api/proxy"
 subpath = "ai-upsell"
 prefix = "apps"
