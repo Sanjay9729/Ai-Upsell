@@ -2,7 +2,6 @@ import { json } from "@remix-run/node";
 import crypto from "crypto";
 import { authenticate } from "../shopify.server";
 import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
-import { storeUpsellRecommendations } from "../../backend/services/upsellRecommendationsService.js";
 
 /**
  * Fetch live inventory using authenticated admin client from appProxy
@@ -27,6 +26,7 @@ async function fetchLiveInventory(admin, productIds) {
                   id
                   inventoryPolicy
                   inventoryQuantity
+                  compareAtPrice
                 }
               }
             }
@@ -48,7 +48,8 @@ async function fetchLiveInventory(admin, productIds) {
           availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
           inventoryQuantity: totalInv,
           inventoryPolicy: policy,
-          variantId: variant?.id || null
+          variantId: variant?.id || null,
+          compareAtPrice: variant?.compareAtPrice || null
         };
       }
     }
@@ -94,10 +95,14 @@ export const loader = async ({ request }) => {
   try {
     const url = new URL(request.url);
     const params = Object.fromEntries(url.searchParams);
+    const isDev = process.env.NODE_ENV !== "production";
 
     // Verify the request is from Shopify
     if (!verifyProxySignature(params)) {
-      return json({ error: "Invalid signature" }, { status: 401 });
+      if (!isDev) {
+        return json({ error: "Invalid signature" }, { status: 401 });
+      }
+      console.warn("⚠️ Skipping cart app proxy signature validation in development");
     }
 
     const shop = params.shop;
@@ -184,6 +189,7 @@ export const loader = async ({ request }) => {
         title: product.title,
         handle: product.handle,
         price: product.aiData?.price || "0",
+        compareAtPrice: live.compareAtPrice || product.aiData?.compareAtPrice || null,
         image: product.images?.[0]?.src || product.image?.src || "",
         reason: product.aiReason,
         confidence: product.confidence,
@@ -195,33 +201,6 @@ export const loader = async ({ request }) => {
         variantId: live.variantId || product.variants?.[0]?.id || null
       };
     });
-
-    console.log('📊 Formatted cart recommendations for storage:', JSON.stringify(formattedRecommendations, null, 2));
-
-    // Store formatted recommendations in MongoDB for analytics
-    try {
-      const storageData = {
-        shopId: shop,
-        sourceProductId: productIds[0]?.toString(), // Use first product as primary source
-        sourceProductName: cartSourceTitle,
-        recommendations: formattedRecommendations,
-        recommendationContext: 'cart',
-        cartProductIds: productIds,
-        metadata: {
-          apiEndpoint: 'proxy.cart',
-          generatedBy: 'groqAIEngine',
-          totalSourceProducts: productIds.length
-        }
-      };
-      console.log('📤 Calling storeUpsellRecommendations with:', JSON.stringify(storageData, null, 2));
-
-      const storeResult = await storeUpsellRecommendations(storageData);
-      console.log('✅ Cart recommendations stored successfully:', storeResult);
-    } catch (storeError) {
-      console.error('❌ Failed to store cart recommendations:', storeError);
-      console.error('❌ Error stack:', storeError.stack);
-      // Don't fail the entire request if storage fails
-    }
 
     // Return response in Liquid-compatible format
     return json({

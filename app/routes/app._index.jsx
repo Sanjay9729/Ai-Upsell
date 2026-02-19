@@ -20,23 +20,20 @@ export const loader = async ({ request }) => {
     const settings = await db.collection(collections.settings).findOne({ shopId: session.shop });
     const totalConversions = await db.collection(collections.upsellEvents)
       .countDocuments({ shopId: session.shop, isUpsellEvent: true, eventType: 'cart_add' });
-    const totalRecommendations = await db.collection(collections.upsellRecommendations)
-      .countDocuments({ shopId: session.shop });
 
     return json({
       productCount: products.length,
       aiEnabled: settings?.aiEnabled ?? true,
       totalConversions,
-      totalRecommendations,
     });
   } catch (error) {
     console.error("Home page loader error:", error);
-    return json({ productCount: 0, aiEnabled: true, totalConversions: 0, totalRecommendations: 0 });
+    return json({ productCount: 0, aiEnabled: true, totalConversions: 0 });
   }
 };
 
 export default function Index() {
-  const { productCount, aiEnabled, totalConversions, totalRecommendations } = useLoaderData();
+  const { productCount, aiEnabled, totalConversions } = useLoaderData();
 
   const cardStyle = {
     border: '1px solid #e1e3e5',
@@ -96,9 +93,8 @@ export default function Index() {
   const progressPercent = [
     productCount > 0,
     aiEnabled,
-    totalRecommendations > 0,
     totalConversions > 0,
-  ].filter(Boolean).length * 25;
+  ].filter(Boolean).length * 33;
 
   return (
     <s-page heading="Setup Guide">
@@ -141,10 +137,6 @@ export default function Index() {
           <div style={metricCardStyle}>
             <div style={{ fontSize: '28px', fontWeight: '700', color: '#303030' }}>{productCount}</div>
             <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>Products Synced</div>
-          </div>
-          <div style={metricCardStyle}>
-            <div style={{ fontSize: '28px', fontWeight: '700', color: '#303030' }}>{totalRecommendations}</div>
-            <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>Recommendations</div>
           </div>
           <div style={metricCardStyle}>
             <div style={{ fontSize: '28px', fontWeight: '700', color: '#303030' }}>{totalConversions}</div>
@@ -255,9 +247,6 @@ export default function Index() {
             </a>
             <a href="/app/analytics" style={{ display: 'inline-block', padding: '10px 20px', backgroundColor: '#f7f7f8', border: '1px solid #e1e3e5', borderRadius: '8px', color: '#303030', textDecoration: 'none', fontSize: '14px', fontWeight: '500' }}>
               Analytics
-            </a>
-            <a href="/app/recommendations" style={{ display: 'inline-block', padding: '10px 20px', backgroundColor: '#f7f7f8', border: '1px solid #e1e3e5', borderRadius: '8px', color: '#303030', textDecoration: 'none', fontSize: '14px', fontWeight: '500' }}>
-              Recommendations
             </a>
           </div>
         </div>

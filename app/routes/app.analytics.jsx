@@ -137,7 +137,7 @@ export default function AnalyticsPage() {
                   if (conv.metadata?.location === 'product_detail_page') {
                     locationText = 'Product Detail Page';
                     locationTone = '#e4e5e7'; // light gray
-                  } else if (conv.metadata?.location === 'cart_page') {
+                  } else if (conv.metadata?.location === 'cart_page' || conv.metadata?.location === 'cart_page_secondary') {
                     locationText = 'Cart Page';
                     locationTone = '#e3f1df'; // light green
                   }

@@ -89,6 +89,7 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL) {
                   edges {
                     node {
                       price
+                      compareAtPrice
                     }
                   }
                 }
@@ -151,6 +152,7 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL) {
         keywords: extractKeywords(product.title + ' ' + (product.description || '')),
         category: product.productType || '',
         price: product.variants.edges[0]?.node.price || '0',
+        compareAtPrice: product.variants.edges[0]?.node.compareAtPrice || null,
         color: extractColor({ title: product.title, body_html: product.description, tags: product.tags.join(',') }),
         style: extractStyle({ title: product.title, body_html: product.description, tags: product.tags.join(',') }),
         brand: product.vendor || '',
@@ -223,6 +225,7 @@ export async function syncProductsToMongoDB(shopId, accessToken) {
         keywords: extractKeywords(product.title + ' ' + (product.body_html || '')),
         category: product.product_type || '',
         price: product.variants?.[0]?.price || '0',
+        compareAtPrice: product.variants?.[0]?.compare_at_price || null,
         color: extractColor(product),
         style: extractStyle(product),
         brand: product.vendor || '',
@@ -326,6 +329,56 @@ export async function getProductById(shopId, productId) {
     return product;
   } catch (error) {
     console.error('❌ Error fetching product by ID:', error);
+    throw error;
+  }
+}
+
+/**
+ * Upsert a single product directly from a webhook payload (REST format).
+ * Does not require a Shopify session — works even if the offline token has expired.
+ * Used by products/create and products/update webhooks.
+ */
+export async function upsertProductFromWebhookPayload(shopId, payload) {
+  const db = await getDb();
+  const productsCollection = db.collection('products');
+
+  try {
+    const product = {
+      shopId,
+      productId: payload.id,
+      title: payload.title,
+      description: payload.body_html || '',
+      tags: payload.tags ? payload.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+      vendor: payload.vendor || '',
+      productType: payload.product_type || '',
+      handle: payload.handle,
+      status: payload.status,
+      createdAt: new Date(payload.created_at),
+      updatedAt: new Date(payload.updated_at),
+      images: payload.images || [],
+      image: payload.image || null,
+      aiData: {
+        keywords: extractKeywords(payload.title + ' ' + (payload.body_html || '')),
+        category: payload.product_type || '',
+        price: payload.variants?.[0]?.price || '0',
+        compareAtPrice: payload.variants?.[0]?.compare_at_price || null,
+        color: extractColor(payload),
+        style: extractStyle(payload),
+        brand: payload.vendor || '',
+        features: extractFeatures(payload)
+      }
+    };
+
+    await productsCollection.updateOne(
+      { shopId: product.shopId, productId: product.productId },
+      { $set: product },
+      { upsert: true }
+    );
+
+    console.log(`✅ Upserted product ${payload.id} (${payload.title}) for shop ${shopId}`);
+    return product;
+  } catch (error) {
+    console.error('❌ Error upserting product from webhook payload:', error);
     throw error;
   }
 }

@@ -1,6 +1,5 @@
 import { json } from "@remix-run/node";
 import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
-import { storeUpsellRecommendations } from "../../backend/services/upsellRecommendationsService.js";
 
 /**
  * API endpoint to get AI-powered upsell recommendations
@@ -52,26 +51,6 @@ export const loader = async ({ params, request }) => {
       title: r.title,
       availableForSale: r.availableForSale
     })));
-
-    // Store formatted recommendations in MongoDB for analytics
-    try {
-      const storageData = {
-        shopId: shop,
-        sourceProductId: productId,
-        recommendations: formattedRecommendations,
-        recommendationContext: 'product_detail',
-        metadata: {
-          apiEndpoint: 'upsell.product',
-          generatedBy: 'groqAIEngine'
-        }
-      };
-
-      const storeResult = await storeUpsellRecommendations(storageData);
-      console.log('✅ Recommendations stored successfully:', storeResult);
-    } catch (storeError) {
-      console.error('❌ Failed to store recommendations:', storeError);
-      // Don't fail the entire request if storage fails
-    }
 
     return json({
       success: true,

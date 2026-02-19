@@ -1,18 +1,17 @@
 import { authenticate } from "../shopify.server";
-import { syncProductsToMongoDB } from "../../backend/database/collections.js";
+import { upsertProductFromWebhookPayload } from "../../backend/database/collections.js";
 
 export const action = async ({ request }) => {
-  const { shop, session, topic, payload } = await authenticate.webhook(request);
+  const { shop, topic, payload } = await authenticate.webhook(request);
 
   console.log(`✅ Received ${topic} webhook for ${shop}`);
 
-  if (session) {
+  if (payload) {
     try {
-      // Sync all products when a new product is created
-      await syncProductsToMongoDB(shop, session.accessToken);
-      console.log(`✅ Products synced to MongoDB after product creation`);
+      await upsertProductFromWebhookPayload(shop, payload);
+      console.log(`✅ Product ${payload.id} created and synced to MongoDB`);
     } catch (error) {
-      console.error(`❌ Error syncing products to MongoDB:`, error);
+      console.error(`❌ Error syncing new product to MongoDB:`, error);
     }
   }
 

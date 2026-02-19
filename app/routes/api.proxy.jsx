@@ -2,7 +2,6 @@ import { json } from "@remix-run/node";
 import crypto from "crypto";
 import { authenticate } from "../shopify.server";
 import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
-import { storeUpsellRecommendations } from "../../backend/services/upsellRecommendationsService.js";
 
 /**
  * Shopify App Proxy Handler
@@ -38,10 +37,14 @@ export const loader = async ({ request }) => {
   try {
     const url = new URL(request.url);
     const params = Object.fromEntries(url.searchParams);
+    const isDev = process.env.NODE_ENV !== "production";
 
     // Verify the request is from Shopify
     if (!verifyProxySignature(params)) {
-      return json({ error: "Invalid signature" }, { status: 401 });
+      if (!isDev) {
+        return json({ error: "Invalid signature" }, { status: 401 });
+      }
+      console.warn("⚠️ Skipping app proxy signature validation in development");
     }
 
     const shop = params.shop;
@@ -90,6 +93,7 @@ export const loader = async ({ request }) => {
       title: product.title,
       handle: product.handle,
       price: product.aiData?.price || "0",
+      compareAtPrice: product.aiData?.compareAtPrice || null,
       image: product.images?.[0]?.src || product.image?.src || "",
       reason: product.aiReason,
       confidence: product.confidence,
@@ -118,6 +122,7 @@ export const loader = async ({ request }) => {
                       id
                       inventoryPolicy
                       inventoryQuantity
+                      compareAtPrice
                     }
                   }
                 }
@@ -143,7 +148,8 @@ export const loader = async ({ request }) => {
               availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
               inventoryQuantity: totalInv,
               inventoryPolicy: policy,
-              variantId: variant?.id || null
+              variantId: variant?.id || null,
+              compareAtPrice: variant?.compareAtPrice || null
             };
           }
         }
@@ -158,7 +164,8 @@ export const loader = async ({ request }) => {
               availableForSale: live.availableForSale,
               inventoryQuantity: live.inventoryQuantity,
               inventoryPolicy: live.inventoryPolicy,
-              variantId: live.variantId || rec.variantId
+              variantId: live.variantId || rec.variantId,
+              compareAtPrice: live.compareAtPrice || rec.compareAtPrice
             };
           }
         });
@@ -167,28 +174,6 @@ export const loader = async ({ request }) => {
       }
     } catch (invError) {
       console.error('⚠️ Inventory enrichment failed:', invError.message);
-    }
-
-    // Store recommendations in MongoDB for analytics
-    try {
-      const storageData = {
-        shopId: shop,
-        sourceProductId: productId.toString(),
-        sourceProductName: sourceProductTitle,
-        recommendations: formattedRecommendations,
-        recommendationContext: 'product_detail',
-        metadata: {
-          apiEndpoint: 'proxy.ai-upsell',
-          generatedBy: 'groqAIEngine'
-        }
-      };
-      console.log('📦 Storing recommendations from working proxy route...');
-      
-      const storeResult = await storeUpsellRecommendations(storageData);
-      console.log('✅ Recommendations stored successfully from proxy:', storeResult);
-    } catch (storeError) {
-      console.error('❌ Failed to store recommendations from proxy:', storeError);
-      // Don't fail the entire request if storage fails
     }
 
     // Return response in Liquid-compatible format

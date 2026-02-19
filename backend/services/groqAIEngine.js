@@ -27,6 +27,33 @@ function setCache(key, data) {
   recommendationCache.set(key, { data, timestamp: Date.now() });
 }
 
+const STOP_WORDS = new Set([
+  'a','an','the','and','or','with','in','for','of','to','at','by','from',
+  'is','its','it','this','that','on','as','be','my','our','your'
+]);
+
+/**
+ * Extract meaningful type tokens from a product title.
+ * e.g. "7 Shakra Bracelet" → ["shakra", "bracelet"]
+ */
+function getTitleTokens(title) {
+  if (!title) return [];
+  return title.toLowerCase()
+    .split(/[\s\-_/]+/)
+    .map(w => w.replace(/[^a-z]/g, ''))
+    .filter(w => w.length >= 3 && !STOP_WORDS.has(w));
+}
+
+/**
+ * Score a candidate by how many tokens from sourceTitleTokens appear in its title.
+ * Higher score = more likely same product type.
+ */
+function computeTypeScore(sourceTitleTokens, candidateTitle) {
+  const lower = candidateTitle.toLowerCase();
+  return sourceTitleTokens.filter(t => lower.includes(t)).length;
+}
+
+
 /**
  * AI Engine powered by Groq LLM for intelligent upsell recommendations
  * Uses Groq's fast inference for real-time product suggestions
@@ -65,7 +92,7 @@ export class GroqAIEngine {
         throw new Error('Current product not found');
       }
 
-      const otherProducts = allProducts.filter(p => p.productId !== currentProductId);
+      const otherProducts = allProducts.filter(p => String(p.productId) !== String(currentProductId));
 
       if (otherProducts.length === 0) {
         return [];
@@ -153,7 +180,8 @@ export class GroqAIEngine {
         throw new Error('GROQ_API_KEY is not configured in environment variables');
       }
 
-      // Prepare product data for AI analysis
+      // Pre-score candidates by title-word overlap with current product
+      const currentTokens = getTitleTokens(currentProduct.title);
       const productData = candidateProducts.map(product => ({
         id: product.productId,
         title: product.title,
@@ -161,8 +189,12 @@ export class GroqAIEngine {
         brand: product.aiData?.brand || '',
         price: product.aiData?.price || '0',
         keywords: product.aiData?.keywords || [],
-        features: product.aiData?.features || []
+        features: product.aiData?.features || [],
+        sameType: computeTypeScore(currentTokens, product.title) > 0
       }));
+
+      // Sort: same-type candidates first, then others
+      productData.sort((a, b) => (b.sameType ? 1 : 0) - (a.sameType ? 1 : 0));
 
       const prompt = this.buildAnalysisPrompt(currentProduct, productData, limit);
 
@@ -205,8 +237,40 @@ export class GroqAIEngine {
         throw new Error('No AI response received from Groq');
       }
       
-      return this.parseGroqRecommendations(aiResponse, candidateProducts);
-      
+      const results = this.parseGroqRecommendations(aiResponse, candidateProducts);
+
+      // Post-filter: remove any different-type products the AI may have slipped in
+      const filtered = results.filter(p => computeTypeScore(currentTokens, p.title) > 0);
+      console.log(`🔍 Post-filter: ${results.length} → ${filtered.length} same-type results`);
+
+      const base = filtered.length > 0 ? filtered : results;
+      if (base.length >= limit) return base.slice(0, limit);
+
+      // Pad to reach limit: first with other AI results, then same-type DB candidates, then any DB candidate
+      const usedIds = new Set(base.map(p => String(p.productId)));
+      const combined = [...base, ...results.filter(p => !usedIds.has(String(p.productId)))];
+
+      if (combined.length < limit) {
+        const combinedIds = new Set(combined.map(p => String(p.productId)));
+        const dbSameType = candidateProducts
+          .filter(p => !combinedIds.has(String(p.productId)) && computeTypeScore(currentTokens, p.title) > 0)
+          .slice(0, limit - combined.length)
+          .map(p => ({ ...p, aiReason: 'Similar product you might like', confidence: 0.65, recommendationType: 'similar' }));
+        combined.push(...dbSameType);
+      }
+
+      if (combined.length < limit) {
+        const combinedIds = new Set(combined.map(p => String(p.productId)));
+        const dbAny = candidateProducts
+          .filter(p => !combinedIds.has(String(p.productId)))
+          .slice(0, limit - combined.length)
+          .map(p => ({ ...p, aiReason: 'You might also like', confidence: 0.5, recommendationType: 'similar' }));
+        combined.push(...dbAny);
+      }
+
+      console.log(`🔍 Product final: ${Math.min(combined.length, limit)} results`);
+      return combined.slice(0, limit);
+
     } catch (error) {
       console.error('❌ Groq analysis error:', error);
       throw error;
@@ -223,7 +287,8 @@ export class GroqAIEngine {
         throw new Error('GROQ_API_KEY is not configured in environment variables');
       }
 
-      // Prepare product data for AI analysis
+      // Pre-score candidates by title-word overlap with cart products
+      const cartTokens = [...new Set(cartProducts.flatMap(p => getTitleTokens(p.title)))];
       const productData = candidateProducts.map(product => ({
         id: product.productId,
         title: product.title,
@@ -231,8 +296,12 @@ export class GroqAIEngine {
         brand: product.aiData?.brand || '',
         price: product.aiData?.price || '0',
         keywords: product.aiData?.keywords || [],
-        features: product.aiData?.features || []
+        features: product.aiData?.features || [],
+        sameType: computeTypeScore(cartTokens, product.title) > 0
       }));
+
+      // Sort: same-type candidates first, then others
+      productData.sort((a, b) => (b.sameType ? 1 : 0) - (a.sameType ? 1 : 0));
 
       const prompt = this.buildCartAnalysisPrompt(cartProducts, productData, limit);
 
@@ -274,7 +343,38 @@ export class GroqAIEngine {
         throw new Error('No AI response received from Groq');
       }
 
-      return this.parseGroqRecommendations(aiResponse, candidateProducts);
+      const results = this.parseGroqRecommendations(aiResponse, candidateProducts);
+
+      // Keep same-type results first, then pad to reach limit
+      const filtered = results.filter(p => computeTypeScore(cartTokens, p.title) > 0);
+      console.log(`🔍 Cart post-filter: ${results.length} → ${filtered.length} same-type results`);
+
+      if (filtered.length >= limit) return filtered.slice(0, limit);
+
+      // Pad: first with other AI results, then same-type DB candidates, then any DB candidate
+      const usedIds = new Set(filtered.map(p => String(p.productId)));
+      const combined = [...filtered, ...results.filter(p => !usedIds.has(String(p.productId)))];
+
+      if (combined.length < limit) {
+        const combinedIds = new Set(combined.map(p => String(p.productId)));
+        const dbSameType = candidateProducts
+          .filter(p => !combinedIds.has(String(p.productId)) && computeTypeScore(cartTokens, p.title) > 0)
+          .slice(0, limit - combined.length)
+          .map(p => ({ ...p, aiReason: 'Related to your cart items', confidence: 0.65, recommendationType: 'similar' }));
+        combined.push(...dbSameType);
+      }
+
+      if (combined.length < limit) {
+        const combinedIds = new Set(combined.map(p => String(p.productId)));
+        const dbAny = candidateProducts
+          .filter(p => !combinedIds.has(String(p.productId)))
+          .slice(0, limit - combined.length)
+          .map(p => ({ ...p, aiReason: 'You might also like', confidence: 0.5, recommendationType: 'similar' }));
+        combined.push(...dbAny);
+      }
+
+      console.log(`🔍 Cart final: ${Math.min(combined.length, limit)} results`);
+      return combined.slice(0, limit);
 
     } catch (error) {
       console.error('❌ Groq cart analysis error:', error);
@@ -296,7 +396,7 @@ export class GroqAIEngine {
     };
 
     return `
-Analyze the following products and recommend the best ${limit} upsell products for the current product.
+You are recommending upsell products for the current product below.
 
 CURRENT PRODUCT:
 - Title: ${currentData.title}
@@ -306,9 +406,18 @@ CURRENT PRODUCT:
 - Keywords: ${currentData.keywords.join(', ')}
 - Features: ${currentData.features.join(', ')}
 
-CANDIDATE PRODUCTS - You MUST select from these products using their EXACT ProductID number:
+STEP 1 — Identify the specific product type:
+Look at the current product's title and determine its exact type (e.g., "Bangle Bracelet" → type is "bracelet", "Leather Wallet" → type is "wallet", "Running Shoes" → type is "shoes"). Use the title, not the category field, since category may be generic.
+
+STEP 2 — Select candidates of the SAME type:
+From the candidate list below, select ONLY products whose title contains the SAME specific product type you identified in Step 1. For example, if the type is "bracelet", only pick other bracelets (gold bracelet, silver bracelet, leather bracelet, etc.). Do NOT pick necklaces, rings, chokers, or any other type.
+
+STEP 3 — If fewer than ${limit} same-type products exist:
+Only then fill remaining slots with products from the same broad category.
+
+CANDIDATE PRODUCTS - labeled [SAME TYPE] or [DIFFERENT TYPE] based on title similarity:
 ${candidateProducts.map((p, i) => `
-${i + 1}. ProductID: ${p.id}
+${i + 1}. ProductID: ${p.id} ${p.sameType ? '[SAME TYPE]' : '[DIFFERENT TYPE]'}
    Title: ${p.title}
    Category: ${p.category || 'N/A'}
    Brand: ${p.brand || 'N/A'}
@@ -318,14 +427,8 @@ ${i + 1}. ProductID: ${p.id}
 CRITICAL INSTRUCTIONS:
 1. You MUST use the EXACT ProductID numbers shown above (they are large numbers like 7708018999350)
 2. The productId field MUST be a NUMBER, not a string or undefined
-3. Select ${limit} products from the list above
+3. ONLY pick [SAME TYPE] products. Do NOT pick any [DIFFERENT TYPE] product under any circumstance, even if it means returning fewer than ${limit} results
 4. Do NOT make up product IDs - only use IDs from the list above
-
-Recommend the best ${limit} products based on:
-- Product compatibility and complementarity
-- Category relationships
-- Brand affinity
-- Price positioning
 
 Return ONLY a valid JSON array in this EXACT format (productId must be a NUMBER):
 [
@@ -333,7 +436,7 @@ Return ONLY a valid JSON array in this EXACT format (productId must be a NUMBER)
     "productId": 7708018999350,
     "reason": "Brief explanation why this is recommended",
     "confidence": 0.85,
-    "recommendationType": "complementary"
+    "recommendationType": "similar"
   }
 ]
 
@@ -356,7 +459,7 @@ Return ONLY the JSON array, nothing else. Do not include any text before or afte
     }));
 
     return `
-Analyze the following cart contents and recommend the best ${limit} complementary products to complete the purchase.
+You are recommending upsell products based on the customer's cart contents.
 
 CART CONTENTS (${cartProducts.length} items):
 ${cartData.map((p, i) => `
@@ -367,9 +470,21 @@ ${i + 1}. ${p.title}
    - Keywords: ${p.keywords.join(', ')}
 `).join('\n')}
 
-CANDIDATE PRODUCTS - You MUST select from these products using their EXACT ProductID number:
+STEP 1 — Identify ALL distinct product types in the cart:
+Look at each cart item's title and identify its specific type (e.g., "Bangle Bracelet" → "bracelet", "Guardian Angel Earrings" → "earrings", "Stackable Ring" → "ring"). List every distinct type.
+
+STEP 2 — Distribute ${limit} recommendations across all cart item types:
+Pick recommendations proportionally for EACH type found in Step 1. Examples:
+- Cart has 1 bracelet + 1 earring → pick 2 bracelet + 2 earring recommendations
+- Cart has 1 ring + 1 bracelet + 1 earring → pick at least 1 per type, fill remainder with any
+Prioritize [SAME TYPE] candidates for each type.
+
+STEP 3 — Always reach exactly ${limit} total:
+If a type has no matching candidates, fill remaining slots with [SAME TYPE] products from other cart types, then any available product. NEVER return fewer than ${limit}.
+
+CANDIDATE PRODUCTS - labeled [SAME TYPE] or [DIFFERENT TYPE] based on title similarity to cart items:
 ${candidateProducts.map((p, i) => `
-${i + 1}. ProductID: ${p.id}
+${i + 1}. ProductID: ${p.id} ${p.sameType ? '[SAME TYPE]' : '[DIFFERENT TYPE]'}
    Title: ${p.title}
    Category: ${p.category || 'N/A'}
    Brand: ${p.brand || 'N/A'}
@@ -379,15 +494,9 @@ ${i + 1}. ProductID: ${p.id}
 CRITICAL INSTRUCTIONS:
 1. You MUST use the EXACT ProductID numbers shown above
 2. The productId field MUST be a NUMBER, not a string
-3. Select ${limit} products that complement the entire cart, not just one item
+3. Prefer [SAME TYPE] products matching each cart item type. Fill remaining slots with any available product if needed.
 4. Do NOT make up product IDs - only use IDs from the list above
-
-Recommend the best ${limit} products based on:
-- Complementarity with multiple cart items
-- Completing a bundle or collection
-- Filling gaps in the purchase
-- Cross-category recommendations
-- Value-add suggestions
+5. ALWAYS return exactly ${limit} products — never fewer
 
 Return ONLY a valid JSON array in this EXACT format (productId must be a NUMBER):
 [
@@ -395,7 +504,7 @@ Return ONLY a valid JSON array in this EXACT format (productId must be a NUMBER)
     "productId": 7708018999350,
     "reason": "Brief explanation why this complements the cart",
     "confidence": 0.85,
-    "recommendationType": "complementary"
+    "recommendationType": "similar"
   }
 ]
 
@@ -473,7 +582,7 @@ Return ONLY the JSON array, nothing else. Do not include any text before or afte
     }
 
     const allProducts = await productsCollection.find({ shopId }).toArray();
-    const otherProducts = allProducts.filter(p => p.productId !== currentProductId);
+    const otherProducts = allProducts.filter(p => String(p.productId) !== String(currentProductId));
 
     // Calculate similarity scores
     const productsWithScores = otherProducts.map(product => ({
