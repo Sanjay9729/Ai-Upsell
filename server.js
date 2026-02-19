@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { createRequestHandler } from '@remix-run/express';
 import { getAllProducts, syncProductsToMongoDB } from './backend/database/collections.js';
 import { connectToMongoDB } from './backend/database/connection.js';
 import { initializeCollections } from './backend/database/mongodb.js';
@@ -10,14 +13,30 @@ import analyticsRouter from './backend/routes/analytics.js';
 // Load environment variables
 dotenv.config();
 
-const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Auto-set SHOPIFY_APP_URL if not provided (required by Shopify SDK)
+if (!process.env.SHOPIFY_APP_URL) {
+  process.env.SHOPIFY_APP_URL = `http://localhost:${process.env.PORT || 3000}`;
+}
+
 const PORT = process.env.PORT || 3000;
+
+// Import Remix build at top level using pathToFileURL (handles Windows paths)
+const BUILD_PATH = path.resolve(__dirname, 'build', 'server', 'index.js');
+const build = await import(pathToFileURL(BUILD_PATH).href);
+const remixHandler = createRequestHandler({ build });
+console.log('✅ Remix build loaded — landing page served from route.jsx');
+
+const app = express();
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Serve static files (favicon, etc.)
+// Serve Remix client assets
+app.use(express.static(path.join(__dirname, 'build', 'client'), { maxAge: '1h' }));
 app.use(express.static('public'));
 
 // API Routes
@@ -360,6 +379,9 @@ async function startServer() {
     await connectToMongoDB();
     await initializeCollections();
     console.log('📊 All collections and indexes initialized successfully');
+
+    // Remix catch-all — handles all non-API routes including landing page
+    app.all('*', remixHandler);
 
     // Start the Express server
     app.listen(PORT, () => {
