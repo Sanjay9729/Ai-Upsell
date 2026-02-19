@@ -5,17 +5,34 @@ import { getDb, collections } from "../../backend/database/mongodb.js";
 import { getProductsByShop, syncProductsWithGraphQL } from "../../backend/database/collections.js";
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
 
   try {
     const db = await getDb();
     const totalConversions = await db.collection(collections.upsellEvents)
       .countDocuments({ shopId: session.shop, isUpsellEvent: true, eventType: 'cart_add' });
 
-    return json({ totalConversions });
+    // Auto-sync products on first load if store has none in MongoDB
+    let productCount = await db.collection(collections.products)
+      .countDocuments({ shopId: session.shop });
+
+    if (productCount === 0) {
+      if (admin?.graphql) {
+        try {
+          const syncedCount = await syncProductsWithGraphQL(session.shop, admin.graphql);
+          productCount = syncedCount;
+        } catch (syncError) {
+          console.error("Auto product sync failed:", syncError);
+        }
+      } else {
+        console.warn("Admin GraphQL client not available for auto-sync.");
+      }
+    }
+
+    return json({ totalConversions, productCount });
   } catch (error) {
     console.error("Home page loader error:", error);
-    return json({ totalConversions: 0 });
+    return json({ totalConversions: 0, productCount: 0 });
   }
 };
 

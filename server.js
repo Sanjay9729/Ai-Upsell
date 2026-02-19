@@ -16,9 +16,19 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Auto-set SHOPIFY_APP_URL if not provided (required by Shopify SDK)
-if (!process.env.SHOPIFY_APP_URL) {
-  process.env.SHOPIFY_APP_URL = `http://localhost:${process.env.PORT || 3000}`;
+// Resolve SHOPIFY_APP_URL for Shopify SDK (must be https in embedded admin)
+const resolvedAppUrl =
+  process.env.SHOPIFY_APP_URL ||
+  process.env.APP_URL ||
+  process.env.HOST;
+
+if (!resolvedAppUrl) {
+  console.warn(
+    "⚠️  SHOPIFY_APP_URL is missing. Set it to your HTTPS tunnel URL for local dev " +
+      "(e.g. https://xxxx.ngrok-free.app). Using localhost in embedded admin will fail.",
+  );
+} else {
+  process.env.SHOPIFY_APP_URL = resolvedAppUrl;
 }
 
 const PORT = process.env.PORT || 3000;

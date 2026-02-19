@@ -1,9 +1,12 @@
-{% render 'ai_upsell_widget' %}
+{% comment %}AI Upsell Embed (toggle in Theme > App embeds){% endcomment %}
+{% if request.page_type == 'product' or request.page_type == 'cart' %}
+  {% render 'ai_upsell_widget' %}
+{% endif %}
 
 {% schema %}
 {
-  "name": "AI Upsell Products",
-  "target": "section",
+  "name": "AI Upsell Embed",
+  "target": "body",
   "settings": [
     {
       "type": "header",
