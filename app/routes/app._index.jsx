@@ -5,35 +5,24 @@ import { getDb, collections } from "../../backend/database/mongodb.js";
 import { getProductsByShop, syncProductsWithGraphQL } from "../../backend/database/collections.js";
 
 export const loader = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
   try {
     const db = await getDb();
-
-    // Auto-sync products on first load
-    let products = await getProductsByShop(session.shop);
-    if (products.length === 0) {
-      await syncProductsWithGraphQL(session.shop, admin.graphql);
-      products = await getProductsByShop(session.shop);
-    }
-
-    const settings = await db.collection(collections.settings).findOne({ shopId: session.shop });
     const totalConversions = await db.collection(collections.upsellEvents)
       .countDocuments({ shopId: session.shop, isUpsellEvent: true, eventType: 'cart_add' });
 
-    return json({
-      productCount: products.length,
-      aiEnabled: settings?.aiEnabled ?? true,
-      totalConversions,
-    });
+    return json({ totalConversions });
   } catch (error) {
     console.error("Home page loader error:", error);
-    return json({ productCount: 0, aiEnabled: true, totalConversions: 0 });
+    return json({ totalConversions: 0 });
   }
 };
 
 export default function Index() {
-  const { productCount, aiEnabled, totalConversions } = useLoaderData();
+  const { totalConversions } = useLoaderData();
+
+  const fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
   const cardStyle = {
     border: '1px solid #e1e3e5',
@@ -42,6 +31,7 @@ export default function Index() {
     backgroundColor: '#ffffff',
     boxShadow: '0 1px 2px 0 rgba(0,0,0,0.05)',
     marginBottom: '0',
+    fontFamily,
   };
 
   const stepCardStyle = {
@@ -54,6 +44,7 @@ export default function Index() {
     fontWeight: '650',
     color: '#303030',
     marginBottom: '12px',
+    fontFamily,
   };
 
   const stepDescStyle = {
@@ -61,6 +52,7 @@ export default function Index() {
     color: '#303030',
     lineHeight: '1.6',
     marginBottom: '12px',
+    fontFamily,
   };
 
   const olStyle = {
@@ -69,81 +61,16 @@ export default function Index() {
     fontSize: '14px',
     color: '#303030',
     lineHeight: '1.8',
+    fontFamily,
   };
-
-  const statusDot = (active) => ({
-    display: 'inline-block',
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    backgroundColor: active ? '#008060' : '#d72c0d',
-    marginRight: '8px',
-  });
-
-  const metricCardStyle = {
-    textAlign: 'center',
-    flex: '1',
-    minWidth: '120px',
-    border: '1px solid #e1e3e5',
-    borderRadius: '12px',
-    padding: '16px',
-    backgroundColor: '#ffffff',
-  };
-
-  const progressPercent = [
-    productCount > 0,
-    aiEnabled,
-    totalConversions > 0,
-  ].filter(Boolean).length * 33;
 
   return (
     <s-page heading="Setup Guide">
       <style>{`
-        * { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; }
-        .progress-bar { width: 100%; height: 8px; background-color: #e1e3e5; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
-        .progress-fill { height: 100%; background-color: #008060; border-radius: 4px; transition: width 0.3s ease; }
+        * {
+          font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+        }
       `}</style>
-
-      {/* Progress Bar */}
-      <s-section>
-        <div style={cardStyle}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '14px', fontWeight: '600', color: '#303030' }}>Setup Progress</span>
-            <span style={{ fontSize: '13px', color: '#6d7175' }}>{progressPercent}% complete</span>
-          </div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progressPercent}%` }}></div>
-          </div>
-          <div style={{ display: 'flex', gap: '16px', marginTop: '12px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <span style={statusDot(productCount > 0)}></span>
-              <span style={{ fontSize: '13px', color: '#6d7175' }}>Products: {productCount} synced</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <span style={statusDot(aiEnabled)}></span>
-              <span style={{ fontSize: '13px', color: '#6d7175' }}>AI: {aiEnabled ? 'Active' : 'Disabled'}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <span style={statusDot(totalConversions > 0)}></span>
-              <span style={{ fontSize: '13px', color: '#6d7175' }}>Conversions: {totalConversions}</span>
-            </div>
-          </div>
-        </div>
-      </s-section>
-
-      {/* Quick Stats */}
-      <s-section heading="Overview">
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-          <div style={metricCardStyle}>
-            <div style={{ fontSize: '28px', fontWeight: '700', color: '#303030' }}>{productCount}</div>
-            <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>Products Synced</div>
-          </div>
-          <div style={metricCardStyle}>
-            <div style={{ fontSize: '28px', fontWeight: '700', color: '#303030' }}>{totalConversions}</div>
-            <div style={{ fontSize: '12px', color: '#6d7175', marginTop: '2px' }}>Conversions</div>
-          </div>
-        </div>
-      </s-section>
 
       <s-section heading="Step-by-Step Setup">
         {/* Step 1 */}

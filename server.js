@@ -43,6 +43,28 @@ app.use(express.static('public'));
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/proxy/analytics', analyticsRouter); // Handle proxy requests
 
+// Get all upsell events from MongoDB
+app.get('/api/upsell-events', async (req, res) => {
+  try {
+    await connectToMongoDB();
+    const { getDb } = await import('./backend/database/connection.js');
+    const db = await getDb();
+    const filter = req.query.shop ? { shopId: req.query.shop } : {};
+    const events = await db.collection('upsell_events')
+      .find(filter)
+      .sort({ timestamp: -1 })
+      .toArray();
+    res.json({
+      success: true,
+      count: events.length,
+      upsell_events: events,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get all products from MongoDB
 app.get('/api/products', async (req, res) => {
   try {
