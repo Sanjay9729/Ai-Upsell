@@ -40,8 +40,7 @@ export const collections = {
   stores: 'stores',
   upsells: 'upsells',
   upsellEvents: 'upsell_events',
-  cartEvents: 'cart_events',
-  upsellRecommendations: 'upsell_recommendations'
+  cartEvents: 'cart_events'
 };
 
 export async function initializeCollections() {
@@ -60,11 +59,6 @@ export async function initializeCollections() {
   await database.collection(collections.upsellEvents).createIndex({ shopId: 1, sourceProductId: 1 });
   await database.collection(collections.upsellEvents).createIndex({ shopId: 1, upsellProductId: 1 });
   await database.collection(collections.upsellEvents).createIndex({ isUpsellEvent: 1 });
-
-  // Upsell recommendations collection indexes
-  await database.collection(collections.upsellRecommendations).createIndex({ shopId: 1, timestamp: -1 });
-  await database.collection(collections.upsellRecommendations).createIndex({ shopId: 1, sourceProductId: 1 });
-  await database.collection(collections.upsellRecommendations).createIndex({ shopId: 1, recommendationType: 1 });
 
   console.log('MongoDB collections initialized');
 }
