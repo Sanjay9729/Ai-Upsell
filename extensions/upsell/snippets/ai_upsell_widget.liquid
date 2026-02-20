@@ -4,6 +4,16 @@
   Also shows secondary recommendations based on last added upsell product (on cart page)
 {% endcomment %}
 
+{% comment %}Early prefetch: kick off API fetch immediately during page parsing, before DOMContentLoaded{% endcomment %}
+{% unless request.page_type == 'cart' %}
+  {% if product.id != blank %}
+    <script>(function(){if(!window.__AI_UPSELL_PREFETCH__){window.__AI_UPSELL_PREFETCH__=fetch('/apps/ai-upsell?id=gid://shopify/Product/{{ product.id }}');}})();</script>
+  {% endif %}
+{% endunless %}
+{% if request.page_type == 'cart' and cart.item_count > 0 %}
+  <script>(function(){if(!window.__AI_CART_PREFETCH__){var ids=[{% for item in cart.items %}"gid://shopify/Product/{{ item.product_id }}"{% unless forloop.last %},{% endunless %}{% endfor %}];window.__AI_CART_PREFETCH__=fetch('/apps/ai-upsell/cart?ids='+encodeURIComponent(JSON.stringify(ids)));}})();</script>
+{% endif %}
+
 {% assign upsell_settings = settings %}
 {% if block and block.settings %}
   {% assign upsell_settings = block.settings %}
@@ -704,7 +714,13 @@
 
     async function fetchAiRecommendations(productId, maxProducts) {
       const apiUrl = `/apps/ai-upsell?id=gid://shopify/Product/${productId}`;
-      const response = await fetch(apiUrl);
+      let fetchPromise = window.__AI_UPSELL_PREFETCH__;
+      if (fetchPromise) {
+        window.__AI_UPSELL_PREFETCH__ = null;
+      } else {
+        fetchPromise = fetch(apiUrl);
+      }
+      const response = await fetchPromise;
       if (!response.ok) {
         let bodyText = '';
         try { bodyText = await response.text(); } catch (_) {}
@@ -1487,7 +1503,13 @@
       try {
         const productGids = productIds.map(id => `gid://shopify/Product/${id}`);
         const apiUrl = `/apps/ai-upsell/cart?ids=${encodeURIComponent(JSON.stringify(productGids))}`;
-        const response = await fetch(apiUrl);
+        let fetchPromise = window.__AI_CART_PREFETCH__;
+        if (fetchPromise) {
+          window.__AI_CART_PREFETCH__ = null;
+        } else {
+          fetchPromise = fetch(apiUrl);
+        }
+        const response = await fetchPromise;
 
         if (!response.ok) throw new Error('Failed to load secondary recommendations');
 

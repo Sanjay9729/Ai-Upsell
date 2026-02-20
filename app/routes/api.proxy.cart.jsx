@@ -146,36 +146,23 @@ export const loader = async ({ request }) => {
     // Initialize Groq AI Engine
     const aiEngine = new GroqAIEngine();
 
-    // Get AI-powered cart upsell recommendations
-    const recommendations = await aiEngine.findCartUpsellProducts(shop, productIds, 4);
+    // Run AI and auth in parallel — auth is not needed until inventory fetch
+    const [recommendations, authResult] = await Promise.all([
+      aiEngine.findCartUpsellProducts(shop, productIds, 4),
+      authenticate.public.appProxy(request).catch(authErr => {
+        console.error('⚠️ Cart appProxy auth failed:', authErr.message);
+        return { admin: null };
+      })
+    ]);
+    const adminClient = authResult?.admin || null;
 
-    // Get all product titles from cart items using AI engine
-    let cartSourceTitle = 'Cart Items';
-    try {
-      // Get cart products from AI engine
-      const cartProducts = await aiEngine.getProductsByShop(shop);
-      const validCartProducts = cartProducts.filter(p => productIds.includes(p.productId));
-
-      if (validCartProducts.length > 0) {
-        // Get ALL product titles, not just the first one
-        const allProductTitles = validCartProducts.map(p => p.title).join(', ');
-        cartSourceTitle = allProductTitles;
-        console.log(`🛒 Got cart source titles from AI engine: ${cartSourceTitle}`);
-      }
-    } catch (error) {
-      console.warn(`⚠️ Could not get cart source title:`, error);
-    }
+    // Use cart products already fetched by AI engine — no extra DB query needed
+    const validCartProducts = recommendations._cartProducts || [];
+    const cartSourceTitle = validCartProducts.length > 0
+      ? validCartProducts.map(p => p.title).join(', ')
+      : 'Cart Items';
 
     console.log(`📝 Final cart source title: ${cartSourceTitle}`);
-
-    // Get admin client from appProxy auth for inventory fetch
-    let adminClient = null;
-    try {
-      const { admin } = await authenticate.public.appProxy(request);
-      adminClient = admin;
-    } catch (authErr) {
-      console.error('⚠️ Cart appProxy auth failed:', authErr.message);
-    }
 
     // Fetch live inventory from Shopify Admin API
     const recProductIds = recommendations.map(p => p.productId);

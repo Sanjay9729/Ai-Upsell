@@ -76,7 +76,14 @@ export const loader = async ({ request }) => {
       const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
       const stale = !existing || (Date.now() - updatedAt > 10 * 60 * 1000);
       if (stale) {
-        await ensureProductFromAdminGraphQL(shop, admin.graphql, productId);
+        const refreshPromise = ensureProductFromAdminGraphQL(shop, admin.graphql, productId);
+        if (!existing) {
+          // Product not in DB yet — must wait before AI can find it
+          await refreshPromise;
+        } else {
+          // Product exists but stale — refresh in background, don't block AI
+          refreshPromise.catch(err => console.warn('⚠️ Background product refresh failed:', err));
+        }
       }
     } else {
       console.warn('⚠️ No admin client from appProxy auth');
@@ -84,22 +91,10 @@ export const loader = async ({ request }) => {
 
     // Get AI-powered upsell recommendations
     const recommendations = await aiEngine.findUpsellProducts(shop, productId, 4);
-    
-    // Get source product title from the AI engine (which already fetched it)
-    let sourceProductTitle = `Product ${productId}`;
-    
-    // The AI engine already fetched the current product, so let's get it from there
-    try {
-      const currentProduct = await aiEngine.getProductById(shop, productId);
-      if (currentProduct && currentProduct.title) {
-        sourceProductTitle = currentProduct.title;
-        console.log(`🤖 Got source product title from AI engine: ${sourceProductTitle}`);
-      }
-    } catch (error) {
-      console.warn(`⚠️ Could not get source product title:`, error);
-    }
-    
-    console.log(`📝 Final source product title: ${sourceProductTitle}`);
+
+    // Use source product already fetched by AI engine — no extra DB query needed
+    const sourceProductTitle = recommendations._sourceProduct?.title || `Product ${productId}`;
+    console.log(`📝 Source product title: ${sourceProductTitle}`);
 
     // Format response for frontend
     const formattedRecommendations = recommendations.map(product => ({
