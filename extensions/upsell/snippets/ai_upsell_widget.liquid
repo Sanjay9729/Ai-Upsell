@@ -83,6 +83,8 @@
 
 <script>
   (function() {
+    try {
+      window.__AI_UPSELL_SCRIPT_LOADED__ = true;
     let widget = null;
     let secondaryWidget = null;
 
@@ -1663,6 +1665,10 @@
       document.addEventListener('DOMContentLoaded', maybeInit);
     } else {
       maybeInit();
+    }
+    } catch (err) {
+      console.error('AI Upsell init failed:', err);
+      window.__AI_UPSELL_INIT_ERROR__ = err && err.message ? err.message : String(err);
     }
   })();
 </script>

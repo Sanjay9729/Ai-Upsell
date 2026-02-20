@@ -9,6 +9,7 @@ import { getAllProducts, syncProductsToMongoDB } from './backend/database/collec
 import { connectToMongoDB } from './backend/database/connection.js';
 import { initializeCollections } from './backend/database/mongodb.js';
 import analyticsRouter from './backend/routes/analytics.js';
+import { startProductReconciliationJob } from './backend/jobs/productReconciliation.js';
 
 // Load environment variables
 dotenv.config();
@@ -411,6 +412,8 @@ async function startServer() {
     await connectToMongoDB();
     await initializeCollections();
     console.log('📊 All collections and indexes initialized successfully');
+
+    startProductReconciliationJob();
 
     // Remix catch-all — handles all non-API routes including landing page
     app.all('*', remixHandler);

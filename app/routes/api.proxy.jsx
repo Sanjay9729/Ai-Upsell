@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import crypto from "crypto";
 import { authenticate } from "../shopify.server";
 import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
+import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
 
 /**
  * Shopify App Proxy Handler
@@ -68,6 +69,19 @@ export const loader = async ({ request }) => {
     // Initialize Groq AI Engine
     const aiEngine = new GroqAIEngine();
 
+    // Self-heal: if webhook missed, fetch product via Admin GraphQL and upsert
+    const { admin } = await authenticate.public.appProxy(request);
+    if (admin?.graphql) {
+      const existing = await getProductById(shop, productId);
+      const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+      const stale = !existing || (Date.now() - updatedAt > 10 * 60 * 1000);
+      if (stale) {
+        await ensureProductFromAdminGraphQL(shop, admin.graphql, productId);
+      }
+    } else {
+      console.warn('⚠️ No admin client from appProxy auth');
+    }
+
     // Get AI-powered upsell recommendations
     const recommendations = await aiEngine.findUpsellProducts(shop, productId, 4);
     
@@ -105,7 +119,6 @@ export const loader = async ({ request }) => {
 
     // Enrich with live inventory from Shopify Admin API
     try {
-      const { admin } = await authenticate.public.appProxy(request);
       if (admin) {
         const productGids = formattedRecommendations.map(r => `gid://shopify/Product/${r.id}`);
         const gqlResponse = await admin.graphql(
@@ -169,8 +182,6 @@ export const loader = async ({ request }) => {
             };
           }
         });
-      } else {
-        console.warn('⚠️ No admin client from appProxy auth');
       }
     } catch (invError) {
       console.error('⚠️ Inventory enrichment failed:', invError.message);

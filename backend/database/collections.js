@@ -40,7 +40,7 @@ export async function getProductsByShop(shopId) {
  * Sync products from Shopify to MongoDB using GraphQL (preferred method)
  * This implements Step 1 of the AI Upsell Flow with images
  */
-export async function syncProductsWithGraphQL(shopId, adminGraphQL) {
+export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}) {
   const db = await getDb();
   const productsCollection = db.collection('products');
 
@@ -171,8 +171,12 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL) {
 
     const result = await productsCollection.bulkWrite(operations);
     const syncedCount = lightProducts.length;
+    const productIds = lightProducts.map(product => product.productId);
 
     console.log(`✅ Successfully synced ${syncedCount} products with images to MongoDB`);
+    if (options.returnIds) {
+      return { count: syncedCount, productIds };
+    }
     return syncedCount;
 
   } catch (error) {
@@ -325,11 +329,126 @@ export async function getProductById(shopId, productId) {
   const productsCollection = db.collection('products');
   
   try {
-    const product = await productsCollection.findOne({ shopId, productId });
-    return product;
+    const numericId = Number(productId);
+    const stringId = productId != null ? String(productId) : null;
+    const filters = [
+      { shopId, productId: numericId },
+      stringId ? { shopId, productId: stringId } : null
+    ].filter(Boolean);
+
+    for (const filter of filters) {
+      const product = await productsCollection.findOne(filter);
+      if (product) return product;
+    }
+
+    return null;
   } catch (error) {
     console.error('❌ Error fetching product by ID:', error);
     throw error;
+  }
+}
+
+/**
+ * Ensure a single product exists in MongoDB by fetching from Shopify Admin GraphQL.
+ * Used as a self-healing fallback when webhooks are missed.
+ */
+export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, productId) {
+  if (!adminGraphQL) return null;
+  const db = await getDb();
+  const productsCollection = db.collection('products');
+
+  try {
+    const gid = `gid://shopify/Product/${productId}`;
+    const response = await adminGraphQL(
+      `#graphql
+      query getProduct($id: ID!) {
+        product(id: $id) {
+          id
+          legacyResourceId
+          title
+          description
+          handle
+          vendor
+          productType
+          tags
+          status
+          createdAt
+          updatedAt
+          images(first: 10) {
+            edges {
+              node {
+                id
+                url
+                altText
+                width
+                height
+              }
+            }
+          }
+          variants(first: 1) {
+            edges {
+              node {
+                price
+                compareAtPrice
+              }
+            }
+          }
+        }
+      }`,
+      { variables: { id: gid } }
+    );
+
+    const data = await response.json();
+    const product = data?.data?.product;
+    if (!product) return null;
+
+    const mapped = {
+      shopId,
+      productId: parseInt(product.legacyResourceId, 10),
+      title: product.title,
+      description: product.description || '',
+      tags: product.tags || [],
+      vendor: product.vendor || '',
+      productType: product.productType || '',
+      handle: product.handle,
+      status: product.status,
+      createdAt: new Date(product.createdAt),
+      updatedAt: new Date(product.updatedAt),
+      images: product.images?.edges?.map(({ node: img }) => ({
+        id: img.id,
+        src: img.url,
+        alt: img.altText || product.title,
+        width: img.width,
+        height: img.height
+      })) || [],
+      image: product.images?.edges?.length > 0 ? {
+        id: product.images.edges[0].node.id,
+        src: product.images.edges[0].node.url,
+        alt: product.images.edges[0].node.altText || product.title
+      } : null,
+      aiData: {
+        keywords: extractKeywords(product.title + ' ' + (product.description || '')),
+        category: product.productType || '',
+        price: product.variants?.edges?.[0]?.node?.price || '0',
+        compareAtPrice: product.variants?.edges?.[0]?.node?.compareAtPrice || null,
+        color: extractColor({ title: product.title, body_html: product.description, tags: (product.tags || []).join(',') }),
+        style: extractStyle({ title: product.title, body_html: product.description, tags: (product.tags || []).join(',') }),
+        brand: product.vendor || '',
+        features: extractFeatures({ title: product.title, body_html: product.description, tags: (product.tags || []).join(',') })
+      }
+    };
+
+    await productsCollection.updateOne(
+      { shopId: mapped.shopId, productId: mapped.productId },
+      { $set: mapped },
+      { upsert: true }
+    );
+
+    console.log(`✅ Self-healed product ${mapped.productId} for shop ${shopId}`);
+    return mapped;
+  } catch (error) {
+    console.error('❌ Self-heal product failed:', error);
+    return null;
   }
 }
 
@@ -399,6 +518,43 @@ export async function createIndexes() {
     console.log('📊 MongoDB indexes created successfully');
   } catch (error) {
     console.error('❌ Error creating indexes:', error);
+    throw error;
+  }
+}
+
+/**
+ * Remove products that no longer exist in Shopify.
+ * Uses both numeric and string forms of IDs for safety.
+ */
+export async function pruneProductsNotInList(shopId, productIds) {
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    console.warn(`⚠️ Prune skipped for ${shopId}: empty product list`);
+    return 0;
+  }
+
+  const db = await getDb();
+  const productsCollection = db.collection('products');
+
+  const idSet = new Set();
+  productIds.forEach((id) => {
+    idSet.add(String(id));
+    const numeric = Number(id);
+    if (Number.isFinite(numeric)) idSet.add(numeric);
+  });
+
+  const idList = Array.from(idSet);
+
+  try {
+    const result = await productsCollection.deleteMany({
+      shopId,
+      productId: { $nin: idList }
+    });
+    if (result.deletedCount > 0) {
+      console.log(`🧹 Pruned ${result.deletedCount} stale products for ${shopId}`);
+    }
+    return result.deletedCount;
+  } catch (error) {
+    console.error(`❌ Error pruning stale products for ${shopId}:`, error);
     throw error;
   }
 }

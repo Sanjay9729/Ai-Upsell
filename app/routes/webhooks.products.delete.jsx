@@ -2,11 +2,11 @@ import { authenticate } from "../shopify.server";
 import { deleteProduct } from "../../backend/database/collections.js";
 
 export const action = async ({ request }) => {
-  const { shop, session, topic, payload } = await authenticate.webhook(request);
+  const { shop, topic, payload } = await authenticate.webhook(request);
 
   console.log(`✅ Received ${topic} webhook for ${shop}`);
 
-  if (session && payload) {
+  if (payload) {
     try {
       const productId = payload.id;
       const shopId = shop;
