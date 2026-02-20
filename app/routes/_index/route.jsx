@@ -7,7 +7,8 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
 
   if (url.searchParams.get("shop")) {
-    throw redirect(`/auth/login?${url.searchParams.toString()}`);
+    // In embedded admin, redirect into the /app route so App Bridge can handle auth.
+    throw redirect(`/app?${url.searchParams.toString()}`);
   }
 
   return { showForm: Boolean(login) };

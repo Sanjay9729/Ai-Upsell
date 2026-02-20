@@ -60,7 +60,7 @@ scopes = "write_products,read_products"
 # Auth
 # ---------------------------
 [auth]
-redirect_urls = ["https://ai-upsell.onrender.com/api/auth"]
+redirect_urls = ["https://ai-upsell.onrender.com/auth/callback"]
 
 # ---------------------------
 # App Proxy

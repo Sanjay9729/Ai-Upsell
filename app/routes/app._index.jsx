@@ -2,25 +2,71 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { getDb, collections } from "../../backend/database/mongodb.js";
-import { getProductsByShop, syncProductsWithGraphQL } from "../../backend/database/collections.js";
+import { syncProductsWithGraphQL } from "../../backend/database/collections.js";
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
 
   try {
     const db = await getDb();
     const totalConversions = await db.collection(collections.upsellEvents)
       .countDocuments({ shopId: session.shop, isUpsellEvent: true, eventType: 'cart_add' });
 
-    return json({ totalConversions });
+    // Auto-sync products on first load if store has none in MongoDB
+    let productCount = await db.collection(collections.products)
+      .countDocuments({ shopId: session.shop });
+
+    if (productCount === 0) {
+      if (admin?.graphql) {
+        try {
+          const syncedCount = await syncProductsWithGraphQL(session.shop, admin.graphql);
+          productCount = syncedCount;
+        } catch (syncError) {
+          console.error("Auto product sync failed:", syncError);
+        }
+      } else {
+        console.warn("Admin GraphQL client not available for auto-sync.");
+      }
+    }
+
+    // Build theme editor deep link (opens App embeds panel on a product page)
+    let themeEditorUrl = null;
+    try {
+      let productHandle = null;
+      if (admin?.graphql) {
+        const productRes = await admin.graphql(
+          `#graphql
+          query getPreviewProduct {
+            products(first: 1, sortKey: CREATED_AT, reverse: true) {
+              nodes { handle }
+            }
+          }`
+        );
+        const productData = await productRes.json();
+        productHandle = productData?.data?.products?.nodes?.[0]?.handle || null;
+      }
+
+      const storeHandle = session.shop.replace(".myshopify.com", "");
+      const previewPath = productHandle ? `/products/${productHandle}` : "/products";
+
+      if (storeHandle) {
+        themeEditorUrl =
+          `https://admin.shopify.com/store/${storeHandle}/themes/current/editor` +
+          `?context=apps&previewPath=${encodeURIComponent(previewPath)}`;
+      }
+    } catch (err) {
+      console.error("Theme editor URL error:", err);
+    }
+
+    return json({ totalConversions, productCount, themeEditorUrl });
   } catch (error) {
     console.error("Home page loader error:", error);
-    return json({ totalConversions: 0 });
+    return json({ totalConversions: 0, productCount: 0, themeEditorUrl: null });
   }
 };
 
 export default function Index() {
-  const { totalConversions } = useLoaderData();
+  const { totalConversions, themeEditorUrl } = useLoaderData();
 
   const fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
@@ -55,6 +101,24 @@ export default function Index() {
     fontFamily,
   };
 
+  const buttonStyle = {
+    display: 'inline-block',
+    backgroundColor: '#111111',
+    color: '#ffffff',
+    padding: '8px 12px',
+    borderRadius: '6px',
+    textDecoration: 'none',
+    fontSize: '13px',
+    fontWeight: '600',
+    marginTop: '8px',
+  };
+
+  const hintStyle = {
+    fontSize: '13px',
+    color: '#6d7175',
+    marginBottom: '12px',
+  };
+
   const olStyle = {
     paddingLeft: '20px',
     margin: '0',
@@ -75,87 +139,73 @@ export default function Index() {
       <s-section heading="Step-by-Step Setup">
         {/* Step 1 */}
         <div style={stepCardStyle}>
-          <div style={stepHeaderStyle}>Step 1: Add the AI Upsell Block to Product Pages</div>
+          <div style={stepHeaderStyle}>Step 1: Open Theme Editor</div>
           <div style={stepDescStyle}>
-            Add the AI-powered upsell widget to your product detail pages to show personalized recommendations:
+            Click the button below to open your theme editor directly on a product page with the App embeds panel visible.
           </div>
           <ol style={olStyle}>
-            <li>Go to <strong>Online Store → Themes → Customize</strong></li>
-            <li>In the theme editor, navigate to a <strong>Product page</strong> template</li>
-            <li>In the left sidebar, find the <strong>Product information</strong> section</li>
-            <li>Click the <strong>Add block</strong> button (+ icon) within that section</li>
-            <li>In the block selection menu, switch to the <strong>Apps</strong> tab</li>
-            <li>Find and click on <strong>"AI Upsell Products"</strong> (it should show "AI Upsell" underneath)</li>
-            <li>The upsell block will be added to your product page</li>
+            <li>Theme editor will open in a new tab</li>
+            <li>Left sidebar will show <strong>App embeds</strong> automatically</li>
           </ol>
+          {themeEditorUrl ? (
+            <a href={themeEditorUrl} target="_blank" rel="noreferrer" style={buttonStyle}>
+              Open Theme Editor
+            </a>
+          ) : (
+            <div style={hintStyle}>
+              Theme editor link unavailable right now. Try refreshing the page.
+            </div>
+          )}
         </div>
 
         {/* Step 2 */}
         <div style={stepCardStyle}>
-          <div style={stepHeaderStyle}>Step 2: Add the AI Upsell Block to Cart Page</div>
+          <div style={stepHeaderStyle}>Step 2: Enable AI Upsell Embed</div>
           <div style={stepDescStyle}>
-            Show cart-aware recommendations on your cart page that complement the entire cart:
+            Turn on the app embed once and it will show on both product detail and cart pages.
           </div>
           <ol style={olStyle}>
-            <li>In the theme editor, navigate to the <strong>Cart page</strong> template</li>
-            <li>Click <strong>Add section</strong> or <strong>Add block</strong> in the cart template</li>
-            <li>Switch to the <strong>Apps</strong> tab</li>
-            <li>Find and click on <strong>"AI Cart Upsell"</strong> (it should show "AI Upsell" underneath)</li>
-            <li>The cart upsell block will analyze all items in the cart and suggest complementary products</li>
+            <li>In the left sidebar, open <strong>App embeds</strong></li>
+            <li>Toggle <strong>AI Upsell Embed</strong> to ON</li>
+            <li>Click <strong>Save</strong></li>
           </ol>
         </div>
 
         {/* Step 3 */}
         <div style={stepCardStyle}>
-          <div style={stepHeaderStyle}>Step 3: Configure Block Settings</div>
+          <div style={stepHeaderStyle}>Step 3: Customize Settings</div>
           <div style={stepDescStyle}>
-            Customize how the upsell widgets appear on your store:
+            Update text, colors, and layout from the App embeds settings panel.
           </div>
           <ol style={olStyle}>
-            <li>Click on the newly added <strong>AI Upsell Products</strong> or <strong>AI Cart Upsell</strong> block in the sidebar</li>
-            <li>You'll see customization options:
-              <ul style={{ listStyleType: 'disc', paddingLeft: '20px', marginTop: '4px' }}>
-                <li><strong>Heading</strong> — Change the section title (e.g., "You May Also Like")</li>
-                <li><strong>Max Products</strong> — Number of recommendations to show (2-6)</li>
-                <li><strong>Show Reason</strong> — Toggle AI recommendation reasons on/off</li>
-                <li><strong>Colors</strong> — Customize background, text, and button colors</li>
-                <li><strong>Button Style</strong> — Match your theme's button styling</li>
-              </ul>
-            </li>
-            <li>Adjust these settings to match your store's design</li>
+            <li>Expand <strong>AI Upsell Embed</strong> in the left sidebar</li>
+            <li>Change heading, colors, and max products</li>
+            <li>These settings apply to both product and cart pages</li>
           </ol>
         </div>
 
         {/* Step 4 */}
         <div style={stepCardStyle}>
-          <div style={stepHeaderStyle}>Step 4: Position the Blocks</div>
+          <div style={stepHeaderStyle}>Step 4: Save and Test</div>
           <div style={stepDescStyle}>
-            Drag and drop the upsell blocks to the perfect position:
+            Verify the embed is working across your store.
           </div>
           <ol style={olStyle}>
-            <li>Click and hold the <strong>drag handle</strong> (⋮⋮) next to the block name</li>
-            <li>Drag it up or down within the section</li>
-            <li>Common placements:
-              <ul style={{ listStyleType: 'disc', paddingLeft: '20px', marginTop: '4px' }}>
-                <li>Product page — below the Add to Cart button or after the description</li>
-                <li>Cart page — below the cart items or above the checkout button</li>
-              </ul>
-            </li>
+            <li>Click <strong>Save</strong> in the theme editor</li>
+            <li>Open any <strong>product page</strong> and confirm upsells appear</li>
+            <li>Open the <strong>cart page</strong> and confirm upsells appear</li>
           </ol>
         </div>
 
         {/* Step 5 */}
         <div style={stepCardStyle}>
-          <div style={stepHeaderStyle}>Step 5: Save and Test</div>
+          <div style={stepHeaderStyle}>Step 5: Track Results</div>
           <div style={stepDescStyle}>
-            Verify everything is working correctly:
+            Once live, track performance inside the Analytics page.
           </div>
           <ol style={olStyle}>
-            <li>Click the <strong>Save</strong> button in the top right corner of the Theme Editor</li>
-            <li>Visit a product page on your store — you should see AI-powered upsell recommendations</li>
-            <li>Add a product to cart and visit the cart page — you should see cart-aware suggestions</li>
-            <li>Click "Add to Cart" on a upsell product — it should be tracked in the <strong>Analytics</strong> page</li>
-            <li>Check the <a href="/app/analytics" style={{ color: '#005bd3', textDecoration: 'none', fontWeight: '500' }}>Analytics</a> page to see your upsell activity logs</li>
+            <li>Click "Add to Cart" on a upsell product — it will be tracked</li>
+            <li>Open the <a href="/app/analytics" style={{ color: '#005bd3', textDecoration: 'none', fontWeight: '500' }}>Analytics</a> page to see activity logs</li>
           </ol>
           <div style={{ marginTop: '12px', padding: '10px 14px', backgroundColor: totalConversions > 0 ? '#f0fdf4' : '#f7f7f8', borderRadius: '8px', fontSize: '13px', color: totalConversions > 0 ? '#166534' : '#6d7175' }}>
             {totalConversions > 0
@@ -165,19 +215,6 @@ export default function Index() {
         </div>
       </s-section>
 
-      {/* App Settings Note */}
-      <s-section heading="Quick Links">
-        <div style={cardStyle}>
-          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-            <a href="/app/settings" style={{ display: 'inline-block', padding: '10px 20px', backgroundColor: '#f7f7f8', border: '1px solid #e1e3e5', borderRadius: '8px', color: '#303030', textDecoration: 'none', fontSize: '14px', fontWeight: '500' }}>
-              Settings
-            </a>
-            <a href="/app/analytics" style={{ display: 'inline-block', padding: '10px 20px', backgroundColor: '#f7f7f8', border: '1px solid #e1e3e5', borderRadius: '8px', color: '#303030', textDecoration: 'none', fontSize: '14px', fontWeight: '500' }}>
-              Analytics
-            </a>
-          </div>
-        </div>
-      </s-section>
     </s-page>
   );
 }

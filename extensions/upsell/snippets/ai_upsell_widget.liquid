@@ -4,21 +4,26 @@
   Also shows secondary recommendations based on last added upsell product (on cart page)
 {% endcomment %}
 
+{% assign upsell_settings = settings %}
+{% if block and block.settings %}
+  {% assign upsell_settings = block.settings %}
+{% endif %}
+
 {% unless request.page_type == 'cart' %}
-<div class="ai-upsell-widget" data-product-id="{{ product.id }}" data-shop="{{ shop.permanent_domain }}">
+<div class="ai-upsell-widget" data-product-id="{{ product.id }}" data-shop="{{ shop.permanent_domain }}" data-source="{{ source | default: 'block' }}">
   <div class="ai-upsell-loading">
     <div class="ai-upsell-spinner"></div>
-    <p>{{ block.settings.loading_text }}</p>
+    <p>{{ upsell_settings.loading_text }}</p>
   </div>
   <div class="ai-upsell-content" style="display: none;"></div>
 </div>
 {% endunless %}
 
 <!-- Secondary Recommendations Widget (hidden until triggered) -->
-<div class="ai-secondary-widget" data-shop="{{ shop.permanent_domain }}" style="display: none;">
+<div class="ai-secondary-widget" data-shop="{{ shop.permanent_domain }}" data-source="{{ source | default: 'block' }}" style="display: none;">
   <div class="ai-secondary-loading" style="display: none;">
     <div class="ai-secondary-spinner"></div>
-    <p>Finding more for you...</p>
+    <p>{{ upsell_settings.loading_text }}</p>
   </div>
   <div class="ai-secondary-content"></div>
 </div>
@@ -26,6 +31,8 @@
 <script>
   // Set up fetch interceptor IMMEDIATELY (before anything else)
   (function() {
+    if (window.__AI_UPSELL_FETCH_HOOK__) return;
+    window.__AI_UPSELL_FETCH_HOOK__ = true;
     console.log('🚀 AI Upsell Products script loading...');
     console.log('📍 Current page:', window.location.pathname);
     console.log('🔍 Looking for .ai-secondary-widget:', !!document.querySelector('.ai-secondary-widget'));
@@ -52,13 +59,15 @@
                 console.log('📍 Is cart page?', isCart);
                 if (isCart) {
                   console.log('🔄 On cart page, will load secondary recommendations...');
+                  if (window.__AI_UPSELL_SKIP_NEXT_CART_ADD__) {
+                    window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = false;
+                    return;
+                  }
                   setTimeout(() => {
-                    const event = new CustomEvent('ai-upsell:product-added', {
-                      detail: { productId: addedProductId.toString() }
-                    });
-                    document.dispatchEvent(event);
-                    console.log('🔄 Dispatched ai-upsell:product-added event');
-                  }, 300);
+                    if (typeof window.__AI_UPSELL_REFRESH_SECONDARY__ === 'function') {
+                      window.__AI_UPSELL_REFRESH_SECONDARY__();
+                    }
+                  }, 500);
                 }
               }
             }).catch(() => {});
@@ -74,15 +83,270 @@
 
 <script>
   (function() {
-    const widget = document.querySelector('.ai-upsell-widget');
-    const secondaryWidget = document.querySelector('.ai-secondary-widget');
+    let widget = null;
+    let secondaryWidget = null;
 
-    const PRODUCT_ID = '{{ product.id }}';
-    const MAX_PRODUCTS = {{ block.settings.max_products }};
+    function pickWidgets() {
+      const widgets = Array.from(document.querySelectorAll('.ai-upsell-widget'));
+      const secondaryWidgets = Array.from(document.querySelectorAll('.ai-secondary-widget'));
+      const embedWidget = widgets.find(w => w.dataset.source === 'embed');
+      const embedSecondary = secondaryWidgets.find(w => w.dataset.source === 'embed');
+
+      if (embedWidget) {
+        widgets.forEach(w => { if (w !== embedWidget) w.remove(); });
+        widget = embedWidget;
+      } else {
+        widget = widgets[0] || null;
+      }
+
+      if (embedSecondary) {
+        secondaryWidgets.forEach(w => { if (w !== embedSecondary) w.remove(); });
+        secondaryWidget = embedSecondary;
+      } else {
+        secondaryWidget = secondaryWidgets[0] || null;
+      }
+
+      if (widget) window.__AI_UPSELL_WIDGET__ = widget;
+      if (secondaryWidget) window.__AI_UPSELL_SECONDARY__ = secondaryWidget;
+
+      if (!widget && window.__AI_UPSELL_WIDGET__) widget = window.__AI_UPSELL_WIDGET__;
+      if (!secondaryWidget && window.__AI_UPSELL_SECONDARY__) secondaryWidget = window.__AI_UPSELL_SECONDARY__;
+    }
+
+    function insertAfter(target, node) {
+      if (!target || !target.parentNode || !node) return;
+      if (target.nextSibling) {
+        target.parentNode.insertBefore(node, target.nextSibling);
+      } else {
+        target.parentNode.appendChild(node);
+      }
+    }
+
+    function getWidgetWrapper(node) {
+      if (!node) return null;
+      const existing = node.closest('.ai-upsell-wrapper');
+      if (existing) return existing;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'ai-upsell-wrapper';
+      if (document.querySelector('.page-width')) {
+        wrapper.classList.add('page-width');
+      }
+      wrapper.appendChild(node);
+      return wrapper;
+    }
+
+    function startLoadingFallback(targetWidget, loadingEl, timeoutMs) {
+      if (!targetWidget) return;
+      if (targetWidget.__aiUpsellLoadingTimer) {
+        clearTimeout(targetWidget.__aiUpsellLoadingTimer);
+      }
+      if (loadingEl) loadingEl.style.display = 'block';
+      targetWidget.__aiUpsellLoadingTimer = setTimeout(() => {
+        const contentEl = targetWidget.querySelector('.ai-upsell-content, .ai-secondary-content');
+        const hasContent = contentEl && contentEl.innerHTML.trim() !== '';
+        if (!hasContent) {
+          targetWidget.style.display = 'none';
+        }
+      }, timeoutMs || 6000);
+    }
+
+    function clearLoadingFallback(targetWidget) {
+      if (!targetWidget || !targetWidget.__aiUpsellLoadingTimer) return;
+      clearTimeout(targetWidget.__aiUpsellLoadingTimer);
+      targetWidget.__aiUpsellLoadingTimer = null;
+    }
+
+    let productPlaced = false;
+    let productPlacementTimer = null;
+    let productObserver = null;
+
+    function placeInProductPage() {
+      if (!widget) return false;
+      const isProduct = window.location.pathname.includes('/products/');
+      if (!isProduct) return false;
+
+      const mainProductSection =
+        document.querySelector('[id^="MainProduct-"]') ||
+        document.querySelector('[id*="MainProduct"]') ||
+        document.querySelector('[data-section-type*="main-product"]') ||
+        document.querySelector('[data-section-id*="main-product"]') ||
+        document.querySelector('main-product') ||
+        document.querySelector('product-info');
+
+      if (mainProductSection) {
+        const wrapper = getWidgetWrapper(widget);
+        insertAfter(mainProductSection, wrapper);
+        return true;
+      }
+
+      const productForm = document.querySelector('form[action*="/cart/add"]')
+        || document.querySelector('product-form')
+        || document.querySelector('.product__info-container')
+        || document.querySelector('.product__info-wrapper');
+
+      const sectionFromForm = productForm ? productForm.closest('section, .shopify-section') : null;
+      if (sectionFromForm) {
+        const wrapper = getWidgetWrapper(widget);
+        insertAfter(sectionFromForm, wrapper);
+        return true;
+      }
+
+      const knownAnchors = [
+        '.product__info-wrapper',
+        '.product__info-container',
+        '.product__media-wrapper',
+        '.product__media',
+        'product-info',
+        'product-form'
+      ];
+      for (const sel of knownAnchors) {
+        const el = document.querySelector(sel);
+        if (el) {
+          const section = el.closest('section, .shopify-section') || el;
+          const wrapper = getWidgetWrapper(widget);
+          insertAfter(section, wrapper);
+          return true;
+        }
+      }
+
+      const mainEl = document.querySelector('main');
+      if (mainEl) {
+        const sectionWithForm = Array.from(mainEl.querySelectorAll('section, .shopify-section'))
+          .find(el => el.querySelector('form[action*="/cart/add"], product-form'));
+        if (sectionWithForm) {
+          const wrapper = getWidgetWrapper(widget);
+          insertAfter(sectionWithForm, wrapper);
+          return true;
+        }
+      }
+
+      if (productForm && productForm.parentNode) {
+        const wrapper = getWidgetWrapper(widget);
+        insertAfter(productForm, wrapper);
+        return true;
+      }
+
+      return false;
+    }
+
+    function isPlacedInMainContent(node) {
+      if (!node) return false;
+      const inMain = node.closest('#MainContent, main, .content-for-layout');
+      const inFooter = node.closest('footer, .footer, .site-footer');
+      return Boolean(inMain) && !inFooter;
+    }
+
+    function ensureProductPlacement() {
+      pickWidgets();
+      const isProduct = window.location.pathname.includes('/products/');
+      if (!isProduct || !widget) return false;
+
+      if (productPlaced && isPlacedInMainContent(widget)) return true;
+
+      const placed = placeInProductPage();
+      if (placed) {
+        productPlaced = true;
+        return true;
+      }
+
+      return isPlacedInMainContent(widget);
+    }
+
+    function startProductPlacement() {
+      if (productPlacementTimer) return;
+      let tries = 0;
+      productPlacementTimer = setInterval(() => {
+        tries += 1;
+        if (ensureProductPlacement() || tries > 20) {
+          clearInterval(productPlacementTimer);
+          productPlacementTimer = null;
+          if (productObserver) {
+            productObserver.disconnect();
+            productObserver = null;
+          }
+        }
+      }, 300);
+
+      if (!productObserver && document.body) {
+        productObserver = new MutationObserver(() => {
+          if (ensureProductPlacement()) {
+            productObserver.disconnect();
+            productObserver = null;
+          }
+        });
+        productObserver.observe(document.body, { childList: true, subtree: true });
+      }
+    }
+
+    function placeInCartPage() {
+      const targetWidget = secondaryWidget || widget;
+      if (!targetWidget) return;
+
+      const mainCartItems = document.getElementById('main-cart-items');
+      if (mainCartItems && mainCartItems.parentNode) {
+        insertAfter(mainCartItems, targetWidget);
+        return;
+      }
+
+      const cartRoot = document.querySelector('.cart');
+      const cartItems = cartRoot?.querySelector('.cart__items');
+      if (cartRoot && cartItems && cartItems.parentNode === cartRoot) {
+        insertAfter(cartItems, targetWidget);
+        return;
+      }
+
+      const cartCtas = document.querySelector('.cart__ctas');
+      if (cartCtas && cartCtas.parentNode) {
+        cartCtas.parentNode.insertBefore(targetWidget, cartCtas);
+        return;
+      }
+
+      const checkoutButton = document.querySelector('button[name="checkout"], #checkout, .cart__checkout-button button');
+      if (checkoutButton) {
+        const ctaWrapper = checkoutButton.closest('.cart__ctas, .cart__checkout-button') || checkoutButton.parentElement;
+        if (ctaWrapper && ctaWrapper.parentNode) {
+          ctaWrapper.parentNode.insertBefore(targetWidget, ctaWrapper);
+          return;
+        }
+        if (checkoutButton.parentNode) {
+          checkoutButton.parentNode.insertBefore(targetWidget, checkoutButton);
+          return;
+        }
+      }
+
+      const cartFooter = document.querySelector('#main-cart-footer, .cart__footer, cart-footer');
+      if (cartFooter && cartFooter.parentNode) {
+        cartFooter.parentNode.insertBefore(targetWidget, cartFooter);
+      }
+    }
+
+    function handleCartUpdated(event) {
+      const isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
+      if (!isCart) return;
+      if (event?.detail?.source === 'ai-upsell') return;
+      const cartFromEvent = event?.detail?.cart;
+      setTimeout(() => {
+        placeInCartPage();
+        refreshSecondaryFromCart(cartFromEvent);
+      }, 150);
+    }
+
+      let PRODUCT_ID = '{{ product.id }}';
+      const MAX_PRODUCTS = {{ upsell_settings.max_products | default: 4 }};
     const SHOPIFY_ROOT = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) ? window.Shopify.routes.root : '/';
 
-    let secondarySourceProductId = null;
-    let secondaryAllProducts = [];
+      let secondarySourceProductId = null;
+      let secondaryAllProducts = [];
+
+      function resolveProductId() {
+        if (PRODUCT_ID && PRODUCT_ID !== '') return PRODUCT_ID;
+        const fromAnalytics = window.ShopifyAnalytics?.meta?.product?.id;
+        const fromMeta = window.meta?.product?.id;
+        const fromForm = document.querySelector('product-form')?.dataset?.productId;
+        const fromData = document.querySelector('[data-product-id]')?.dataset?.productId;
+        PRODUCT_ID = fromAnalytics || fromMeta || fromForm || fromData || '';
+        return PRODUCT_ID;
+      }
 
     function uniqueSecondaryById(list) {
       const seen = new Set();
@@ -96,11 +360,14 @@
       });
     }
 
-    async function filterSecondaryAgainstCart(list) {
+    async function filterSecondaryAgainstCart(list, cartOverride) {
       try {
-        const cartResponse = await fetch('/cart.js');
-        if (!cartResponse.ok) return list;
-        const cart = await cartResponse.json();
+        let cart = cartOverride;
+        if (!cart || !cart.items) {
+          const cartResponse = await fetch('/cart.js');
+          if (!cartResponse.ok) return list;
+          cart = await cartResponse.json();
+        }
         const cartIds = new Set((cart.items || []).map(item => String(item.product_id)));
         return list.filter(product => !cartIds.has(String(product.id)));
       } catch (err) {
@@ -122,7 +389,8 @@
       }
 
       secondaryWidget.style.display = 'block';
-      if (loadingEl) loadingEl.style.display = 'none';
+      if (loadingEl) loadingEl.style.display = 'block';
+      if (contentEl) contentEl.innerHTML = '';
 
       let html = `
         <div class="ai-upsell-header">
@@ -178,6 +446,7 @@
 
       html += '</div>';
       contentEl.innerHTML = html;
+      if (loadingEl) loadingEl.style.display = 'none';
 
       // Secondary quantity button listeners
       contentEl.querySelectorAll('.ai-qty-minus').forEach(btn => {
@@ -273,6 +542,7 @@
             button.disabled = true;
             button.textContent = 'Adding...';
 
+            window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
             const response = await fetch('/cart/add.js', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -308,7 +578,7 @@
               .then(res => res.json())
               .then(cart => {
                 document.documentElement.dispatchEvent(
-                  new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart } })
+                  new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } })
                 );
                 updateCartCountBubble(cart.item_count);
 
@@ -345,6 +615,10 @@
                         if (newEl) el.replaceWith(newEl);
                       }
                     }
+                    setTimeout(() => {
+                      placeInCartPage();
+                      refreshSecondaryFromCart(cart);
+                    }, 200);
                   });
               });
 
@@ -353,23 +627,24 @@
               sessionStorage.setItem('lastAiUpsellProduct', upsellProductId);
             } catch (err) {}
 
-            document.dispatchEvent(new CustomEvent('ai-upsell:product-added', {
-              detail: { productId: upsellProductId }
-            }));
+              document.dispatchEvent(new CustomEvent('ai-upsell:product-added', {
+                detail: { productId: upsellProductId, source: 'ai-upsell' }
+              }));
 
-            button.textContent = 'Added!';
-            button.style.background = '#008060';
+              // Remove the just-added product immediately from current list
+              secondaryAllProducts = secondaryAllProducts.filter(
+                p => String(p.id) !== String(upsellProductId)
+              );
+              renderSecondaryList();
 
-            setTimeout(() => {
-              button.textContent = originalText;
-              button.disabled = false;
+              button.textContent = 'Added!';
+              button.style.background = '#008060';
+
+              setTimeout(() => {
+                button.textContent = originalText;
+                button.disabled = false;
               button.style.background = '';
             }, 2000);
-
-            setTimeout(() => {
-              secondaryAllProducts = secondaryAllProducts.filter(p => String(p.id) !== String(upsellProductId));
-              renderSecondaryList();
-            }, 300);
 
           } catch (error) {
             console.error('Secondary add to cart error:', error);
@@ -500,18 +775,31 @@
       return data.recommendations.slice(0, maxProducts);
     }
 
-    async function loadAIUpsells() {
+    async function loadAIUpsells(productIdOverride) {
       if (!widget) return;
+      if (widget.__aiUpsellFetchInFlight) return;
       
       const loadingEl = widget.querySelector('.ai-upsell-loading');
       const contentEl = widget.querySelector('.ai-upsell-content');
+      const currentProductId = productIdOverride || resolveProductId();
+  
+      if (!currentProductId) {
+        startLoadingFallback(widget, loadingEl, 6000);
+        if (loadingEl) loadingEl.style.display = 'block';
+        if (contentEl) contentEl.style.display = 'none';
+        return;
+      }
 
       try {
-        let products = await fetchAiRecommendations(PRODUCT_ID, MAX_PRODUCTS);
+        widget.__aiUpsellFetchInFlight = true;
+        startLoadingFallback(widget, loadingEl, 6000);
+        let products = await fetchAiRecommendations(currentProductId, MAX_PRODUCTS);
         if (!products) {
-          products = await fetchShopifyRecommendations(PRODUCT_ID, MAX_PRODUCTS);
+          products = await fetchShopifyRecommendations(currentProductId, MAX_PRODUCTS);
         }
         if (!products || products.length === 0) {
+          clearLoadingFallback(widget);
+          widget.__aiUpsellFetchInFlight = false;
           widget.style.display = 'none';
           return;
         }
@@ -525,9 +813,9 @@
 
         let html = `
           <div class="ai-upsell-header">
-            <h2 class="ai-upsell-title">{{ block.settings.heading }}</h2>
+            <h2 class="ai-upsell-title">{{ upsell_settings.heading }}</h2>
             {% comment %}
-            {% if block.settings.show_ai_badge %}
+            {% if upsell_settings.show_ai_badge %}
             <span class="ai-badge">🤖 AI Powered</span>
             {% endif %}
             {% endcomment %}
@@ -537,12 +825,12 @@
 
         products.forEach(product => {
           const badgeLabels = {
-            'complementary': '{{ block.settings.badge_complementary }}',
-            'similar': '{{ block.settings.badge_similar }}',
-            'upgrade': '{{ block.settings.badge_upgrade }}',
-            'bundle': '{{ block.settings.badge_bundle }}'
+            'complementary': '{{ upsell_settings.badge_complementary }}',
+            'similar': '{{ upsell_settings.badge_similar }}',
+            'upgrade': '{{ upsell_settings.badge_upgrade }}',
+            'bundle': '{{ upsell_settings.badge_bundle }}'
           };
-          const badge = badgeLabels[product.type] || '{{ block.settings.badge_default }}';
+          const badge = badgeLabels[product.type] || '{{ upsell_settings.badge_default }}';
           const confidence = Math.round((product.confidence || 0.8) * 100);
 
           let variantId = product.variantId || product.id;
@@ -569,7 +857,7 @@
                     ${product.compareAtPrice && parseFloat(product.compareAtPrice) > parseFloat(product.price) ? `<span class="ai-upsell-compare-price">$${parseFloat(product.compareAtPrice).toFixed(2)}</span> ` : ''}
                     <span class="ai-upsell-price">$${parseFloat(product.price).toFixed(2)}</span>
                   </p>
-                  {% if block.settings.show_confidence %}
+                  {% if upsell_settings.show_confidence %}
                   {% endif %}
                 </div>
               </a>
@@ -597,6 +885,9 @@
 
         html += '</div>';
 
+        clearLoadingFallback(widget);
+        widget.__aiUpsellFetched = true;
+        widget.__aiUpsellFetchInFlight = false;
         loadingEl.style.display = 'none';
         contentEl.innerHTML = html;
         contentEl.style.display = 'block';
@@ -704,6 +995,7 @@
               button.disabled = true;
               button.textContent = 'Adding...';
 
+              window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
               const response = await fetch('/cart/add.js', {
                 method: 'POST',
                 headers: {
@@ -819,6 +1111,7 @@
                         if (cartIcon) {
                           cartIcon.click();
                         }
+                        handleCartUpdated();
                       }, 100);
                     });
                 });
@@ -836,7 +1129,7 @@
 
               // Dispatch event for secondary recommendations
               document.dispatchEvent(new CustomEvent('ai-upsell:product-added', {
-                detail: { productId: upsellProductId }
+                detail: { productId: upsellProductId, source: 'ai-upsell' }
               }));
 
               setTimeout(() => {
@@ -860,22 +1153,27 @@
 
       } catch (error) {
         console.error('AI Upsell Error:', error);
+        clearLoadingFallback(widget);
+        widget.__aiUpsellFetchInFlight = false;
         widget.style.display = 'none';
       }
     }
 
     async function loadCartUpsells() {
+      pickWidgets();
       if (!widget) return;
 
       const loadingEl = widget.querySelector('.ai-upsell-loading');
       const contentEl = widget.querySelector('.ai-upsell-content');
 
       try {
+        startLoadingFallback(widget, loadingEl, 6000);
         const cartResponse = await fetch('/cart.js');
         if (!cartResponse.ok) throw new Error('Failed to fetch cart');
         const cart = await cartResponse.json();
 
         if (!cart.items || cart.items.length === 0) {
+          clearLoadingFallback(widget);
           widget.style.display = 'none';
           return;
         }
@@ -890,6 +1188,7 @@
         }
 
         if (!products || products.length === 0) {
+          clearLoadingFallback(widget);
           widget.style.display = 'none';
           return;
         }
@@ -900,7 +1199,7 @@
 
         let html = `
           <div class="ai-upsell-header">
-            <h2 class="ai-upsell-title">{{ block.settings.heading }}</h2>
+            <h2 class="ai-upsell-title">{{ upsell_settings.heading }}</h2>
           </div>
           <div class="ai-upsell-grid ai-upsell-grid-${MAX_PRODUCTS}">
         `;
@@ -952,6 +1251,7 @@
 
         html += '</div>';
 
+        clearLoadingFallback(widget);
         loadingEl.style.display = 'none';
         contentEl.innerHTML = html;
         contentEl.style.display = 'block';
@@ -1049,12 +1349,7 @@
               button.disabled = true;
               button.textContent = 'Adding...';
 
-              const preAddCartResponse = await fetch('/cart.js');
-              const preAddCart = await preAddCartResponse.json();
-              const originalCartProductIds = preAddCart.items.map(item => item.product_id);
-              const allProductTitles = preAddCart.items.map(item => item.product_title).join(', ');
-              const originalSourceTitle = allProductTitles || 'Cart Items';
-
+              window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
               const response = await fetch('/cart/add.js', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1063,34 +1358,40 @@
 
               if (!response.ok) throw new Error('Failed to add to cart');
 
-              fetch('/apps/ai-upsell/analytics/track', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  eventType: 'cart_add',
-                  shopId: '{{ shop.permanent_domain }}',
-                  sourceProductId: originalCartProductIds.length > 0 ? originalCartProductIds[0].toString() : null,
-                  sourceProductName: originalSourceTitle,
-                  upsellProductId: upsellProductId,
-                  upsellProductName: productTitle,
-                  variantId: variantId,
-                  recommendationType: recommendationType,
-                  confidence: parseFloat(confidence),
-                  quantity: quantity,
-                  metadata: {
-                    cartProductIds: originalCartProductIds,
-                    location: 'cart_page',
-                    sourceProductTitle: originalSourceTitle,
-                    upsellProductTitle: productTitle
-                  }
-                })
-              }).catch(err => console.error('❌ Analytics tracking failed:', err));
-
               fetch(`${SHOPIFY_ROOT}cart.js`)
                 .then(res => res.json())
                 .then(cart => {
+                  const originalCartItems = (cart.items || []).filter(
+                    item => String(item.product_id) !== String(upsellProductId)
+                  );
+                  const originalCartProductIds = originalCartItems.map(item => item.product_id);
+                  const originalSourceTitle = originalCartItems.map(item => item.product_title).join(', ') || 'Cart Items';
+
+                  fetch('/apps/ai-upsell/analytics/track', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      eventType: 'cart_add',
+                      shopId: '{{ shop.permanent_domain }}',
+                      sourceProductId: originalCartProductIds.length > 0 ? originalCartProductIds[0].toString() : null,
+                      sourceProductName: originalSourceTitle,
+                      upsellProductId: upsellProductId,
+                      upsellProductName: productTitle,
+                      variantId: variantId,
+                      recommendationType: recommendationType,
+                      confidence: parseFloat(confidence),
+                      quantity: quantity,
+                      metadata: {
+                        cartProductIds: originalCartProductIds,
+                        location: 'cart_page',
+                        sourceProductTitle: originalSourceTitle,
+                        upsellProductTitle: productTitle
+                      }
+                    })
+                  }).catch(err => console.error('❌ Analytics tracking failed:', err));
+
                   document.documentElement.dispatchEvent(
-                    new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart } })
+                    new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } })
                   );
                   updateCartCountBubble(cart.item_count);
 
@@ -1128,9 +1429,8 @@
                         }
                       }
 
-                      setTimeout(() => {
-                        loadCartUpsells();
-                      }, 500);
+                      placeInCartPage();
+                      refreshSecondaryFromCart(cart);
                     });
                 });
 
@@ -1159,6 +1459,7 @@
 
       } catch (error) {
         console.error('AI Cart Upsell Error:', error);
+        clearLoadingFallback(widget);
         widget.style.display = 'none';
       }
     }
@@ -1166,16 +1467,20 @@
     // =============================================
     // SECONDARY: Recommendations based on added upsell product
     // =============================================
-    async function loadSecondaryRecommendations(productIds) {
+    async function loadSecondaryRecommendations(productIds, cartOverride) {
+      pickWidgets();
       if (!secondaryWidget || !productIds || productIds.length === 0) return;
 
       secondarySourceProductId = productIds[0];
       const loadingEl = secondaryWidget.querySelector('.ai-secondary-loading');
       const contentEl = secondaryWidget.querySelector('.ai-secondary-content');
 
+      const previousProducts = secondaryAllProducts.slice();
+
       secondaryWidget.style.display = 'block';
       if (loadingEl) loadingEl.style.display = 'block';
       if (contentEl) contentEl.innerHTML = '';
+      startLoadingFallback(secondaryWidget, loadingEl, 6000);
 
       try {
         const productGids = productIds.map(id => `gid://shopify/Product/${id}`);
@@ -1187,12 +1492,40 @@
         const data = await response.json();
 
         if (!data.success || !data.recommendations || data.recommendations.length === 0) {
+          clearLoadingFallback(secondaryWidget);
           secondaryWidget.style.display = 'none';
           return;
         }
 
         let products = uniqueSecondaryById(data.recommendations);
-        products = await filterSecondaryAgainstCart(products);
+        products = await filterSecondaryAgainstCart(products, cartOverride);
+
+        // Fallback: if filtered list is empty, try AI based on the first cart product
+        if (!products || products.length === 0) {
+          const fallbackId = productIds[0];
+          const fallback = await fetchAiRecommendations(fallbackId, MAX_PRODUCTS);
+          if (fallback && fallback.length > 0) {
+            let fallbackProducts = uniqueSecondaryById(fallback);
+            fallbackProducts = await filterSecondaryAgainstCart(fallbackProducts, cartOverride);
+            products = fallbackProducts;
+          }
+        }
+
+          if (!products || products.length === 0) {
+            if (previousProducts && previousProducts.length > 0) {
+              const cleanedPrev = await filterSecondaryAgainstCart(previousProducts, cartOverride);
+              if (cleanedPrev && cleanedPrev.length > 0) {
+                secondaryAllProducts = cleanedPrev;
+                renderSecondaryList();
+                if (loadingEl) loadingEl.style.display = 'none';
+                return;
+              }
+            }
+            clearLoadingFallback(secondaryWidget);
+            secondaryWidget.style.display = 'none';
+            return;
+          }
+
         secondaryAllProducts = products;
 
         console.log('🔄 Secondary recommendations loaded:', secondaryAllProducts.map(p => ({
@@ -1200,82 +1533,152 @@
           availableForSale: p.availableForSale
         })));
 
+        clearLoadingFallback(secondaryWidget);
         renderSecondaryList();
+        placeInCartPage();
       } catch (error) {
         console.error('Secondary upsell error:', error);
+        clearLoadingFallback(secondaryWidget);
         secondaryWidget.style.display = 'none';
       }
     }
 
-    // Listen for upsell product added event (only load secondary on cart page)
-    // Always base recommendations on current cart items (not sessionStorage)
-    document.addEventListener('ai-upsell:product-added', () => {
-      const isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
-      if (!isCart) return;
+    async function refreshSecondaryFromCart(cartOverride) {
+      pickWidgets();
+      if (!secondaryWidget) return;
 
-      fetch('/cart.js')
-        .then(res => res.json())
-        .then(cart => {
-          const cartProductIds = (cart?.items || []).map(item => item.product_id);
-          if (cartProductIds.length > 0) {
-            console.log('🔄 Secondary: using all cart product ids:', cartProductIds);
-            loadSecondaryRecommendations(cartProductIds);
-          }
-        })
-        .catch(err => console.warn('⚠️ Failed to load cart for secondary recommendations:', err));
-    });
+      try {
+        let cart = cartOverride;
+        if (!cart || !cart.items) {
+          const cartRes = await fetch('/cart.js');
+          cart = await cartRes.json();
+        }
+        const cartProductIds = (cart?.items || []).map(item => item.product_id);
+
+        if (cartProductIds.length > 0) {
+          console.log('🔄 Secondary: using all cart product ids:', cartProductIds);
+          loadSecondaryRecommendations(cartProductIds, cart);
+        } else {
+          console.log('ℹ️ Cart empty; no secondary recommendations.');
+          secondaryWidget.style.display = 'none';
+        }
+      } catch (err) {
+        console.warn('⚠️ Failed to load cart for secondary recommendations:', err);
+      }
+    }
+
+    window.__AI_UPSELL_REFRESH_SECONDARY__ = refreshSecondaryFromCart;
 
     // Initialize
     function init() {
+      pickWidgets();
       const isCartPage = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
 
       console.log('🔍 Init - Cart page:', isCartPage, 'Widget:', !!widget, 'Secondary widget:', !!secondaryWidget);
 
-      if (isCartPage) {
-        if (widget) widget.style.display = 'none';
-      } else if (PRODUCT_ID && widget) {
-        loadAIUpsells();
-      } else if (widget) {
-        widget.style.display = 'none';
-      }
+        if (isCartPage) {
+          if (widget) widget.style.display = 'none';
+          placeInCartPage();
+        } else if (widget) {
+          widget.style.display = 'block';
+          startProductPlacement();
+          const pid = resolveProductId();
+          if (pid) {
+            loadAIUpsells(pid);
+          } else if (!window.__AI_UPSELL_PID_TIMER__) {
+            window.__AI_UPSELL_PID_TIMER__ = true;
+            let pidTries = 0;
+            const pidInterval = setInterval(() => {
+              pidTries += 1;
+              const nextId = resolveProductId();
+              if (nextId) {
+                loadAIUpsells(nextId);
+                clearInterval(pidInterval);
+              } else if (pidTries > 20) {
+                clearInterval(pidInterval);
+              }
+            }, 400);
+          }
+        }
 
       // Cart page: always base secondary recommendations on cart items
       if (isCartPage) {
-        fetch('/cart.js')
-          .then(res => res.json())
-          .then(cart => {
-            const cartProductIds = (cart?.items || []).map(item => item.product_id);
-            if (cartProductIds.length > 0) {
-              console.log('🔄 Secondary: using all cart product ids:', cartProductIds);
-              loadSecondaryRecommendations(cartProductIds);
-            } else {
-              console.log('ℹ️ Cart empty; no secondary recommendations.');
-            }
-          })
-          .catch(err => console.warn('⚠️ Failed to load cart for secondary recommendations:', err));
+        refreshSecondaryFromCart();
       }
     }
 
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', init);
-    } else {
+    function maybeInit() {
+      pickWidgets();
+      if (window.__AI_UPSELL_INIT__) return;
+      window.__AI_UPSELL_INIT__ = true;
       init();
+    }
+
+    function ensureProductFetch() {
+      const isCartPage = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
+      if (isCartPage) return;
+      pickWidgets();
+      if (!widget) return;
+      if (widget.__aiUpsellFetched || widget.__aiUpsellFetchInFlight) return;
+      const pid = resolveProductId();
+      if (!pid) return;
+      loadAIUpsells(pid);
+    }
+
+    if (!window.__AI_UPSELL_EVENT_LISTENERS__) {
+      window.__AI_UPSELL_EVENT_LISTENERS__ = true;
+
+      // Listen for upsell product added event (only load secondary on cart page)
+      // Always base recommendations on current cart items (not sessionStorage)
+      document.addEventListener('ai-upsell:product-added', (event) => {
+        const isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
+        if (!isCart) return;
+        if (event?.detail?.source === 'ai-upsell') return;
+        refreshSecondaryFromCart(event?.detail?.cart);
+      });
+
+      document.addEventListener('shopify:section:load', () => {
+        startProductPlacement();
+        handleCartUpdated();
+      });
+
+      document.addEventListener('cart:updated', (event) => {
+        if (window.__AI_CART_BUSY__) return;
+        window.__AI_CART_BUSY__ = true;
+
+        setTimeout(() => {
+          handleCartUpdated(event);
+          window.__AI_CART_BUSY__ = false;
+        }, 200);
+      });
+    }
+
+    startProductPlacement();
+    setTimeout(ensureProductFetch, 800);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') ensureProductFetch();
+    });
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', maybeInit);
+    } else {
+      maybeInit();
     }
   })();
 </script>
 
 <style>
   .ai-upsell-widget {
-    margin: {{ block.settings.margin_top }}px 0 {{ block.settings.margin_bottom }}px 0;
-    padding: {{ block.settings.padding }}px;
-    background: {{ block.settings.background_color }};
-    border-radius: {{ block.settings.border_radius }}px;
+    margin: {{ upsell_settings.margin_top }}px 0 {{ upsell_settings.margin_bottom }}px 0;
+    padding: {{ upsell_settings.padding }}px;
+    background: {{ upsell_settings.background_color }};
+    border-radius: {{ upsell_settings.border_radius }}px;
   }
 
   .ai-upsell-loading {
     text-align: center;
     padding: 40px 20px;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
   }
 
   .ai-upsell-spinner {
@@ -1283,7 +1686,7 @@
     height: 40px;
     margin: 0 auto 16px;
     border: 4px solid rgba(0,0,0,0.1);
-    border-top-color: {{ block.settings.primary_color }};
+    border-top-color: {{ upsell_settings.primary_color }};
     border-radius: 50%;
     animation: ai-spin 1s linear infinite;
   }
@@ -1303,15 +1706,15 @@
   }
 
   .ai-upsell-title {
-    font-size: {{ block.settings.heading_size }}px;
+    font-size: {{ upsell_settings.heading_size }}px;
     font-weight: 700;
-    color: {{ block.settings.heading_color }};
+    color: {{ upsell_settings.heading_color }};
     margin: 0;
   }
 
   {% comment %}
   .ai-badge {
-    background: {{ block.settings.primary_color }};
+    background: {{ upsell_settings.primary_color }};
     color: white;
     padding: 6px 14px;
     border-radius: 20px;
@@ -1322,7 +1725,7 @@
 
   .ai-upsell-grid {
     display: grid;
-    gap: {{ block.settings.grid_gap }}px;
+    gap: {{ upsell_settings.grid_gap }}px;
   }
 
   .ai-upsell-grid-1 { grid-template-columns: 1fr; }
@@ -1344,15 +1747,15 @@
   }
 
   .ai-upsell-card {
-    background: {{ block.settings.card_background }};
-    border-radius: {{ block.settings.card_border_radius }}px;
+    background: {{ upsell_settings.card_background }};
+    border-radius: {{ upsell_settings.card_border_radius }}px;
     overflow: hidden;
     transition: transform 0.3s ease, box-shadow 0.3s ease;
   }
 
   .ai-upsell-card:hover {
-    transform: translateY(-{{ block.settings.hover_lift }}px);
-    box-shadow: {{ block.settings.hover_shadow }};
+    transform: translateY(-{{ upsell_settings.hover_lift }}px);
+    box-shadow: {{ upsell_settings.hover_shadow }};
   }
 
   .ai-upsell-link {
@@ -1388,8 +1791,8 @@
     position: absolute;
     top: 12px;
     right: 12px;
-    background: {{ block.settings.badge_background }};
-    color: {{ block.settings.badge_text_color }};
+    background: {{ upsell_settings.badge_background }};
+    color: {{ upsell_settings.badge_text_color }};
     padding: 6px 12px;
     border-radius: 16px;
     font-size: 12px;
@@ -1399,15 +1802,15 @@
   {% endcomment %}
 
   .ai-upsell-info {
-    padding: {{ block.settings.card_padding }}px;
+    padding: {{ upsell_settings.card_padding }}px;
   }
 
   .ai-upsell-product-title {
-    font-size: {{ block.settings.product_title_size }}px;
+    font-size: {{ upsell_settings.product_title_size }}px;
     font-weight: 600;
     margin: 0 0 8px 0;
     line-height: 1.4;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -1423,21 +1826,21 @@
   }
 
   .ai-upsell-compare-price {
-    font-size: {{ block.settings.price_size }}px;
+    font-size: {{ upsell_settings.price_size }}px;
     font-weight: 400;
     color: #999999;
     text-decoration: line-through;
   }
 
   .ai-upsell-price {
-    font-size: {{ block.settings.price_size }}px;
+    font-size: {{ upsell_settings.price_size }}px;
     font-weight: 700;
-    color: {{ block.settings.price_color }};
+    color: {{ upsell_settings.price_color }};
   }
 
   .ai-upsell-reason {
-    font-size: {{ block.settings.reason_size }}px;
-    color: {{ block.settings.reason_color }};
+    font-size: {{ upsell_settings.reason_size }}px;
+    color: {{ upsell_settings.reason_color }};
     line-height: 1.5;
     margin: 0 0 12px 0;
     display: -webkit-box;
@@ -1459,7 +1862,7 @@
 
   .ai-confidence-fill {
     height: 100%;
-    background: {{ block.settings.primary_color }};
+    background: {{ upsell_settings.primary_color }};
     transition: width 0.3s ease;
   }
 
@@ -1470,13 +1873,13 @@
   }
 
   .ai-upsell-actions {
-    padding: 0 {{ block.settings.card_padding }}px {{ block.settings.card_padding }}px;
+    padding: 0 {{ upsell_settings.card_padding }}px {{ upsell_settings.card_padding }}px;
   }
 
   .ai-add-to-cart-btn {
     width: 100%;
-    background: {{ block.settings.add_to_cart_bg }};
-    color: {{ block.settings.add_to_cart_text }};
+    background: {{ upsell_settings.add_to_cart_bg }};
+    color: {{ upsell_settings.add_to_cart_text }};
     border: none;
     padding: 12px 20px;
     border-radius: 4px;
@@ -1488,14 +1891,14 @@
   }
 
   .ai-add-to-cart-btn:hover:not(:disabled) {
-    background: {{ block.settings.add_to_cart_hover_bg }};
-    color: {{ block.settings.add_to_cart_hover_text }};
+    background: {{ upsell_settings.add_to_cart_hover_bg }};
+    color: {{ upsell_settings.add_to_cart_hover_text }};
     transform: translateY(-1px);
   }
 
   .ai-add-to-cart-btn:disabled {
-    background: {{ block.settings.add_to_cart_disabled_bg }};
-    color: {{ block.settings.add_to_cart_disabled_text }};
+    background: {{ upsell_settings.add_to_cart_disabled_bg }};
+    color: {{ upsell_settings.add_to_cart_disabled_text }};
     cursor: not-allowed;
   }
 
@@ -1516,7 +1919,7 @@
 
   .ai-qty-label {
     font-size: 13px;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
   }
 
   .ai-qty-controls {
@@ -1534,7 +1937,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
     transition: opacity 0.2s;
   }
 
@@ -1549,7 +1952,7 @@
     background: transparent;
     font-size: 14px;
     font-weight: 600;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
     -moz-appearance: textfield;
     appearance: textfield;
   }
@@ -1565,15 +1968,26 @@
      ============================================= */
   .ai-secondary-widget {
     margin: 20px 0;
-    padding: {{ block.settings.padding }}px;
-    background: {{ block.settings.background_color }};
-    border-radius: {{ block.settings.border_radius }}px;
+    padding: {{ upsell_settings.padding }}px;
+    background: {{ upsell_settings.background_color }};
+    border-radius: {{ upsell_settings.border_radius }}px;
+  }
+
+  body.template-cart .ai-upsell-widget,
+  body.template-cart .ai-secondary-widget {
+    width: 100%;
+    grid-column: 1 / -1;
+  }
+
+  body.template-product .ai-upsell-wrapper {
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .ai-secondary-loading {
     text-align: center;
     padding: 30px 16px;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
   }
 
   .ai-secondary-spinner {
@@ -1581,7 +1995,7 @@
     height: 32px;
     margin: 0 auto 12px;
     border: 3px solid rgba(0,0,0,0.1);
-    border-top-color: {{ block.settings.primary_color }};
+    border-top-color: {{ upsell_settings.primary_color }};
     border-radius: 50%;
     animation: ai-spin 1s linear infinite;
   }
@@ -1591,9 +2005,9 @@
   }
 
   .ai-secondary-title {
-    font-size: {{ block.settings.heading_size }}px;
+    font-size: {{ upsell_settings.heading_size }}px;
     font-weight: 700;
-    color: {{ block.settings.heading_color }};
+    color: {{ upsell_settings.heading_color }};
     margin: 0;
   }
 
@@ -1604,7 +2018,7 @@
   }
 
   .ai-secondary-card {
-    background: {{ block.settings.card_background }};
+    background: {{ upsell_settings.card_background }};
     border: 1px solid #e0e0e0;
     border-radius: 8px;
     padding: 12px;
@@ -1652,11 +2066,11 @@
   }
 
   .ai-secondary-product-title {
-    font-size: {{ block.settings.product_title_size }}px;
+    font-size: {{ upsell_settings.product_title_size }}px;
     font-weight: 600;
     margin: 0 0 4px 0;
     line-height: 1.3;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -1664,9 +2078,9 @@
   }
 
   .ai-secondary-price {
-    font-size: {{ block.settings.price_size }}px;
+    font-size: {{ upsell_settings.price_size }}px;
     font-weight: 700;
-    color: {{ block.settings.price_color }};
+    color: {{ upsell_settings.price_color }};
     margin: 0;
   }
 
@@ -1694,7 +2108,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
     transition: opacity 0.2s;
   }
 
@@ -1709,7 +2123,7 @@
     background: transparent;
     font-size: 13px;
     font-weight: 600;
-    color: {{ block.settings.text_color }};
+    color: {{ upsell_settings.text_color }};
     -moz-appearance: textfield;
     appearance: textfield;
   }
@@ -1722,8 +2136,8 @@
 
   .ai-secondary-add-btn {
     flex: 1;
-    background: {{ block.settings.add_to_cart_bg }};
-    color: {{ block.settings.add_to_cart_text }};
+    background: {{ upsell_settings.add_to_cart_bg }};
+    color: {{ upsell_settings.add_to_cart_text }};
     border: none;
     padding: 8px 16px;
     border-radius: 4px;
@@ -1734,257 +2148,13 @@
   }
 
   .ai-secondary-add-btn:hover:not(:disabled) {
-    background: {{ block.settings.add_to_cart_hover_bg }};
-    color: {{ block.settings.add_to_cart_hover_text }};
+    background: {{ upsell_settings.add_to_cart_hover_bg }};
+    color: {{ upsell_settings.add_to_cart_hover_text }};
   }
 
   .ai-secondary-add-btn:disabled {
-    background: {{ block.settings.add_to_cart_disabled_bg }};
-    color: {{ block.settings.add_to_cart_disabled_text }};
+    background: {{ upsell_settings.add_to_cart_disabled_bg }};
+    color: {{ upsell_settings.add_to_cart_disabled_text }};
     cursor: not-allowed;
   }
 </style>
-
-{% schema %}
-{
-  "name": "AI Upsell Products",
-  "target": "section",
-  "settings": [
-    {
-      "type": "header",
-      "content": "Display"
-    },
-    {
-      "type": "text",
-      "id": "heading",
-      "label": "Heading",
-      "default": "Upsell Products"
-    },
-    {
-      "type": "range",
-      "id": "heading_size",
-      "label": "Heading Size",
-      "min": 18,
-      "max": 36,
-      "step": 2,
-      "default": 28,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "max_products",
-      "label": "Max Products",
-      "min": 1,
-      "max": 4,
-      "step": 1,
-      "default": 4
-    },
-    {
-      "type": "checkbox",
-      "id": "show_reason",
-      "label": "Show Reason",
-      "default": true
-    },
-    {
-      "type": "text",
-      "id": "loading_text",
-      "label": "Loading Text",
-      "default": "Finding perfect products for you..."
-    },
-    {
-      "type": "header",
-      "content": "Colors"
-    },
-    {
-      "type": "color",
-      "id": "background_color",
-      "label": "Background",
-      "default": "#f9f9f9"
-    },
-    {
-      "type": "color",
-      "id": "heading_color",
-      "label": "Heading",
-      "default": "#000000"
-    },
-    {
-      "type": "color",
-      "id": "text_color",
-      "label": "Text",
-      "default": "#333333"
-    },
-    {
-      "type": "color",
-      "id": "primary_color",
-      "label": "Primary/AI Badge",
-      "default": "#667eea"
-    },
-    {
-      "type": "color",
-      "id": "price_color",
-      "label": "Price",
-      "default": "#2c6ecb"
-    },
-    {
-      "type": "color",
-      "id": "card_background",
-      "label": "Card Background",
-      "default": "#ffffff"
-    },
-    {
-      "type": "header",
-      "content": "Button Colors"
-    },
-    {
-      "type": "color",
-      "id": "add_to_cart_bg",
-      "label": "Button Background",
-      "default": "#008060"
-    },
-    {
-      "type": "color",
-      "id": "add_to_cart_text",
-      "label": "Button Text",
-      "default": "#ffffff"
-    },
-    {
-      "type": "color",
-      "id": "add_to_cart_hover_bg",
-      "label": "Button Hover BG",
-      "default": "#006e52"
-    },
-    {
-      "type": "color",
-      "id": "add_to_cart_hover_text",
-      "label": "Button Hover Text",
-      "default": "#ffffff"
-    },
-    {
-      "type": "color",
-      "id": "add_to_cart_disabled_bg",
-      "label": "Disabled BG",
-      "default": "#e0e0e0"
-    },
-    {
-      "type": "color",
-      "id": "add_to_cart_disabled_text",
-      "label": "Disabled Text",
-      "default": "#999999"
-    },
-    {
-      "type": "header",
-      "content": "Layout"
-    },
-    {
-      "type": "range",
-      "id": "margin_top",
-      "label": "Margin Top",
-      "min": 0,
-      "max": 100,
-      "step": 5,
-      "default": 40,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "margin_bottom",
-      "label": "Margin Bottom",
-      "min": 0,
-      "max": 100,
-      "step": 5,
-      "default": 40,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "padding",
-      "label": "Container Padding",
-      "min": 0,
-      "max": 60,
-      "step": 5,
-      "default": 30,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "card_padding",
-      "label": "Card Padding",
-      "min": 8,
-      "max": 32,
-      "step": 2,
-      "default": 16,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "grid_gap",
-      "label": "Grid Gap",
-      "min": 10,
-      "max": 40,
-      "step": 5,
-      "default": 20,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "border_radius",
-      "label": "Container Radius",
-      "min": 0,
-      "max": 30,
-      "step": 2,
-      "default": 8,
-      "unit": "px"
-    },
-    {
-      "type": "header",
-      "content": "Typography"
-    },
-    {
-      "type": "range",
-      "id": "product_title_size",
-      "label": "Title Size",
-      "min": 12,
-      "max": 24,
-      "step": 1,
-      "default": 16,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "price_size",
-      "label": "Price Size",
-      "min": 14,
-      "max": 28,
-      "step": 1,
-      "default": 18,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "reason_size",
-      "label": "Reason Size",
-      "min": 11,
-      "max": 16,
-      "step": 1,
-      "default": 13,
-      "unit": "px"
-    },
-    {
-      "type": "text",
-      "id": "hover_shadow",
-      "label": "Hover Shadow",
-      "default": "0 8px 20px rgba(0,0,0,0.1)"
-    },
-    {
-      "type": "range",
-      "id": "hover_lift",
-      "label": "Hover Lift",
-      "min": 0,
-      "max": 12,
-      "step": 2,
-      "default": 4,
-      "unit": "px"
-    }
-  ]
-}
-{% endschema %}

@@ -101,6 +101,13 @@ export class GroqAIEngine {
       // Use Groq to intelligently analyze and recommend products
       const recommendations = await this.analyzeWithGroq(currentProduct, otherProducts, limit);
 
+      if (!recommendations || recommendations.length === 0) {
+        console.warn(`⚠️ No AI recommendations for product ${currentProductId}; using fallback`);
+        const fallback = await this.fallbackRecommendations(shopId, currentProductId, limit);
+        setCache(cacheKey, fallback);
+        return fallback;
+      }
+
       // Attach source product info so callers don't need to re-fetch
       recommendations._sourceProduct = currentProduct;
 
@@ -413,7 +420,7 @@ STEP 2 — Select candidates of the SAME type:
 From the candidate list below, select ONLY products whose title contains the SAME specific product type you identified in Step 1. For example, if the type is "bracelet", only pick other bracelets (gold bracelet, silver bracelet, leather bracelet, etc.). Do NOT pick necklaces, rings, chokers, or any other type.
 
 STEP 3 — If fewer than ${limit} same-type products exist:
-Only then fill remaining slots with products from the same broad category.
+Fill remaining slots with products from the same broad category. If still not enough, fill with any available products.
 
 CANDIDATE PRODUCTS - labeled [SAME TYPE] or [DIFFERENT TYPE] based on title similarity:
 ${candidateProducts.map((p, i) => `
@@ -427,7 +434,7 @@ ${i + 1}. ProductID: ${p.id} ${p.sameType ? '[SAME TYPE]' : '[DIFFERENT TYPE]'}
 CRITICAL INSTRUCTIONS:
 1. You MUST use the EXACT ProductID numbers shown above (they are large numbers like 7708018999350)
 2. The productId field MUST be a NUMBER, not a string or undefined
-3. ONLY pick [SAME TYPE] products. Do NOT pick any [DIFFERENT TYPE] product under any circumstance, even if it means returning fewer than ${limit} results
+3. Prefer [SAME TYPE] products. If not enough, use same-category products, then any available products to reach exactly ${limit}
 4. Do NOT make up product IDs - only use IDs from the list above
 
 Return ONLY a valid JSON array in this EXACT format (productId must be a NUMBER):
