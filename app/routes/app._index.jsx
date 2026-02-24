@@ -201,11 +201,12 @@ export default function Index() {
         <div style={stepCardStyle}>
           <div style={stepHeaderStyle}>Step 5: Track Results</div>
           <div style={stepDescStyle}>
-            Once live, track performance inside the Analytics page.
+            Once live, track performance inside the Analytics page and review events in Activity Logs.
           </div>
           <ol style={olStyle}>
             <li>Click "Add to Cart" on a upsell product — it will be tracked</li>
-            <li>Open the <a href="/app/analytics" style={{ color: '#005bd3', textDecoration: 'none', fontWeight: '500' }}>Analytics</a> page to see activity logs</li>
+            <li>Open <a href="/app/analytics" style={{ color: '#005bd3', textDecoration: 'none', fontWeight: '500' }}>Analytics</a> for performance metrics</li>
+            <li>Open <a href="/app/activity-logs" style={{ color: '#005bd3', textDecoration: 'none', fontWeight: '500' }}>Activity Logs</a> for recent conversions</li>
           </ol>
           <div style={{ marginTop: '12px', padding: '10px 14px', backgroundColor: totalConversions > 0 ? '#f0fdf4' : '#f7f7f8', borderRadius: '8px', fontSize: '13px', color: totalConversions > 0 ? '#166534' : '#6d7175' }}>
             {totalConversions > 0

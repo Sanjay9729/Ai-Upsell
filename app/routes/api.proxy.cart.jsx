@@ -107,6 +107,7 @@ export const loader = async ({ request }) => {
 
     const shop = params.shop;
     const productGidsJson = params.ids; // Format: JSON array of GIDs
+    const userId = params.userId || null;
 
     if (!shop || !productGidsJson) {
       return json({ error: "Missing required parameters" }, { status: 400 });
@@ -148,7 +149,7 @@ export const loader = async ({ request }) => {
 
     // Run AI and auth in parallel — auth is not needed until inventory fetch
     const [recommendations, authResult] = await Promise.all([
-      aiEngine.findCartUpsellProducts(shop, productIds, 4),
+      aiEngine.findCartUpsellProducts(shop, productIds, 4, userId),
       authenticate.public.appProxy(request).catch(authErr => {
         console.error('⚠️ Cart appProxy auth failed:', authErr.message);
         return { admin: null };

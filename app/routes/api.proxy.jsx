@@ -50,6 +50,7 @@ export const loader = async ({ request }) => {
 
     const shop = params.shop;
     const productGid = params.id; // Format: gid://shopify/Product/{id}
+    const userId = params.userId || null;
 
     if (!shop || !productGid) {
       return json({ error: "Missing required parameters" }, { status: 400 });
@@ -89,8 +90,8 @@ export const loader = async ({ request }) => {
       console.warn('⚠️ No admin client from appProxy auth');
     }
 
-    // Get AI-powered upsell recommendations
-    const recommendations = await aiEngine.findUpsellProducts(shop, productId, 4);
+    // Get AI-powered upsell recommendations (pass userId for per-user personalization)
+    const recommendations = await aiEngine.findUpsellProducts(shop, productId, 4, userId);
 
     // Use source product already fetched by AI engine — no extra DB query needed
     const sourceProductTitle = recommendations._sourceProduct?.title || `Product ${productId}`;
