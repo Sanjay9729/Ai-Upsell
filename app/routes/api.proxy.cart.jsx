@@ -20,10 +20,12 @@ async function fetchLiveInventory(admin, productIds) {
             id
             status
             totalInventory
-            variants(first: 1) {
+            variants(first: 100) {
               edges {
                 node {
                   id
+                  title
+                  price
                   inventoryPolicy
                   inventoryQuantity
                   compareAtPrice
@@ -44,12 +46,24 @@ async function fetchLiveInventory(admin, productIds) {
         const variant = node.variants?.edges?.[0]?.node;
         const policy = variant?.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
         const totalInv = node.totalInventory ?? variant?.inventoryQuantity ?? 0;
+        const allVariants = (node.variants?.edges || []).map(e => {
+          const v = e.node;
+          const vPolicy = v.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
+          return {
+            id: v.id.split('/').pop(),
+            title: v.title,
+            price: v.price,
+            compareAtPrice: v.compareAtPrice || null,
+            available: node.status === 'ACTIVE' && (v.inventoryQuantity > 0 || vPolicy === 'continue')
+          };
+        });
         inventoryMap[numericId] = {
           availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
           inventoryQuantity: totalInv,
           inventoryPolicy: policy,
           variantId: variant?.id || null,
-          compareAtPrice: variant?.compareAtPrice || null
+          compareAtPrice: variant?.compareAtPrice || null,
+          variants: allVariants
         };
       }
     }
@@ -186,7 +200,8 @@ export const loader = async ({ request }) => {
         availableForSale: live.availableForSale ?? (product.status?.toUpperCase() === 'ACTIVE'),
         inventoryQuantity: live.inventoryQuantity ?? 0,
         inventoryPolicy: live.inventoryPolicy ?? 'continue',
-        variantId: live.variantId || product.variants?.[0]?.id || null
+        variantId: live.variantId || product.variants?.[0]?.id || null,
+        variants: live.variants || []
       };
     });
 

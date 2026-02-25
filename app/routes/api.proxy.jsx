@@ -125,10 +125,12 @@ export const loader = async ({ request }) => {
                 id
                 status
                 totalInventory
-                variants(first: 1) {
+                variants(first: 100) {
                   edges {
                     node {
                       id
+                      title
+                      price
                       inventoryPolicy
                       inventoryQuantity
                       compareAtPrice
@@ -153,12 +155,24 @@ export const loader = async ({ request }) => {
             const variant = node.variants?.edges?.[0]?.node;
             const policy = variant?.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
             const totalInv = node.totalInventory ?? variant?.inventoryQuantity ?? 0;
+            const allVariants = (node.variants?.edges || []).map(e => {
+              const v = e.node;
+              const vPolicy = v.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
+              return {
+                id: v.id.split('/').pop(),
+                title: v.title,
+                price: v.price,
+                compareAtPrice: v.compareAtPrice || null,
+                available: node.status === 'ACTIVE' && (v.inventoryQuantity > 0 || vPolicy === 'continue')
+              };
+            });
             inventoryMap[numericId] = {
               availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
               inventoryQuantity: totalInv,
               inventoryPolicy: policy,
               variantId: variant?.id || null,
-              compareAtPrice: variant?.compareAtPrice || null
+              compareAtPrice: variant?.compareAtPrice || null,
+              variants: allVariants
             };
           }
         }
@@ -174,7 +188,8 @@ export const loader = async ({ request }) => {
               inventoryQuantity: live.inventoryQuantity,
               inventoryPolicy: live.inventoryPolicy,
               variantId: live.variantId || rec.variantId,
-              compareAtPrice: live.compareAtPrice || rec.compareAtPrice
+              compareAtPrice: live.compareAtPrice || rec.compareAtPrice,
+              variants: live.variants || []
             };
           }
         });
