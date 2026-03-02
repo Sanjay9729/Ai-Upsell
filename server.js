@@ -105,6 +105,37 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
+// Get all merchant config documents from MongoDB
+app.get('/api/merchant_config', async (req, res) => {
+  try {
+    await connectToMongoDB();
+    const { getDb } = await import('./backend/database/connection.js');
+    const db = await getDb();
+
+    const filter = req.query.shopId ? { shopId: req.query.shopId } : {};
+    const configs = await db.collection('merchant_config')
+      .find(filter)
+      .sort({ updatedAt: -1 })
+      .toArray();
+
+    res.json({
+      success: true,
+      count: configs.length,
+      merchant_config: configs,
+      timestamp: new Date().toISOString(),
+      message: "Merchant config retrieved successfully from MongoDB"
+    });
+  } catch (error) {
+    console.error("Error in merchant_config API:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch merchant config from MongoDB",
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 
 
 // Sync products from Shopify to MongoDB (Step 1 of AI Upsell Flow)
@@ -408,13 +439,6 @@ app.post('/api/webhooks/products/delete', verifyShopifyWebhook, async (req, res)
 // Initialize collections and indexes
 async function startServer() {
   try {
-    // Connect to MongoDB and initialize collections
-    await connectToMongoDB();
-    await initializeCollections();
-    console.log('📊 All collections and indexes initialized successfully');
-
-    startProductReconciliationJob();
-
     // Remix catch-all — handles all non-API routes including landing page
     app.all('*', remixHandler);
 
@@ -452,6 +476,18 @@ async function startServer() {
       console.log('✅ Ready, watching for changes in your AI Upsell system                                                                                           ');
       console.log('');
     });
+
+    // Initialize Mongo + indexes in background so startup never blocks (prevents 504s on cold starts)
+    (async () => {
+      try {
+        await connectToMongoDB();
+        await initializeCollections();
+        console.log('📊 All collections and indexes initialized successfully');
+        startProductReconciliationJob();
+      } catch (error) {
+        console.error('❌ Mongo init failed (server is still running):', error);
+      }
+    })();
   } catch (error) {
     console.error('❌ Failed to start server:', error);
     process.exit(1);

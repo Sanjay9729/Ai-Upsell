@@ -1,8 +1,33 @@
 import { getDb } from '../database/connection.js';
+import { getMerchantConfig } from './merchantConfig.js';
 
 // Simple in-memory cache with TTL for recommendations
 const recommendationCache = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Session offer counters (best-effort, in-memory)
+const sessionOfferCounters = new Map();
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function getSessionKey(shopId, userId, contextKey = 'session') {
+  return `${shopId}:${userId || 'anon'}:${contextKey}`;
+}
+
+function getSessionCount(key) {
+  const entry = sessionOfferCounters.get(key);
+  if (!entry) return 0;
+  if (Date.now() - entry.timestamp > SESSION_TTL_MS) {
+    sessionOfferCounters.delete(key);
+    return 0;
+  }
+  return entry.count || 0;
+}
+
+function incrementSessionCount(key, delta) {
+  const entry = sessionOfferCounters.get(key);
+  const current = entry && Date.now() - entry.timestamp <= SESSION_TTL_MS ? entry.count || 0 : 0;
+  sessionOfferCounters.set(key, { count: current + delta, timestamp: Date.now() });
+}
 
 function getCacheKey(type, shopId, productId, userId) {
   return `${type}:${shopId}:${productId}:${userId || 'anon'}`;
@@ -87,12 +112,25 @@ export class GroqAIEngine {
     try {
       console.log(`🤖 Starting Groq AI analysis for product ${currentProductId} (userId: ${userId || 'anonymous'})`);
 
+      const config = await this.getMerchantConfigSafe(shopId);
+      const guardrails = config?.guardrails || {};
+      const contextKey = `product:${String(currentProductId)}`;
+      const effectiveLimit = this.getEffectiveLimit(limit, guardrails, userId, shopId, contextKey);
+      if (effectiveLimit <= 0) return [];
+
       // Check cache first (per-user cache key)
       const cacheKey = getCacheKey('product', shopId, currentProductId, userId);
       const cached = getFromCache(cacheKey);
       if (cached) {
         console.log(`⚡ Cache hit for product ${currentProductId}`);
-        return cached;
+        const filtered = this.applyGuardrailsToRecommendations(
+          cached,
+          guardrails,
+          new Set([String(currentProductId)])
+        );
+        const capped = filtered.slice(0, effectiveLimit);
+        capped._sourceProduct = cached._sourceProduct;
+        return this.finalizeSessionLimit(capped, effectiveLimit, userId, shopId, contextKey);
       }
 
       // Fetch current product, all shop products, user interest profile, and cart history in parallel
@@ -107,7 +145,12 @@ export class GroqAIEngine {
         throw new Error('Current product not found');
       }
 
-      const otherProducts = allProducts.filter(p => String(p.productId) !== String(currentProductId));
+      const excludedIds = new Set([String(currentProductId)]);
+      const otherProducts = this.filterProductsByGuardrails(
+        allProducts.filter(p => String(p.productId) !== String(currentProductId)),
+        guardrails,
+        excludedIds
+      );
 
       if (otherProducts.length === 0) {
         return [];
@@ -130,44 +173,61 @@ export class GroqAIEngine {
       }
 
       const historyCandidates = this.buildHistoryCandidates(
-        allProducts,
+        otherProducts,
         userProfile,
         cartHistory,
-        new Set([String(currentProductId)])
+        excludedIds
       );
 
       let recommendations;
       try {
-        recommendations = await this.analyzeWithGroq(currentProduct, otherProducts, limit, userProfile, cartHistory);
+        recommendations = await this.analyzeWithGroq(currentProduct, otherProducts, effectiveLimit, userProfile, cartHistory);
         if (!recommendations || recommendations.length === 0) {
           console.warn(`⚠️ No AI recommendations for product ${currentProductId}; using fallback`);
-          recommendations = await this.fallbackRecommendations(shopId, currentProductId, limit);
+          recommendations = await this.fallbackRecommendations(shopId, currentProductId, effectiveLimit);
         }
       } catch (groqError) {
         console.warn(`⚠️ Groq failed for product ${currentProductId}; using fallback`, groqError?.message || groqError);
-        recommendations = await this.fallbackRecommendations(shopId, currentProductId, limit);
+        recommendations = await this.fallbackRecommendations(shopId, currentProductId, effectiveLimit);
       }
 
-      const merged = this.mergeHistoryWithRecommendations(recommendations, historyCandidates, limit);
+      const merged = this.mergeHistoryWithRecommendations(recommendations, historyCandidates, effectiveLimit);
 
       // Apply engagement boost: re-rank by confidence + time-spent signal
       const boostMap = await this.getEngagementBoosts(shopId, merged.map(r => r.productId));
       const boosted = this.applyEngagementBoosts([...merged], boostMap);
 
-      // Attach source product info so callers don't need to re-fetch
-      boosted._sourceProduct = currentProduct;
+      const filtered = this.applyGuardrailsToRecommendations(
+        boosted,
+        guardrails,
+        excludedIds
+      );
+      const filled = this.fillToLimit(filtered, otherProducts, effectiveLimit);
 
-      console.log(`✅ Groq AI found ${boosted.length} upsell recommendations (personalized for userId: ${userId || 'anonymous'})`);
+      // Attach source product info so callers don't need to re-fetch
+      filled._sourceProduct = currentProduct;
+
+      console.log(`✅ Groq AI found ${filled.length} upsell recommendations (personalized for userId: ${userId || 'anonymous'})`);
 
       // Cache the result
-      setCache(cacheKey, boosted);
+      setCache(cacheKey, filled);
 
-      return boosted;
+      return this.finalizeSessionLimit(filled, effectiveLimit, userId, shopId, contextKey);
 
     } catch (error) {
       console.error('❌ Groq AI Engine error:', error);
       // Fallback to rule-based system if Groq fails
-      return this.fallbackRecommendations(shopId, currentProductId, limit);
+      const config = await this.getMerchantConfigSafe(shopId);
+      const guardrails = config?.guardrails || {};
+      const contextKey = `product:${String(currentProductId)}`;
+      const effectiveLimit = this.getEffectiveLimit(limit, guardrails, userId, shopId, contextKey);
+      const fallback = await this.fallbackRecommendations(shopId, currentProductId, effectiveLimit);
+      const filtered = this.applyGuardrailsToRecommendations(
+        fallback,
+        guardrails,
+        new Set([String(currentProductId)])
+      );
+      return this.finalizeSessionLimit(filtered, effectiveLimit, userId, shopId, contextKey);
     }
   }
 
@@ -179,13 +239,23 @@ export class GroqAIEngine {
     try {
       console.log(`🛒 Starting Groq AI analysis for ${cartProductIds.length} cart products`);
 
+      const config = await this.getMerchantConfigSafe(shopId);
+      const guardrails = config?.guardrails || {};
+      const sortedIds = [...cartProductIds].map(String).sort().join(',');
+      const contextKey = `cart:${sortedIds}`;
+      const effectiveLimit = this.getEffectiveLimit(limit, guardrails, userId, shopId, contextKey);
+      if (effectiveLimit <= 0) return [];
+
       // Check cache (sort IDs for consistent key, include userId for per-user caching)
-      const sortedIds = [...cartProductIds].sort().join(',');
       const cacheKey = getCacheKey('cart', shopId, `${sortedIds}:${userId || 'anon'}`);
       const cached = getFromCache(cacheKey);
       if (cached) {
         console.log(`⚡ Cache hit for cart [${sortedIds}] userId=${userId || 'anon'}`);
-        return cached;
+        const excludedIds = new Set(cartProductIds.map(String));
+        const filtered = this.applyGuardrailsToRecommendations(cached, guardrails, excludedIds);
+        const capped = filtered.slice(0, effectiveLimit);
+        capped._cartProducts = cached._cartProducts;
+        return this.finalizeSessionLimit(capped, effectiveLimit, userId, shopId, contextKey);
       }
 
       // Fetch all products, user profile, and cart history in parallel
@@ -201,7 +271,11 @@ export class GroqAIEngine {
 
       const cartProductIdSet = new Set(cartProductIds.map(String));
       const validCartProducts = allProducts.filter(p => cartProductIdSet.has(String(p.productId)));
-      const otherProducts = allProducts.filter(p => !cartProductIdSet.has(String(p.productId)));
+      const otherProducts = this.filterProductsByGuardrails(
+        allProducts.filter(p => !cartProductIdSet.has(String(p.productId))),
+        guardrails,
+        cartProductIdSet
+      );
 
       // Enrich cart history with product titles, exclude products already in current cart
       const allProductsMap = new Map(allProducts.map(p => [String(p.productId), p]));
@@ -226,44 +300,62 @@ export class GroqAIEngine {
       }
 
       const historyCandidates = this.buildHistoryCandidates(
-        allProducts,
+        otherProducts,
         userProfile,
         cartHistory,
-        new Set(cartProductIds.map(String))
+        cartProductIdSet
       );
 
       let recommendations;
       try {
-        recommendations = await this.analyzeCartWithGroq(validCartProducts, otherProducts, limit, userProfile, cartHistory);
+        recommendations = await this.analyzeCartWithGroq(validCartProducts, otherProducts, effectiveLimit, userProfile, cartHistory);
         if (!recommendations || recommendations.length === 0) {
           console.warn(`⚠️ No AI cart recommendations; using fallback`);
-          recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, limit);
+          recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, effectiveLimit);
         }
       } catch (groqError) {
         console.warn(`⚠️ Groq failed for cart; using fallback`, groqError?.message || groqError);
-        recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, limit);
+        recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, effectiveLimit);
       }
 
-      const merged = this.mergeHistoryWithRecommendations(recommendations, historyCandidates, limit);
+      const merged = this.mergeHistoryWithRecommendations(recommendations, historyCandidates, effectiveLimit);
 
       // Apply engagement boost: re-rank by confidence + time-spent signal
       const boostMap = await this.getEngagementBoosts(shopId, merged.map(r => r.productId));
       const boosted = this.applyEngagementBoosts([...merged], boostMap);
 
-      // Attach cart product info so callers don't need to re-fetch
-      boosted._cartProducts = validCartProducts;
+      const filtered = this.applyGuardrailsToRecommendations(
+        boosted,
+        guardrails,
+        cartProductIdSet
+      );
+      const filled = this.fillToLimit(filtered, otherProducts, effectiveLimit);
 
-      console.log(`✅ Groq AI found ${boosted.length} cart upsell recommendations (engagement boost applied)`);
+      // Attach cart product info so callers don't need to re-fetch
+      filled._cartProducts = validCartProducts;
+
+      console.log(`✅ Groq AI found ${filled.length} cart upsell recommendations (engagement boost applied)`);
 
       // Cache the result
-      setCache(cacheKey, boosted);
+      setCache(cacheKey, filled);
 
-      return boosted;
+      return this.finalizeSessionLimit(filled, effectiveLimit, userId, shopId, contextKey);
 
     } catch (error) {
       console.error('❌ Groq AI Engine error for cart:', error);
       // Fallback to rule-based system if Groq fails
-      return this.fallbackCartRecommendations(shopId, cartProductIds, limit);
+      const config = await this.getMerchantConfigSafe(shopId);
+      const guardrails = config?.guardrails || {};
+      const sortedIds = [...cartProductIds].map(String).sort().join(',');
+      const contextKey = `cart:${sortedIds}`;
+      const effectiveLimit = this.getEffectiveLimit(limit, guardrails, userId, shopId, contextKey);
+      const fallback = await this.fallbackCartRecommendations(shopId, cartProductIds, effectiveLimit);
+      const filtered = this.applyGuardrailsToRecommendations(
+        fallback,
+        guardrails,
+        new Set(cartProductIds.map(String))
+      );
+      return this.finalizeSessionLimit(filtered, effectiveLimit, userId, shopId, contextKey);
     }
   }
 
@@ -297,28 +389,36 @@ export class GroqAIEngine {
 
       console.log(`🤖 Calling Groq API with model: ${this.groqModel}`);
 
-      const response = await fetch(this.groqUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.groqApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: this.groqModel,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an AI shopping assistant specialized in product recommendations. Analyze products and provide intelligent upsell suggestions.'
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          temperature: 0.3, // Lower temperature for more consistent recommendations
-          max_tokens: 1000
-        })
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8-second timeout
+      let response;
+      try {
+        response = await fetch(this.groqUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.groqApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            model: this.groqModel,
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an AI shopping assistant specialized in product recommendations. Analyze products and provide intelligent upsell suggestions.'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            temperature: 0.3,
+            max_tokens: 1000
+          })
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -412,28 +512,36 @@ export class GroqAIEngine {
 
       console.log(`🤖 Calling Groq API for cart analysis with model: ${this.groqModel}`);
 
-      const response = await fetch(this.groqUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.groqApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: this.groqModel,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an AI shopping assistant specialized in cart-based product recommendations. Analyze cart contents and provide intelligent cross-sell and upsell suggestions.'
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          temperature: 0.3,
-          max_tokens: 1000
-        })
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8-second timeout
+      let response;
+      try {
+        response = await fetch(this.groqUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.groqApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            model: this.groqModel,
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an AI shopping assistant specialized in cart-based product recommendations. Analyze cart contents and provide intelligent cross-sell and upsell suggestions.'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            temperature: 0.3,
+            max_tokens: 1000
+          })
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -849,6 +957,182 @@ Return ONLY the JSON array, nothing else. Do not include any text before or afte
       confidence: Math.min(product.similarityScore / 100, 0.9),
       recommendationType: 'complementary'
     }));
+  }
+
+  // ─── Guardrails ─────────────────────────────────────────────────────────
+
+  async getMerchantConfigSafe(shopId) {
+    try {
+      return await getMerchantConfig(shopId);
+    } catch (err) {
+      console.warn('⚠️ Failed to load merchant config (using defaults):', err.message);
+      return null;
+    }
+  }
+
+  getEffectiveLimit(limit, guardrails, userId, shopId, contextKey = 'session') {
+    const rawLimit = Number(limit) || 0;
+    if (rawLimit <= 0) return 0;
+
+    const guardrailLimit = Number(guardrails?.sessionOfferLimit);
+
+    if (userId) {
+      const key = getSessionKey(shopId, userId, contextKey);
+      const used = getSessionCount(key);
+
+      // Repeat view of the same context (page refresh) — bypass session budget,
+      // show up to rawLimit without consuming more quota.
+      if (used > 0) return rawLimit;
+
+      if (Number.isFinite(guardrailLimit)) {
+        // sessionOfferLimit is the cumulative session cap (e.g. 3 total offers per session).
+        // rawLimit is the per-view cap (e.g. 4 per page load from maxOfferFrequency).
+        // Return min(per-view cap, remaining session quota).
+        const sessionRemaining = Math.max(guardrailLimit - used, 0);
+        return Math.min(rawLimit, sessionRemaining);
+      }
+
+      return rawLimit;
+    }
+
+    // No userId — no session tracking; apply guardrail as a per-view cap only.
+    return Number.isFinite(guardrailLimit) ? Math.min(rawLimit, guardrailLimit) : rawLimit;
+  }
+
+  finalizeSessionLimit(recommendations, limit, userId, shopId, contextKey = 'session') {
+    const safe = Array.isArray(recommendations) ? recommendations : [];
+    const capped = safe.slice(0, limit);
+    if (userId && capped.length > 0) {
+      const key = getSessionKey(shopId, userId, contextKey);
+      // Only charge the session budget on the FIRST view of this context.
+      // Repeat views (refresh) are free — counter stays at its original value.
+      if (getSessionCount(key) === 0) {
+        incrementSessionCount(key, capped.length);
+      }
+    }
+    return capped;
+  }
+
+  applyGuardrailsToRecommendations(recommendations, guardrails, excludeIds = new Set()) {
+    const safe = Array.isArray(recommendations) ? recommendations : [];
+    return this.filterProductsByGuardrails(safe, guardrails, excludeIds);
+  }
+
+  filterProductsByGuardrails(products, guardrails, excludeIds = new Set()) {
+    const excluded = this.buildExcludeSet(guardrails, excludeIds);
+    return (products || []).filter(product => this.isEligibleProduct(product, guardrails, excluded));
+  }
+
+  fillToLimit(currentList, candidateProducts, limit) {
+    const safe = Array.isArray(currentList) ? currentList : [];
+    if (safe.length >= limit) return safe.slice(0, limit);
+
+    const usedIds = new Set(safe.map(p => String(p.productId)));
+    const fill = (candidateProducts || [])
+      .filter(p => !usedIds.has(String(p.productId)))
+      .slice(0, limit - safe.length)
+      .map(p => ({ ...p, aiReason: p.aiReason || 'You might also like', confidence: p.confidence ?? 0.5, recommendationType: p.recommendationType || 'similar' }));
+
+    return [...safe, ...fill].slice(0, limit);
+  }
+
+  buildExcludeSet(guardrails, extraIds = []) {
+    const ids = new Set();
+    const handles = new Set();
+    const collectionIds = new Set();
+    const collectionHandles = new Set();
+
+    const excludedIds = guardrails?.excludedProductIds || [];
+    for (const id of excludedIds) ids.add(String(id));
+
+    const excludedHandles = guardrails?.excludedProductHandles || [];
+    for (const handle of excludedHandles) {
+      const normalized = String(handle).trim().toLowerCase();
+      if (normalized) handles.add(normalized);
+    }
+
+    const excludedCollectionIds = guardrails?.excludedCollectionIds || [];
+    for (const id of excludedCollectionIds) {
+      const normalized = String(id).trim();
+      if (normalized) collectionIds.add(normalized);
+    }
+
+    const excludedCollectionHandles = guardrails?.excludedCollectionHandles || [];
+    for (const handle of excludedCollectionHandles) {
+      const normalized = String(handle).trim().toLowerCase();
+      if (normalized) collectionHandles.add(normalized);
+    }
+
+    if (extraIds instanceof Set) {
+      extraIds.forEach(id => ids.add(String(id)));
+    } else {
+      (extraIds || []).forEach(id => ids.add(String(id)));
+    }
+
+    return { ids, handles, collectionIds, collectionHandles };
+  }
+
+  isEligibleProduct(product, guardrails, excludedSet) {
+    if (!product) return false;
+    const id = String(product.productId);
+    if (excludedSet?.ids && excludedSet.ids.has(id)) return false;
+
+    const handle = product?.handle ? String(product.handle).toLowerCase() : '';
+    if (handle && excludedSet?.handles && excludedSet.handles.has(handle)) return false;
+
+    const collectionIds = Array.isArray(product?.collectionIds)
+      ? product.collectionIds.map((cid) => String(cid))
+      : [];
+    if (excludedSet?.collectionIds && excludedSet.collectionIds.size > 0) {
+      const blocked = collectionIds.some((cid) => excludedSet.collectionIds.has(cid));
+      if (blocked) return false;
+    }
+
+    const collectionHandles = Array.isArray(product?.collectionHandles)
+      ? product.collectionHandles.map((ch) => String(ch).toLowerCase())
+      : [];
+    if (excludedSet?.collectionHandles && excludedSet.collectionHandles.size > 0) {
+      const blocked = collectionHandles.some((ch) => excludedSet.collectionHandles.has(ch));
+      if (blocked) return false;
+    }
+
+    const status = product.status ? String(product.status).toUpperCase() : null;
+    if (status && status !== 'ACTIVE') return false;
+
+    if (guardrails?.premiumSkuProtection && this.hasTag(product, /(^|\s)premium(\s|$)/i)) {
+      return false;
+    }
+
+    if (guardrails?.subscriptionProtection && this.isSubscriptionProduct(product)) {
+      return false;
+    }
+
+    const threshold = Number(guardrails?.inventoryMinThreshold);
+    if (Number.isFinite(threshold) && threshold > 0) {
+      const variants = Array.isArray(product.variants) ? product.variants : [];
+      const quantities = variants
+        .map(v => Number(v?.inventoryQuantity))
+        .filter(qty => Number.isFinite(qty));
+
+      // If inventory is not tracked in the DB, don't block the product.
+      if (quantities.length > 0) {
+        const hasInventory = quantities.some(qty => qty >= threshold);
+        if (!hasInventory) return false;
+      }
+    }
+
+    return true;
+  }
+
+  hasTag(product, pattern) {
+    const tags = Array.isArray(product?.tags) ? product.tags : (product?.tags ? String(product.tags).split(',') : []);
+    return tags.some(tag => pattern.test(String(tag).trim()));
+  }
+
+  isSubscriptionProduct(product) {
+    const tags = Array.isArray(product?.tags) ? product.tags.join(' ') : (product?.tags || '');
+    const haystack = `${product?.productType || ''} ${product?.handle || ''} ${tags}`.toLowerCase();
+    return /subscription|subscribe|recurring/.test(haystack);
   }
 
   /**

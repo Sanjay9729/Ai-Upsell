@@ -42,7 +42,8 @@ export const collections = {
   upsellEvents: 'upsell_events',
   cartEvents: 'cart_events',
   productTimeEvents: 'product_time_events',
-  cartTimeEvents: 'cart_time_events'
+  cartTimeEvents: 'cart_time_events',
+  merchantConfig: 'merchant_config'
 };
 
 export async function initializeCollections() {
@@ -53,6 +54,8 @@ export async function initializeCollections() {
   await database.collection(collections.products).createIndex({ shopId: 1, tags: 1 });
   await database.collection(collections.products).createIndex({ shopId: 1, vendor: 1 });
   await database.collection(collections.products).createIndex({ shopId: 1, productType: 1 });
+  await database.collection(collections.products).createIndex({ shopId: 1, collectionIds: 1 });
+  await database.collection(collections.products).createIndex({ shopId: 1, collectionHandles: 1 });
   await database.collection(collections.upsells).createIndex({ shopId: 1, sourceProductId: 1 });
 
   // Upsell events collection indexes
@@ -70,6 +73,9 @@ export async function initializeCollections() {
   // Cart time events indexes (analytics-only)
   await database.collection(collections.cartTimeEvents).createIndex({ shop: 1, recordedAt: -1 });
   await database.collection(collections.cartTimeEvents).createIndex({ userId: 1, shop: 1 });
+
+  // Merchant config index
+  await database.collection(collections.merchantConfig).createIndex({ shopId: 1 }, { unique: true });
 
   console.log('MongoDB collections initialized');
 }

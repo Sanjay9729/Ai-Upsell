@@ -3,6 +3,7 @@ import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { getDb, collections } from "../../backend/database/mongodb.js";
 import { syncProductsWithGraphQL } from "../../backend/database/collections.js";
+import { ProductService } from "../../backend/services/productService.js";
 
 export const loader = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
@@ -16,6 +17,8 @@ export const loader = async ({ request }) => {
     let productCount = await db.collection(collections.products)
       .countDocuments({ shopId: session.shop });
 
+    const productService = new ProductService();
+
     if (productCount === 0) {
       if (admin?.graphql) {
         try {
@@ -26,6 +29,19 @@ export const loader = async ({ request }) => {
         }
       } else {
         console.warn("Admin GraphQL client not available for auto-sync.");
+      }
+    } else {
+      const needsBackfill = await productService.needsVariantBackfill(session.shop);
+      if (needsBackfill) {
+        if (admin?.graphql) {
+          try {
+            await syncProductsWithGraphQL(session.shop, admin.graphql);
+          } catch (syncError) {
+            console.error("Variant backfill sync failed:", syncError);
+          }
+        } else {
+          console.warn("Admin GraphQL client not available for variant backfill.");
+        }
       }
     }
 

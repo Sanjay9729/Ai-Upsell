@@ -164,6 +164,18 @@ export const loader = async ({ request }) => {
     console.log(`🔄 Secondary recommendations for product: ${productId}`);
 
     const aiEngine = new GroqAIEngine();
+    const config = await aiEngine.getMerchantConfigSafe(shop);
+    const guardrails = config?.guardrails || {};
+    const excludedIds = new Set([String(productId)]);
+    const DISPLAY_LIMIT = aiEngine.getEffectiveLimit(4, guardrails, null, shop);
+    if (DISPLAY_LIMIT <= 0) {
+      return json({ success: true, productId, shop, recommendations: [], count: 0 }, {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        }
+      });
+    }
 
     // Enforce same-category recommendations (broader match like "bracelet" regardless of material)
     let filteredRecommendations = [];
@@ -179,18 +191,21 @@ export const loader = async ({ request }) => {
       // (e.g. "Jewelry" matches both bracelets and earrings)
       sourceTitleTokens = tokenize(sourceProduct?.title || '');
       const sourceCategory = (sourceProduct?.aiData?.category || '').toLowerCase().trim();
-      const DISPLAY_LIMIT = 4;
 
       if (sourceTitleTokens.length > 0) {
         const allProducts = await aiEngine.getProductsByShop(shop);
-        const candidates = allProducts.filter(p => p.productId !== productId);
+        const candidates = aiEngine.filterProductsByGuardrails(
+          allProducts.filter(p => p.productId !== productId),
+          guardrails,
+          excludedIds
+        );
 
         // Step 1: Same-type products (title word match — e.g. bracelet → bracelet)
         const sameType = candidates.filter(p => matchesByTokens(p, sourceTitleTokens));
 
         if (sameType.length >= DISPLAY_LIMIT) {
           // Enough same-type products — show only same type
-          filteredRecommendations = uniqueByProductId(sameType);
+          filteredRecommendations = uniqueByProductId(sameType).slice(0, DISPLAY_LIMIT);
           console.log(`✅ ${sameType.length} same-type products found — showing same type only`);
         } else {
           // Not enough same-type — fill remaining slots with same-category products
@@ -203,7 +218,7 @@ export const loader = async ({ request }) => {
               )
             : [];
 
-          filteredRecommendations = uniqueByProductId([...sameType, ...sameCat]);
+          filteredRecommendations = uniqueByProductId([...sameType, ...sameCat]).slice(0, DISPLAY_LIMIT);
           console.log(`✅ ${sameType.length} same-type + ${sameCat.length} same-category products`);
 
           if (filteredRecommendations.length === 0) {
@@ -221,9 +236,9 @@ export const loader = async ({ request }) => {
       const recommendations = await aiEngine.findUpsellProducts(shop, productId, 8);
       if (sourceTitleTokens.length > 0) {
         const sameType = recommendations.filter(p => matchesByTokens(p, sourceTitleTokens));
-        filteredRecommendations = sameType.length > 0 ? sameType : recommendations;
+        filteredRecommendations = (sameType.length > 0 ? sameType : recommendations).slice(0, DISPLAY_LIMIT);
       } else {
-        filteredRecommendations = recommendations;
+        filteredRecommendations = recommendations.slice(0, DISPLAY_LIMIT);
       }
     }
 

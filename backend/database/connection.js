@@ -12,7 +12,10 @@ export async function connectToMongoDB() {
   
   try {
     const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-upsell';
-    client = new MongoClient(mongoUri);
+    client = new MongoClient(mongoUri, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000
+    });
     await client.connect();
     db = client.db('ai-upsell');
     console.log('✅ Connected to MongoDB');

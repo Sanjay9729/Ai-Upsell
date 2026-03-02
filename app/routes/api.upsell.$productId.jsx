@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
+import { decideProductOffers } from "../../backend/services/decisionEngine.js";
 
 /**
  * API endpoint to get AI-powered upsell recommendations
@@ -22,15 +22,15 @@ export const loader = async ({ params, request }) => {
       return json({ error: "Product ID is required" }, { status: 400 });
     }
 
-    // Initialize Groq AI Engine
-    const aiEngine = new GroqAIEngine();
-
-    // Get AI-powered upsell recommendations
-    const recommendations = await aiEngine.findUpsellProducts(
-      shop,
+    // Run decision engine to select offers
+    const decision = await decideProductOffers({
+      shopId: shop,
       productId,
-      4 // Number of recommendations
-    );
+      userId: null,
+      limit: 4,
+      placement: "product_page"
+    });
+    const recommendations = decision.offers || [];
 
     // Format response for frontend (inventory will be enriched by proxy route)
     const formattedRecommendations = recommendations.map(product => ({
@@ -41,7 +41,11 @@ export const loader = async ({ params, request }) => {
       image: product.images?.[0]?.src || product.image?.src || "",
       reason: product.aiReason,
       confidence: product.confidence,
-      type: product.recommendationType,
+      type: product.recommendationType || "similar",
+      offerType: product.offerType || "addon_upsell",
+      discountPercent: product.discountPercent ?? decision.meta?.discountPercent ?? null,
+      decisionScore: product.decisionScore ?? null,
+      decisionReason: product.decisionReason ?? null,
       url: `https://${shop}/products/${product.handle}`,
       availableForSale: product.status?.toUpperCase() === 'ACTIVE',
       variantId: product.variants?.[0]?.id || null
@@ -57,7 +61,8 @@ export const loader = async ({ params, request }) => {
       productId,
       shop,
       recommendations: formattedRecommendations,
-      count: formattedRecommendations.length
+      count: formattedRecommendations.length,
+      decision: decision.meta || null
     }, {
       headers: {
         "Access-Control-Allow-Origin": "*",
