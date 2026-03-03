@@ -19,10 +19,42 @@
 }
 
 .upsell-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  display: flex;
   gap: 1.5rem;
   margin-top: 1rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 0.75rem;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #9ca3af #e6e7ea;
+}
+
+.upsell-grid > * {
+  flex: 0 0 260px;
+  scroll-snap-align: start;
+}
+
+.upsell-grid::-webkit-scrollbar {
+  height: 12px;
+}
+
+.upsell-grid::-webkit-scrollbar-track {
+  background: #e6e7ea;
+  border-radius: 999px;
+}
+
+.upsell-grid::-webkit-scrollbar-thumb {
+  background: #9ca3af;
+  border-radius: 999px;
+  border: 2px solid #e6e7ea;
+}
+
+.upsell-grid::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
 }
 
 .upsell-product-skeleton {
@@ -303,7 +335,6 @@
 /* Responsive Design */
 @media (max-width: 768px) {
   .upsell-grid {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1rem;
   }
   
@@ -318,8 +349,8 @@
 
 @media (max-width: 480px) {
   .upsell-grid {
-    grid-template-columns: 1fr;
-    gap: 1rem;
+    gap: 0.75rem;
+    padding-bottom: 0.5rem;
   }
 
   .upsell-product-reason {

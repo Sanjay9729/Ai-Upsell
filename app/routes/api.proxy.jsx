@@ -1,7 +1,7 @@
 import { json } from "@remix-run/node";
 import crypto from "crypto";
 import { authenticate } from "../shopify.server";
-import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
+import { decideProductOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
 
 /**
@@ -11,6 +11,27 @@ import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/dat
  * URL Format: /apps/ai-upsell?id=gid://shopify/Product/{productId}
  * Maps to: /api/proxy?id=gid://shopify/Product/{productId}&shop={shop}&...
  */
+
+function getOfferTypeExtras(offerType, discountPercent) {
+  if (offerType === 'bundle') {
+    return { tagline: 'Bundle & Save' };
+  }
+  if (offerType === 'volume_discount') {
+    const t1 = Math.round((discountPercent || 0) * 0.6);
+    const t2 = discountPercent || 0;
+    return {
+      tagline: 'Buy More, Save More',
+      tiers: [
+        { quantity: 2, discountPercent: t1 },
+        { quantity: 3, discountPercent: t2 },
+      ],
+    };
+  }
+  if (offerType === 'subscription_upgrade') {
+    return { tagline: 'Subscribe & Save', interval: 'monthly' };
+  }
+  return {};
+}
 
 function verifyProxySignature(query) {
   const { signature, ...params } = query;
@@ -50,6 +71,7 @@ export const loader = async ({ request }) => {
 
     const shop = params.shop;
     const productGid = params.id; // Format: gid://shopify/Product/{id}
+    const userId = params.userId || null;
 
     if (!shop || !productGid) {
       return json({ error: "Missing required parameters" }, { status: 400 });
@@ -66,11 +88,18 @@ export const loader = async ({ request }) => {
 
     console.log(`🔍 Looking for product ID: ${productId} (type: ${typeof productId})`);
 
-    // Initialize Groq AI Engine
-    const aiEngine = new GroqAIEngine();
-
     // Self-heal: if webhook missed, fetch product via Admin GraphQL and upsert
-    const { admin } = await authenticate.public.appProxy(request);
+    // In dev/local calls without a Shopify signature, appProxy auth will fail — skip in that case.
+    const hasSignature = Boolean(params.signature);
+    let admin = null;
+    if (hasSignature) {
+      try {
+        const authResult = await authenticate.public.appProxy(request);
+        admin = authResult?.admin || null;
+      } catch (authErr) {
+        console.error('⚠️ App proxy auth failed (continuing without admin):', authErr.message || authErr);
+      }
+    }
     if (admin?.graphql) {
       const existing = await getProductById(shop, productId);
       const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
@@ -85,19 +114,30 @@ export const loader = async ({ request }) => {
           refreshPromise.catch(err => console.warn('⚠️ Background product refresh failed:', err));
         }
       }
-    } else {
+    } else if (hasSignature) {
       console.warn('⚠️ No admin client from appProxy auth');
     }
 
-    // Get AI-powered upsell recommendations
-    const recommendations = await aiEngine.findUpsellProducts(shop, productId, 4);
+    // Run decision engine to select offers (pass userId for personalization)
+    const decision = await decideProductOffers({
+      shopId: shop,
+      productId,
+      userId,
+      limit: 4,
+      placement: "product_page"
+    });
+    const recommendations = decision.offers || [];
 
     // Use source product already fetched by AI engine — no extra DB query needed
-    const sourceProductTitle = recommendations._sourceProduct?.title || `Product ${productId}`;
+    const sourceProductTitle = decision.sourceProduct?.title || `Product ${productId}`;
     console.log(`📝 Source product title: ${sourceProductTitle}`);
 
     // Format response for frontend
-    const formattedRecommendations = recommendations.map(product => ({
+    const formattedRecommendations = recommendations.map(product => {
+      const recommendationType = product.recommendationType || "similar";
+      const offerType = product.offerType || "addon_upsell";
+      const discountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
+      return ({
       id: product.productId,
       title: product.title,
       handle: product.handle,
@@ -106,11 +146,16 @@ export const loader = async ({ request }) => {
       image: product.images?.[0]?.src || product.image?.src || "",
       reason: product.aiReason,
       confidence: product.confidence,
-      type: product.recommendationType,
+      type: recommendationType,
+      offerType,
+      discountPercent,
+      decisionScore: product.decisionScore ?? null,
+      decisionReason: product.decisionReason ?? null,
       url: `/products/${product.handle}`,
       availableForSale: product.status?.toUpperCase() === 'ACTIVE',
-      variantId: product.variants?.[0]?.id || null
-    }));
+      variantId: product.variants?.[0]?.id || null,
+      ...getOfferTypeExtras(offerType, discountPercent),
+    })});
 
     // Enrich with live inventory from Shopify Admin API
     try {
@@ -124,10 +169,12 @@ export const loader = async ({ request }) => {
                 id
                 status
                 totalInventory
-                variants(first: 1) {
+                variants(first: 100) {
                   edges {
                     node {
                       id
+                      title
+                      price
                       inventoryPolicy
                       inventoryQuantity
                       compareAtPrice
@@ -152,12 +199,24 @@ export const loader = async ({ request }) => {
             const variant = node.variants?.edges?.[0]?.node;
             const policy = variant?.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
             const totalInv = node.totalInventory ?? variant?.inventoryQuantity ?? 0;
+            const allVariants = (node.variants?.edges || []).map(e => {
+              const v = e.node;
+              const vPolicy = v.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
+              return {
+                id: v.id.split('/').pop(),
+                title: v.title,
+                price: v.price,
+                compareAtPrice: v.compareAtPrice || null,
+                available: node.status === 'ACTIVE' && (v.inventoryQuantity > 0 || vPolicy === 'continue')
+              };
+            });
             inventoryMap[numericId] = {
               availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
               inventoryQuantity: totalInv,
               inventoryPolicy: policy,
               variantId: variant?.id || null,
-              compareAtPrice: variant?.compareAtPrice || null
+              compareAtPrice: variant?.compareAtPrice || null,
+              variants: allVariants
             };
           }
         }
@@ -173,7 +232,8 @@ export const loader = async ({ request }) => {
               inventoryQuantity: live.inventoryQuantity,
               inventoryPolicy: live.inventoryPolicy,
               variantId: live.variantId || rec.variantId,
-              compareAtPrice: live.compareAtPrice || rec.compareAtPrice
+              compareAtPrice: live.compareAtPrice || rec.compareAtPrice,
+              variants: live.variants || []
             };
           }
         });
@@ -188,7 +248,8 @@ export const loader = async ({ request }) => {
       productId,
       shop,
       recommendations: formattedRecommendations,
-      count: formattedRecommendations.length
+      count: formattedRecommendations.length,
+      decision: decision.meta || null
     }, {
       headers: {
         "Content-Type": "application/json",

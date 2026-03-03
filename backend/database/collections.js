@@ -1,4 +1,6 @@
 import { getDb } from './connection.js';
+import { ProductService } from '../services/productService.js';
+import { collections } from './mongodb.js';
 
 /**
  * Get all products from MongoDB
@@ -41,8 +43,7 @@ export async function getProductsByShop(shopId) {
  * This implements Step 1 of the AI Upsell Flow with images
  */
 export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}) {
-  const db = await getDb();
-  const productsCollection = db.collection('products');
+  const productService = new ProductService();
 
   try {
     console.log(`🔄 Starting GraphQL product sync for shop: ${shopId}`);
@@ -74,6 +75,13 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}
                 status
                 createdAt
                 updatedAt
+                collections(first: 25) {
+                  nodes {
+                    id
+                    handle
+                    title
+                  }
+                }
                 images(first: 10) {
                   edges {
                     node {
@@ -85,11 +93,16 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}
                     }
                   }
                 }
-                variants(first: 1) {
+                variants(first: 100) {
                   edges {
                     node {
+                      id
                       price
                       compareAtPrice
+                      inventoryQuantity
+                      inventoryItem {
+                        id
+                      }
                     }
                   }
                 }
@@ -120,64 +133,13 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}
     }
 
     console.log(`📡 Total fetched: ${allProducts.length} products from Shopify`);
+    const productNodes = allProducts.map(({ node }) => node);
+    const result = await productService.syncProductsFromGraphQL(shopId, productNodes, options);
 
-    // Process products for MongoDB storage
-    const lightProducts = allProducts.map(({ node: product }) => ({
-      shopId,
-      productId: parseInt(product.legacyResourceId, 10),
-      title: product.title,
-      description: product.description || '',
-      tags: product.tags || [],
-      vendor: product.vendor || '',
-      productType: product.productType || '',
-      handle: product.handle,
-      status: product.status,
-      createdAt: new Date(product.createdAt),
-      updatedAt: new Date(product.updatedAt),
-      // Store all product images from GraphQL
-      images: product.images.edges.map(({ node: img }) => ({
-        id: img.id,
-        src: img.url,
-        alt: img.altText || product.title,
-        width: img.width,
-        height: img.height
-      })),
-      image: product.images.edges.length > 0 ? {
-        id: product.images.edges[0].node.id,
-        src: product.images.edges[0].node.url,
-        alt: product.images.edges[0].node.altText || product.title
-      } : null,
-      // Store light product data + AI data
-      aiData: {
-        keywords: extractKeywords(product.title + ' ' + (product.description || '')),
-        category: product.productType || '',
-        price: product.variants.edges[0]?.node.price || '0',
-        compareAtPrice: product.variants.edges[0]?.node.compareAtPrice || null,
-        color: extractColor({ title: product.title, body_html: product.description, tags: product.tags.join(',') }),
-        style: extractStyle({ title: product.title, body_html: product.description, tags: product.tags.join(',') }),
-        brand: product.vendor || '',
-        features: extractFeatures({ title: product.title, body_html: product.description, tags: product.tags.join(',') })
-      }
-    }));
-
-    // Bulk upsert to MongoDB
-    const operations = lightProducts.map(product => ({
-      updateOne: {
-        filter: { shopId: product.shopId, productId: product.productId },
-        update: { $set: product },
-        upsert: true
-      }
-    }));
-
-    const result = await productsCollection.bulkWrite(operations);
-    const syncedCount = lightProducts.length;
-    const productIds = lightProducts.map(product => product.productId);
-
+    const syncedCount = options.returnIds ? result.count : result;
     console.log(`✅ Successfully synced ${syncedCount} products with images to MongoDB`);
-    if (options.returnIds) {
-      return { count: syncedCount, productIds };
-    }
-    return syncedCount;
+
+    return result;
 
   } catch (error) {
     console.error('❌ Error syncing products with GraphQL:', error);
@@ -190,8 +152,7 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}
  * This implements Step 1 of the AI Upsell Flow
  */
 export async function syncProductsToMongoDB(shopId, accessToken) {
-  const db = await getDb();
-  const productsCollection = db.collection('products');
+  const productService = new ProductService();
   
   try {
     console.log(`🔄 Starting product sync for shop: ${shopId}`);
@@ -207,47 +168,8 @@ export async function syncProductsToMongoDB(shopId, accessToken) {
     // Fetch products from Shopify Admin API
     const shopifyProducts = await fetchShopifyProducts(finalShopId, finalAccessToken);
     console.log(`📡 Fetched ${shopifyProducts.length} products from Shopify`);
-    
-    // Process products for MongoDB storage
-    const lightProducts = shopifyProducts.map(product => ({
-      shopId,
-      productId: product.id,
-      title: product.title,
-      description: product.body_html || '',
-      tags: product.tags ? product.tags.split(',').map(tag => tag.trim()) : [],
-      vendor: product.vendor || '',
-      productType: product.product_type || '',
-      handle: product.handle,
-      status: product.status,
-      createdAt: new Date(product.created_at),
-      updatedAt: new Date(product.updated_at),
-      // Store all product images
-      images: product.images || [],
-      image: product.image || null, // Primary image for backward compatibility
-      // Store light product data + AI data
-      aiData: {
-        keywords: extractKeywords(product.title + ' ' + (product.body_html || '')),
-        category: product.product_type || '',
-        price: product.variants?.[0]?.price || '0',
-        compareAtPrice: product.variants?.[0]?.compare_at_price || null,
-        color: extractColor(product),
-        style: extractStyle(product),
-        brand: product.vendor || '',
-        features: extractFeatures(product)
-      }
-    }));
 
-    // Bulk upsert to MongoDB
-    const operations = lightProducts.map(product => ({
-      updateOne: {
-        filter: { shopId: product.shopId, productId: product.productId },
-        update: { $set: product },
-        upsert: true
-      }
-    }));
-
-    const result = await productsCollection.bulkWrite(operations);
-    const syncedCount = lightProducts.length;
+    const syncedCount = await productService.syncProducts(shopId, shopifyProducts);
     
     console.log(`✅ Successfully synced ${syncedCount} products to MongoDB`);
     return syncedCount;
@@ -354,8 +276,7 @@ export async function getProductById(shopId, productId) {
  */
 export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, productId) {
   if (!adminGraphQL) return null;
-  const db = await getDb();
-  const productsCollection = db.collection('products');
+  const productService = new ProductService();
 
   try {
     const gid = `gid://shopify/Product/${productId}`;
@@ -374,6 +295,13 @@ export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, produc
           status
           createdAt
           updatedAt
+          collections(first: 25) {
+            nodes {
+              id
+              handle
+              title
+            }
+          }
           images(first: 10) {
             edges {
               node {
@@ -385,11 +313,16 @@ export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, produc
               }
             }
           }
-          variants(first: 1) {
+          variants(first: 100) {
             edges {
               node {
+                id
                 price
                 compareAtPrice
+                inventoryQuantity
+                inventoryItem {
+                  id
+                }
               }
             }
           }
@@ -402,47 +335,8 @@ export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, produc
     const product = data?.data?.product;
     if (!product) return null;
 
-    const mapped = {
-      shopId,
-      productId: parseInt(product.legacyResourceId, 10),
-      title: product.title,
-      description: product.description || '',
-      tags: product.tags || [],
-      vendor: product.vendor || '',
-      productType: product.productType || '',
-      handle: product.handle,
-      status: product.status,
-      createdAt: new Date(product.createdAt),
-      updatedAt: new Date(product.updatedAt),
-      images: product.images?.edges?.map(({ node: img }) => ({
-        id: img.id,
-        src: img.url,
-        alt: img.altText || product.title,
-        width: img.width,
-        height: img.height
-      })) || [],
-      image: product.images?.edges?.length > 0 ? {
-        id: product.images.edges[0].node.id,
-        src: product.images.edges[0].node.url,
-        alt: product.images.edges[0].node.altText || product.title
-      } : null,
-      aiData: {
-        keywords: extractKeywords(product.title + ' ' + (product.description || '')),
-        category: product.productType || '',
-        price: product.variants?.edges?.[0]?.node?.price || '0',
-        compareAtPrice: product.variants?.edges?.[0]?.node?.compareAtPrice || null,
-        color: extractColor({ title: product.title, body_html: product.description, tags: (product.tags || []).join(',') }),
-        style: extractStyle({ title: product.title, body_html: product.description, tags: (product.tags || []).join(',') }),
-        brand: product.vendor || '',
-        features: extractFeatures({ title: product.title, body_html: product.description, tags: (product.tags || []).join(',') })
-      }
-    };
-
-    await productsCollection.updateOne(
-      { shopId: mapped.shopId, productId: mapped.productId },
-      { $set: mapped },
-      { upsert: true }
-    );
+    const mapped = productService.mapProductFromGraphQL(shopId, product);
+    await productService.upsertProducts([mapped]);
 
     console.log(`✅ Self-healed product ${mapped.productId} for shop ${shopId}`);
     return mapped;
@@ -458,41 +352,22 @@ export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, produc
  * Used by products/create and products/update webhooks.
  */
 export async function upsertProductFromWebhookPayload(shopId, payload) {
-  const db = await getDb();
-  const productsCollection = db.collection('products');
+  const productService = new ProductService();
 
   try {
-    const product = {
-      shopId,
-      productId: payload.id,
-      title: payload.title,
-      description: payload.body_html || '',
-      tags: payload.tags ? payload.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
-      vendor: payload.vendor || '',
-      productType: payload.product_type || '',
-      handle: payload.handle,
-      status: payload.status,
-      createdAt: new Date(payload.created_at),
-      updatedAt: new Date(payload.updated_at),
-      images: payload.images || [],
-      image: payload.image || null,
-      aiData: {
-        keywords: extractKeywords(payload.title + ' ' + (payload.body_html || '')),
-        category: payload.product_type || '',
-        price: payload.variants?.[0]?.price || '0',
-        compareAtPrice: payload.variants?.[0]?.compare_at_price || null,
-        color: extractColor(payload),
-        style: extractStyle(payload),
-        brand: payload.vendor || '',
-        features: extractFeatures(payload)
-      }
-    };
-
-    await productsCollection.updateOne(
-      { shopId: product.shopId, productId: product.productId },
-      { $set: product },
-      { upsert: true }
+    const db = await getDb();
+    const existing = await db.collection(collections.products).findOne(
+      { shopId, productId: payload.id },
+      { projection: { collectionIds: 1, collectionHandles: 1, collectionTitles: 1 } }
     );
+
+    const product = productService.mapProductFromRest(shopId, payload);
+    if (existing) {
+      product.collectionIds = existing.collectionIds || [];
+      product.collectionHandles = existing.collectionHandles || [];
+      product.collectionTitles = existing.collectionTitles || [];
+    }
+    await productService.upsertProducts([product]);
 
     console.log(`✅ Upserted product ${payload.id} (${payload.title}) for shop ${shopId}`);
     return product;
@@ -514,6 +389,8 @@ export async function createIndexes() {
     await productsCollection.createIndex({ shopId: 1, tags: 1 });
     await productsCollection.createIndex({ shopId: 1, vendor: 1 });
     await productsCollection.createIndex({ shopId: 1, productType: 1 });
+    await productsCollection.createIndex({ shopId: 1, collectionIds: 1 });
+    await productsCollection.createIndex({ shopId: 1, collectionHandles: 1 });
     
     console.log('📊 MongoDB indexes created successfully');
   } catch (error) {
@@ -663,3 +540,5 @@ function extractFeatures(product) {
 
   return features;
 }
+
+

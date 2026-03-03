@@ -7,11 +7,11 @@
 {% comment %}Early prefetch: kick off API fetch immediately during page parsing, before DOMContentLoaded{% endcomment %}
 {% unless request.page_type == 'cart' %}
   {% if product.id != blank %}
-    <script>(function(){if(!window.__AI_UPSELL_PREFETCH__){window.__AI_UPSELL_PREFETCH__=fetch('/apps/ai-upsell?id=gid://shopify/Product/{{ product.id }}');}})();</script>
+    <script>(function(){if(!window.__AI_UPSELL_PREFETCH__){var uid='{% if customer %}customer_{{ customer.id }}{% endif %}';if(!uid){try{uid=localStorage.getItem('__ai_uid__')||'';if(!uid){uid='g_'+Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem('__ai_uid__',uid);}}catch(_){}}window.__AI_UPSELL_USER_ID__=uid;window.__AI_UPSELL_PREFETCH__=fetch('/apps/ai-upsell?id=gid://shopify/Product/{{ product.id }}'+(uid?'&userId='+encodeURIComponent(uid):''));}})();</script>
   {% endif %}
 {% endunless %}
 {% if request.page_type == 'cart' and cart.item_count > 0 %}
-  <script>(function(){if(!window.__AI_CART_PREFETCH__){var ids=[{% for item in cart.items %}"gid://shopify/Product/{{ item.product_id }}"{% unless forloop.last %},{% endunless %}{% endfor %}];window.__AI_CART_PREFETCH__=fetch('/apps/ai-upsell/cart?ids='+encodeURIComponent(JSON.stringify(ids)));}})();</script>
+  <script>(function(){if(!window.__AI_CART_PREFETCH__){var ids=[{% for item in cart.items %}"gid://shopify/Product/{{ item.product_id }}"{% unless forloop.last %},{% endunless %}{% endfor %}];var uid=window.__AI_UPSELL_USER_ID__||'';window.__AI_CART_PREFETCH__=fetch('/apps/ai-upsell/cart?ids='+encodeURIComponent(JSON.stringify(ids))+(uid?'&userId='+encodeURIComponent(uid):''));}})();</script>
 {% endif %}
 
 {% assign upsell_settings = settings %}
@@ -90,6 +90,173 @@
     console.log('✅ Fetch interceptor installed');
   })();
 </script>
+
+{% comment %}Time-on-product tracking – runs on product pages only{% endcomment %}
+{% unless request.page_type == 'cart' %}
+{% if product.id != blank %}
+<script>
+(function() {
+  if (window.__AI_TIME_TRACKER__) return;
+  window.__AI_TIME_TRACKER__ = true;
+
+  var _productId    = '{{ product.id }}';
+  var _productTitle = {{ product.title | json }};
+  var _shop         = '{{ shop.permanent_domain }}';
+
+  // Persistent user ID — survives across sessions for per-user personalization
+  var _userId = window.__AI_UPSELL_USER_ID__ || null;
+  if (!_userId) {
+    {% if customer %}
+    _userId = 'customer_{{ customer.id }}';
+    {% else %}
+    try { _userId = localStorage.getItem('__ai_uid__') || null; } catch(_) {}
+    if (!_userId) {
+      _userId = 'g_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { localStorage.setItem('__ai_uid__', _userId); } catch(_) {}
+    }
+    {% endif %}
+    window.__AI_UPSELL_USER_ID__ = _userId;
+  }
+
+  var _totalMs   = 0;
+  var _startMs   = Date.now();
+  var _active    = !document.hidden;
+  var _sent      = false;
+
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      if (_active) { _totalMs += Date.now() - _startMs; _active = false; }
+    } else {
+      _startMs = Date.now(); _active = true;
+    }
+  });
+
+  function sendTime() {
+    if (_sent) return;
+    _sent = true;
+    if (_active) { _totalMs += Date.now() - _startMs; }
+    var seconds = Math.round(_totalMs / 1000);
+    if (seconds < 1) return;
+
+    var payload = JSON.stringify({
+      productId:        _productId,
+      productTitle:     _productTitle,
+      shop:             _shop,
+      timeSpentSeconds: seconds,
+      userId:           _userId
+    });
+
+    // sendBeacon is fire-and-forget, works on page exit (mobile too)
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/apps/ai-upsell/time', new Blob([payload], { type: 'application/json' }));
+    } else {
+      fetch('/apps/ai-upsell/time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true
+      }).catch(function() {});
+    }
+  }
+
+  window.addEventListener('pagehide', sendTime);
+  window.addEventListener('beforeunload', sendTime);
+})();
+</script>
+{% endif %}
+{% endunless %}
+
+{% unless request.page_type == 'cart' %}
+{% if product.id != blank %}
+<script>
+  window.__AI_SOURCE_PRODUCT__ = {
+    id: '{{ product.id }}',
+    title: {{ product.title | json }},
+    image: {% if product.featured_image %}'{{ product.featured_image | img_url: "300x300" }}'{% else %}null{% endif %},
+    price: {{ product.selected_or_first_available_variant.price | divided_by: 100.0 }},
+    variantId: '{{ product.selected_or_first_available_variant.id }}',
+    url: '{{ product.url }}'
+  };
+</script>
+{% endif %}
+{% endunless %}
+
+{% comment %}Cart time tracking (analytics only) – runs on cart pages only{% endcomment %}
+{% if request.page_type == 'cart' and cart.item_count > 0 %}
+<script>
+(function() {
+  if (window.__AI_CART_TIME_TRACKER__) return;
+  window.__AI_CART_TIME_TRACKER__ = true;
+
+  var _shop = '{{ shop.permanent_domain }}';
+  var _cartItemCount = {{ cart.item_count | default: 0 }};
+  var _cartTotalPrice = {{ cart.total_price | default: 0 }};
+  var _customerName = {% if customer %}'{{ customer.first_name }} {{ customer.last_name }}'{% else %}null{% endif %};
+  var _cartProductIds = [{% for item in cart.items %}{{ item.product_id }}{% unless forloop.last %},{% endunless %}{% endfor %}];
+
+  // Persistent user ID — shared with other tracking
+  var _userId = window.__AI_UPSELL_USER_ID__ || null;
+  if (!_userId) {
+    {% if customer %}
+    _userId = 'customer_{{ customer.id }}';
+    {% else %}
+    try { _userId = localStorage.getItem('__ai_uid__') || null; } catch(_) {}
+    if (!_userId) {
+      _userId = 'g_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { localStorage.setItem('__ai_uid__', _userId); } catch(_) {}
+    }
+    {% endif %}
+    window.__AI_UPSELL_USER_ID__ = _userId;
+  }
+
+  var _totalMs = 0;
+  var _startMs = Date.now();
+  var _active = !document.hidden;
+  var _sent = false;
+
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      if (_active) { _totalMs += Date.now() - _startMs; _active = false; }
+    } else {
+      _startMs = Date.now(); _active = true;
+    }
+  });
+
+  function sendTime() {
+    if (_sent) return;
+    _sent = true;
+    if (_active) { _totalMs += Date.now() - _startMs; }
+    var seconds = Math.round(_totalMs / 1000);
+    if (seconds < 1) return;
+
+    var payload = JSON.stringify({
+      context:          'cart',
+      shop:             _shop,
+      timeSpentSeconds: seconds,
+      userId:           _userId,
+      customerName:     _customerName,
+      cartItemCount:    _cartItemCount,
+      cartTotalPrice:   _cartTotalPrice,
+      cartProductIds:   _cartProductIds
+    });
+
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/apps/ai-upsell/time', new Blob([payload], { type: 'application/json' }));
+    } else {
+      fetch('/apps/ai-upsell/time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true
+      }).catch(function() {});
+    }
+  }
+
+  window.addEventListener('pagehide', sendTime);
+  window.addEventListener('beforeunload', sendTime);
+})();
+</script>
+{% endif %}
 
 <script>
   (function() {
@@ -350,6 +517,217 @@
       let secondarySourceProductId = null;
       let secondaryAllProducts = [];
 
+      // ── Shared helpers (used by all 3 widget sections) ──────────────────
+      function applyAiDiscount(price, compareAtPrice, discountPercent) {
+        var base = parseFloat(price);
+        var compare = (compareAtPrice !== null && compareAtPrice !== undefined && compareAtPrice !== '') ? parseFloat(compareAtPrice) : null;
+        var pct = parseFloat(discountPercent);
+        if (!isFinite(base) || base <= 0) return { price: price, compareAt: compareAtPrice, applied: false };
+        if (!isFinite(pct) || pct <= 0) return { price: price, compareAt: compareAtPrice, applied: false };
+        if (compare && compare > base) return { price: price, compareAt: compareAtPrice, applied: false };
+        var discounted = Math.max(0, base * (1 - (pct / 100)));
+        return { price: discounted.toFixed(2), compareAt: base.toFixed(2), applied: true };
+      }
+
+      function formatDiscountPercent(value) {
+        var num = parseFloat(value);
+        if (!isFinite(num)) return '';
+        var rounded = Math.round(num * 100) / 100;
+        var str = rounded.toFixed(2);
+        str = str.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+        return str;
+      }
+
+      function buildCartBundleCardHTML(product) {
+        var vid = product.variantId || product.id;
+        if (typeof vid === 'string' && vid.includes('/')) vid = vid.split('/').pop();
+        var hasV = Array.isArray(product.variants) && product.variants.length > 0 &&
+          !(product.variants.length === 1 && product.variants[0].title === 'Default Title');
+        var first = hasV ? (product.variants.find(function(v){ return v.available; }) || product.variants[0]) : null;
+        var eVid = hasV ? (first && first.id) : vid;
+        var dp = hasV && first && first.price ? first.price : product.price;
+        var dc = hasV && first && first.compareAtPrice ? first.compareAtPrice : product.compareAtPrice;
+        var discountPct = product.discountPercent;
+        var priceInfo = applyAiDiscount(dp, dc, discountPct);
+        dp = priceInfo.price;
+        dc = priceInfo.compareAt;
+
+        var discountLabel = '';
+        if (isFinite(parseFloat(discountPct)) && parseFloat(discountPct) > 0) {
+          discountLabel = '<span class="ai-upsell-discount-pill">-' + formatDiscountPercent(discountPct) + '%</span>';
+        }
+
+        var savingsLine = '';
+        if (isFinite(parseFloat(discountPct)) && parseFloat(discountPct) > 0 && isFinite(parseFloat(dc))) {
+          var saved = (parseFloat(dc) - parseFloat(dp)).toFixed(2);
+          if (parseFloat(saved) > 0) {
+            savingsLine = '<p class="ai-cart-bundle-savings">You save $' + saved + '</p>';
+          }
+        }
+
+        var variantSelectHtml = hasV ? ('<div class="ai-variant-wrapper"><select class="ai-variant-select">' +
+          product.variants.map(function(v) {
+            var vInfo = applyAiDiscount(v.price, v.compareAtPrice || '', product.discountPercent);
+            return '<option value="' + v.id + '" data-price="' + vInfo.price + '" data-compare="' + (vInfo.compareAt || '') + '"' +
+              (!v.available ? ' disabled' : '') + (v.id === (first && first.id) ? ' selected' : '') + '>' +
+              v.title + (!v.available ? ' - Sold out' : '') + '</option>';
+          }).join('') + '</select></div>') : '';
+
+        return `<div class="ai-upsell-card" data-product-id="${product.id}" data-inventory-quantity="${product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999}" data-inventory-policy="${product.inventoryPolicy || 'continue'}"><div class="ai-offer-type-badge ai-offer-type-cart-bundle">Complete Your Look</div><a href="${product.url}" class="ai-upsell-link"><div class="ai-upsell-image-wrapper">${product.image ? `<img src="${product.image}" alt="${product.title}" class="ai-upsell-image" loading="lazy" />` : ''}</div><div class="ai-upsell-info"><h3 class="ai-upsell-product-title">${product.title}</h3><p class="ai-upsell-price-block">${dc && parseFloat(dc) > parseFloat(dp) ? `<span class="ai-upsell-compare-price">$${parseFloat(dc).toFixed(2)}</span> ` : ''}<span class="ai-upsell-price">$${parseFloat(dp).toFixed(2)}</span>${discountLabel}</p>${savingsLine}</div></a><div class="ai-upsell-actions">${variantSelectHtml}<div class="ai-upsell-quantity"><span class="ai-qty-label">Quantity</span><div class="ai-qty-controls"><button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">−</button><input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly /><button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button></div></div><button class="ai-add-to-cart-btn" data-variant-id="${eVid}" data-product-id="${product.id}" data-recommendation-type="${product.type || 'cart_bundle'}" data-confidence="${product.confidence}" ${!product.availableForSale ? 'disabled' : ''}>${product.availableForSale ? 'Add to Cart' : 'Out of Stock'}</button></div></div>`;
+      }
+
+      function buildBundleCardHTML(product) {
+        var src = window.__AI_SOURCE_PRODUCT__ || null;
+        var upsellPrice = parseFloat(product.price) || 0;
+        var sourcePrice = src ? parseFloat(src.price) : 0;
+        var discountPct = parseFloat(product.discountPercent) || 0;
+
+        var discountedUpsell     = discountPct > 0 ? upsellPrice * (1 - discountPct / 100) : upsellPrice;
+        var bundleOriginalTotal  = sourcePrice + upsellPrice;
+        var bundleDiscountedTotal= sourcePrice + discountedUpsell;
+        var savings              = bundleOriginalTotal - bundleDiscountedTotal;
+
+        var srcImg = src && src.image
+          ? '<img src="' + src.image + '" alt="" class="ai-bundle-img" />'
+          : '<div class="ai-bundle-img-placeholder"></div>';
+        var upsellImg = product.image
+          ? '<img src="' + product.image + '" alt="" class="ai-bundle-img" />'
+          : '<div class="ai-bundle-img-placeholder"></div>';
+
+        var upsellVid = product.variantId || product.id;
+        if (typeof upsellVid === 'string' && upsellVid.includes('/'))
+          upsellVid = upsellVid.split('/').pop();
+
+        var savingsHtml = savings > 0
+          ? '<p class="ai-bundle-savings">You save $' + savings.toFixed(2) + ' (' + formatDiscountPercent(discountPct) + '% off)</p>'
+          : '';
+
+        var comparePriceHtml = bundleOriginalTotal > bundleDiscountedTotal
+          ? '<span class="ai-bundle-compare">$' + bundleOriginalTotal.toFixed(2) + '</span>'
+          : '';
+
+        return '<div class="ai-upsell-card ai-bundle-card"' +
+          ' data-product-id="' + product.id + '"' +
+          ' data-inventory-quantity="' + (product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999) + '"' +
+          ' data-inventory-policy="' + (product.inventoryPolicy || 'continue') + '">' +
+          '<div class="ai-offer-type-badge ai-offer-type-bundle">Bundle &amp; Save</div>' +
+          '<div class="ai-bundle-products">' +
+            '<div class="ai-bundle-item">' +
+              '<a href="' + (src ? src.url : '#') + '" class="ai-bundle-img-link">' + srcImg + '</a>' +
+              '<p class="ai-bundle-item-title">' + (src ? src.title : 'Current Product') + '</p>' +
+            '</div>' +
+            '<div class="ai-bundle-plus">+</div>' +
+            '<div class="ai-bundle-item">' +
+              '<a href="' + product.url + '" class="ai-bundle-img-link">' + upsellImg + '</a>' +
+              '<p class="ai-bundle-item-title">' + product.title + '</p>' +
+            '</div>' +
+          '</div>' +
+          '<div class="ai-bundle-pricing">' +
+            '<p class="ai-bundle-total-label">Bundle Price</p>' +
+            '<p class="ai-bundle-price-row">' +
+              comparePriceHtml +
+              '<span class="ai-bundle-price">$' + bundleDiscountedTotal.toFixed(2) + '</span>' +
+            '</p>' +
+            savingsHtml +
+          '</div>' +
+          '<div class="ai-upsell-actions">' +
+            '<button class="ai-add-to-cart-btn"' +
+              ' data-variant-id="' + upsellVid + '"' +
+              ' data-product-id="' + product.id + '"' +
+              ' data-source-variant-id="' + (src && src.variantId ? src.variantId : '') + '"' +
+              ' data-source-product-id="' + (src && src.id ? src.id : '') + '"' +
+              ' data-discount-percent="' + discountPct + '"' +
+              ' data-recommendation-type="' + (product.type || 'bundle') + '"' +
+              ' data-confidence="' + product.confidence + '"' +
+              (!product.availableForSale ? ' disabled' : '') + '>' +
+              (product.availableForSale ? 'Add to Cart' : 'Out of Stock') +
+            '</button>' +
+          '</div>' +
+        '</div>';
+      }
+
+      function getOfferTypeBadge(product) {
+        var type = product.offerType || 'addon_upsell';
+        if (type === 'bundle') {
+          return '<div class="ai-offer-type-badge ai-offer-type-bundle">Bundle &amp; Save</div>';
+        }
+        if (type === 'volume_discount') {
+          var tiersHtml = '';
+          if (Array.isArray(product.tiers) && product.tiers.length > 0) {
+            tiersHtml = '<div class="ai-volume-tiers">' + product.tiers.map(function(t) {
+              return '<span class="ai-volume-tier">Buy ' + t.quantity + '+ &mdash; ' + t.discountPercent + '% off</span>';
+            }).join('') + '</div>';
+          }
+          return '<div class="ai-offer-type-badge ai-offer-type-volume">Buy More, Save More' + tiersHtml + '</div>';
+        }
+        if (type === 'subscription_upgrade') {
+          return '<div class="ai-offer-type-badge ai-offer-type-subscription">Subscribe &amp; Save</div>';
+        }
+        return '';
+      }
+
+      function buildCardHTML(product) {
+        if (product.isCartBundle) return buildCartBundleCardHTML(product);
+        if (product.offerType === 'bundle') return buildBundleCardHTML(product);
+        var vid = product.variantId || product.id;
+        if (typeof vid === 'string' && vid.includes('/')) vid = vid.split('/').pop();
+        var hasV = Array.isArray(product.variants) && product.variants.length > 0 &&
+          !(product.variants.length === 1 && product.variants[0].title === 'Default Title');
+        var first = hasV ? (product.variants.find(function(v){return v.available;}) || product.variants[0]) : null;
+        var eVid = hasV ? (first && first.id) : vid;
+        var dp = hasV && first && first.price ? first.price : product.price;
+        var dc = hasV && first && first.compareAtPrice ? first.compareAtPrice : product.compareAtPrice;
+        var discountPct = product.discountPercent;
+        var priceInfo = applyAiDiscount(dp, dc, discountPct);
+        dp = priceInfo.price;
+        dc = priceInfo.compareAt;
+        var discountLabel = '';
+        if (isFinite(parseFloat(discountPct)) && parseFloat(discountPct) > 0) {
+          discountLabel = `<span class="ai-upsell-discount-pill">-${formatDiscountPercent(discountPct)}%</span>`;
+        }
+        return `<div class="ai-upsell-card" data-product-id="${product.id}" data-inventory-quantity="${product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999}" data-inventory-policy="${product.inventoryPolicy || 'continue'}">${getOfferTypeBadge(product)}<a href="${product.url}" class="ai-upsell-link"><div class="ai-upsell-image-wrapper">${product.image ? `<img src="${product.image}" alt="${product.title}" class="ai-upsell-image" loading="lazy" />` : ''}</div><div class="ai-upsell-info"><h3 class="ai-upsell-product-title">${product.title}</h3><p class="ai-upsell-price-block">${dc && parseFloat(dc) > parseFloat(dp) ? `<span class="ai-upsell-compare-price">$${parseFloat(dc).toFixed(2)}</span> ` : ''}<span class="ai-upsell-price">$${parseFloat(dp).toFixed(2)}</span>${discountLabel}</p></div></a><div class="ai-upsell-actions">${hasV ? `<div class="ai-variant-wrapper"><select class="ai-variant-select">${product.variants.map(function(v){var vInfo=applyAiDiscount(v.price, v.compareAtPrice||'', product.discountPercent);var vPrice=vInfo.price;var vCompare=vInfo.compareAt||'';return `<option value="${v.id}" data-price="${vPrice}" data-compare="${vCompare}" ${!v.available?'disabled':''} ${v.id===(first&&first.id)?'selected':''}>${v.title}${!v.available?' - Sold out':''}</option>`;}).join('')}</select></div>` : ''}<div class="ai-upsell-quantity"><span class="ai-qty-label">Quantity</span><div class="ai-qty-controls"><button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">−</button><input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly /><button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button></div></div><button class="ai-add-to-cart-btn" data-variant-id="${eVid}" data-product-id="${product.id}" data-recommendation-type="${product.type}" data-confidence="${product.confidence}" ${!product.availableForSale?'disabled':''}>${product.availableForSale?'Add to Cart':'Out of Stock'}</button></div></div>`;
+      }
+
+      function updateUpsellPrice(card, qty) {
+        var el = card.querySelector('span.ai-upsell-price'); if (!el) return;
+        var orig = el.getAttribute('data-original-price') || el.textContent;
+        var m = orig.match(/[\d,]+\.?\d*/); if (!m) return;
+        var sym = orig.match(/[^\d\s,\.]+/)?.[0] || '$';
+        el.textContent = sym + (parseFloat(m[0].replace(/,/g,'')) * qty).toFixed(2);
+        if (!el.hasAttribute('data-original-price')) el.setAttribute('data-original-price', orig);
+        var cel = card.querySelector('span.ai-upsell-compare-price');
+        if (cel) { var co = cel.getAttribute('data-original-price') || cel.textContent; var cm = co.match(/[\d,]+\.?\d*/); if (cm) { cel.textContent = sym + (parseFloat(cm[0].replace(/,/g,'')) * qty).toFixed(2); if (!cel.hasAttribute('data-original-price')) cel.setAttribute('data-original-price', co); } }
+      }
+
+      function attachQtyListeners(contentEl) {
+        contentEl.querySelectorAll('.ai-qty-minus').forEach(function(btn) {
+          btn.addEventListener('click', function(e) { e.preventDefault(); var c=btn.closest('.ai-upsell-card'),i=btn.parentElement.querySelector('.ai-qty-input'),v=parseInt(i.value); if(v>1){i.value=v-1;updateUpsellPrice(c,v-1);} });
+        });
+        contentEl.querySelectorAll('.ai-qty-plus').forEach(function(btn) {
+          btn.addEventListener('click', function(e) { e.preventDefault(); var c=btn.closest('.ai-upsell-card'),i=btn.parentElement.querySelector('.ai-qty-input'),v=parseInt(i.value); if(c.dataset.inventoryPolicy==='deny'&&v>=parseInt(c.dataset.inventoryQuantity)){btn.style.opacity='0.5';setTimeout(function(){btn.style.opacity='1';},200);return;} if(v<99){i.value=v+1;updateUpsellPrice(c,v+1);} });
+        });
+      }
+
+      function attachVariantListeners(contentEl) {
+        contentEl.querySelectorAll('.ai-variant-select').forEach(function(select) {
+          select.addEventListener('change', function(e) {
+            e.stopPropagation();
+            var card=select.closest('.ai-upsell-card'),btn=card.querySelector('.ai-add-to-cart-btn'),opt=select.options[select.selectedIndex];
+            btn.setAttribute('data-variant-id', select.value);
+            var np=opt.dataset.price, nc=opt.dataset.compare;
+            if (np) {
+              var pe=card.querySelector('.ai-upsell-price');
+              if (pe) { var s=pe.textContent.match(/[^\d\s,\.]+/)?.[0]||'$'; pe.textContent=s+parseFloat(np).toFixed(2); pe.removeAttribute('data-original-price'); }
+              var ce=card.querySelector('.ai-upsell-compare-price');
+              if (ce) { if(nc&&parseFloat(nc)>parseFloat(np)){var s2=ce.textContent.match(/[^\d\s,\.]+/)?.[0]||'$';ce.textContent=s2+parseFloat(nc).toFixed(2);ce.style.display='';ce.removeAttribute('data-original-price');}else{ce.style.display='none';} }
+            }
+            var qi=card.querySelector('.ai-qty-input'); if(qi) qi.value='1';
+          });
+        });
+      }
+
+      // ────────────────────────────────────────────────────────────────────
+
       function resolveProductId() {
         if (PRODUCT_ID && PRODUCT_ID !== '') return PRODUCT_ID;
         const fromAnalytics = window.ShopifyAnalytics?.meta?.product?.id;
@@ -411,126 +789,12 @@
         <div class="ai-upsell-grid ai-upsell-grid-${MAX_PRODUCTS}">
       `;
 
-      products.forEach(product => {
-        let variantId = product.variantId || product.id;
-        if (typeof variantId === 'string' && variantId.includes('/')) {
-          variantId = variantId.split('/').pop();
-        }
-
-        html += `
-          <div class="ai-upsell-card"
-               data-product-id="${product.id}"
-               data-inventory-quantity="${product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999}"
-               data-inventory-policy="${product.inventoryPolicy || 'continue'}">
-            <a href="${product.url}" class="ai-upsell-link">
-              <div class="ai-upsell-image-wrapper">
-                ${product.image ? `<img src="${product.image}" alt="${product.title}" class="ai-upsell-image" loading="lazy" />` : ''}
-              </div>
-              <div class="ai-upsell-info">
-                <h3 class="ai-upsell-product-title">${product.title}</h3>
-                <p class="ai-upsell-price-block">
-                  ${product.compareAtPrice && parseFloat(product.compareAtPrice) > parseFloat(product.price) ? `<span class="ai-upsell-compare-price">$${parseFloat(product.compareAtPrice).toFixed(2)}</span> ` : ''}
-                  <span class="ai-upsell-price">$${parseFloat(product.price).toFixed(2)}</span>
-                </p>
-              </div>
-            </a>
-            <div class="ai-upsell-actions">
-              <div class="ai-upsell-quantity">
-                <span class="ai-qty-label">Quantity</span>
-                <div class="ai-qty-controls">
-                  <button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">−</button>
-                  <input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly />
-                  <button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button>
-                </div>
-              </div>
-              <button class="ai-add-to-cart-btn"
-                      data-variant-id="${variantId}"
-                      data-product-id="${product.id}"
-                      data-recommendation-type="${product.type}"
-                      data-confidence="${product.confidence}"
-                      ${!product.availableForSale ? 'disabled' : ''}>
-                ${product.availableForSale ? 'Add to Cart' : 'Out of Stock'}
-              </button>
-            </div>
-          </div>
-        `;
-      });
-
-      html += '</div>';
+      products.forEach(function(p){ html += buildCardHTML(p); });
+      html += `</div>`;
       contentEl.innerHTML = html;
       if (loadingEl) loadingEl.style.display = 'none';
-
-      // Secondary quantity button listeners
-      contentEl.querySelectorAll('.ai-qty-minus').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          const card = btn.closest('.ai-upsell-card');
-          const input = btn.parentElement.querySelector('.ai-qty-input');
-          const val = parseInt(input.value);
-          if (val > 1) {
-            input.value = val - 1;
-            updateSecondaryPrice(card, val - 1);
-          }
-        });
-      });
-
-      contentEl.querySelectorAll('.ai-qty-plus').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          const card = btn.closest('.ai-upsell-card');
-          const input = btn.parentElement.querySelector('.ai-qty-input');
-          const val = parseInt(input.value);
-
-          const inventoryQty = parseInt(card.dataset.inventoryQuantity);
-          const inventoryPolicy = card.dataset.inventoryPolicy;
-
-          if (inventoryPolicy === 'deny' && val >= inventoryQty) {
-            btn.style.opacity = '0.5';
-            setTimeout(() => btn.style.opacity = '1', 200);
-            return;
-          }
-
-          if (val < 99) {
-            input.value = val + 1;
-            updateSecondaryPrice(card, val + 1);
-          }
-        });
-      });
-
-      function updateSecondaryPrice(card, quantity) {
-        const priceEl = card.querySelector('span.ai-upsell-price');
-        if (!priceEl) return;
-
-        const originalPrice = priceEl.getAttribute('data-original-price') || priceEl.textContent;
-        const priceMatch = originalPrice.match(/[\d,]+\.?\d*/);
-        if (!priceMatch) return;
-
-        const numericPrice = parseFloat(priceMatch[0].replace(/,/g, ''));
-        const totalPrice = numericPrice * quantity;
-
-        const currencySymbol = originalPrice.match(/[^\d\s,\.]+/)?.[0] || '$';
-        const formattedPrice = currencySymbol + totalPrice.toFixed(2);
-
-        priceEl.textContent = formattedPrice;
-
-        if (!priceEl.hasAttribute('data-original-price')) {
-          priceEl.setAttribute('data-original-price', originalPrice);
-        }
-
-        // Also update compare price
-        const compareEl = card.querySelector('span.ai-upsell-compare-price');
-        if (compareEl) {
-          const originalCompare = compareEl.getAttribute('data-original-price') || compareEl.textContent;
-          const compareMatch = originalCompare.match(/[\d,]+\.?\d*/);
-          if (compareMatch) {
-            const numericCompare = parseFloat(compareMatch[0].replace(/,/g, ''));
-            compareEl.textContent = currencySymbol + (numericCompare * quantity).toFixed(2);
-            if (!compareEl.hasAttribute('data-original-price')) {
-              compareEl.setAttribute('data-original-price', originalCompare);
-            }
-          }
-        }
-      }
+      attachQtyListeners(contentEl);
+      attachVariantListeners(contentEl);
 
       // Secondary add to cart button listeners
       contentEl.querySelectorAll('.ai-add-to-cart-btn').forEach(button => {
@@ -539,6 +803,9 @@
           e.stopPropagation();
 
           const variantId = button.getAttribute('data-variant-id');
+          const sourceVariantId = button.getAttribute('data-source-variant-id');
+          const sourceProductId = button.getAttribute('data-source-product-id');
+          const discountPercent = parseFloat(button.getAttribute('data-discount-percent') || '0');
           const upsellProductId = button.getAttribute('data-product-id');
           const recommendationType = button.getAttribute('data-recommendation-type');
           const confidence = button.getAttribute('data-confidence');
@@ -554,11 +821,36 @@
             button.disabled = true;
             button.textContent = 'Adding...';
 
+            // Apply bundle discount code before adding to cart
+            if (sourceVariantId && discountPercent > 0) {
+              try {
+                const discRes = await fetch('/apps/ai-upsell/discount', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    productIds: [sourceProductId, upsellProductId].filter(Boolean),
+                    discountPercent
+                  })
+                });
+                if (discRes.ok) {
+                  const discData = await discRes.json();
+                  if (discData.code) {
+                    await fetch('/discount/' + discData.code).catch(() => {});
+                  }
+                }
+              } catch (discErr) {
+                console.warn('⚠️ Bundle discount apply failed (continuing without discount):', discErr);
+              }
+            }
+
             window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
+            const cartPayload = sourceVariantId
+              ? { items: [{ id: sourceVariantId, quantity: 1 }, { id: variantId, quantity: quantity }] }
+              : { id: variantId, quantity: quantity };
             const response = await fetch('/cart/add.js', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id: variantId, quantity: quantity })
+              body: JSON.stringify(cartPayload)
             });
 
             if (!response.ok) throw new Error('Failed to add to cart');
@@ -713,7 +1005,8 @@
     }
 
     async function fetchAiRecommendations(productId, maxProducts) {
-      const apiUrl = `/apps/ai-upsell?id=gid://shopify/Product/${productId}`;
+      const userId = window.__AI_UPSELL_USER_ID__ || '';
+      const apiUrl = `/apps/ai-upsell?id=gid://shopify/Product/${productId}` + (userId ? `&userId=${encodeURIComponent(userId)}` : '');
       let fetchPromise = window.__AI_UPSELL_PREFETCH__;
       if (fetchPromise) {
         window.__AI_UPSELL_PREFETCH__ = null;
@@ -776,7 +1069,8 @@
     }
 
     async function fetchCartRecommendations(productGids, maxProducts) {
-      const apiUrl = `/apps/ai-upsell/cart?ids=${encodeURIComponent(JSON.stringify(productGids))}`;
+      const cartUserId = window.__AI_UPSELL_USER_ID__ || '';
+      const apiUrl = `/apps/ai-upsell/cart?ids=${encodeURIComponent(JSON.stringify(productGids))}` + (cartUserId ? `&userId=${encodeURIComponent(cartUserId)}` : '');
       const response = await fetch(apiUrl);
       if (!response.ok) {
         let bodyText = '';
@@ -841,67 +1135,8 @@
           <div class="ai-upsell-grid ai-upsell-grid-${MAX_PRODUCTS}">
         `;
 
-        products.forEach(product => {
-          const badgeLabels = {
-            'complementary': '{{ upsell_settings.badge_complementary }}',
-            'similar': '{{ upsell_settings.badge_similar }}',
-            'upgrade': '{{ upsell_settings.badge_upgrade }}',
-            'bundle': '{{ upsell_settings.badge_bundle }}'
-          };
-          const badge = badgeLabels[product.type] || '{{ upsell_settings.badge_default }}';
-          const confidence = Math.round((product.confidence || 0.8) * 100);
-
-          let variantId = product.variantId || product.id;
-          // Extract numeric ID from GID format (gid://shopify/ProductVariant/123 → 123)
-          if (typeof variantId === 'string' && variantId.includes('/')) {
-            variantId = variantId.split('/').pop();
-          }
-
-          html += `
-            <div class="ai-upsell-card" 
-                 data-product-id="${product.id}"
-                 data-inventory-quantity="${product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999}"
-                 data-inventory-policy="${product.inventoryPolicy || 'continue'}">
-              <a href="${product.url}" class="ai-upsell-link">
-                <div class="ai-upsell-image-wrapper">
-                  ${product.image ? `<img src="${product.image}" alt="${product.title}" class="ai-upsell-image" loading="lazy" />` : ''}
-                  {% comment %}
-                  <span class="ai-upsell-badge">${badge}</span>
-                  {% endcomment %}
-                </div>
-                <div class="ai-upsell-info">
-                  <h3 class="ai-upsell-product-title">${product.title}</h3>
-                  <p class="ai-upsell-price-block">
-                    ${product.compareAtPrice && parseFloat(product.compareAtPrice) > parseFloat(product.price) ? `<span class="ai-upsell-compare-price">$${parseFloat(product.compareAtPrice).toFixed(2)}</span> ` : ''}
-                    <span class="ai-upsell-price">$${parseFloat(product.price).toFixed(2)}</span>
-                  </p>
-                  {% if upsell_settings.show_confidence %}
-                  {% endif %}
-                </div>
-              </a>
-              <div class="ai-upsell-actions">
-                <div class="ai-upsell-quantity">
-                  <span class="ai-qty-label">Quantity</span>
-                  <div class="ai-qty-controls">
-                    <button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">−</button>
-                    <input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly />
-                    <button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button>
-                  </div>
-                </div>
-                <button class="ai-add-to-cart-btn"
-                        data-variant-id="${variantId}"
-                        data-product-id="${product.id}"
-                        data-recommendation-type="${product.type}"
-                        data-confidence="${product.confidence}"
-                        ${!product.availableForSale ? 'disabled' : ''}>
-                  ${product.availableForSale ? 'Add to Cart' : 'Out of Stock'}
-                </button>
-              </div>
-            </div>
-          `;
-        });
-
-        html += '</div>';
+        products.forEach(function(p){ html += buildCardHTML(p); });
+        html += `</div>`;
 
         clearLoadingFallback(widget);
         widget.__aiUpsellFetched = true;
@@ -909,85 +1144,8 @@
         loadingEl.style.display = 'none';
         contentEl.innerHTML = html;
         contentEl.style.display = 'block';
-
-        // View events removed - only tracking cart add events
-
-        // Add event listeners to quantity buttons
-        contentEl.querySelectorAll('.ai-qty-minus').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const card = btn.closest('.ai-upsell-card');
-            const input = btn.parentElement.querySelector('.ai-qty-input');
-            const val = parseInt(input.value);
-            if (val > 1) {
-              input.value = val - 1;
-              updatePrice(card, val - 1);
-            }
-          });
-        });
-        contentEl.querySelectorAll('.ai-qty-plus').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const card = btn.closest('.ai-upsell-card');
-            const input = btn.parentElement.querySelector('.ai-qty-input');
-            const val = parseInt(input.value);
-            
-            const inventoryQty = parseInt(card.dataset.inventoryQuantity);
-            const inventoryPolicy = card.dataset.inventoryPolicy;
-            
-            if (inventoryPolicy === 'deny' && val >= inventoryQty) {
-              console.log('🛑 Limit reached for', card.dataset.productId, 'Qty:', inventoryQty);
-              btn.style.opacity = '0.5';
-              setTimeout(() => btn.style.opacity = '1', 200);
-              return;
-            }
-            
-            console.log('Inventory Check:', { val, inventoryQty, inventoryPolicy });
-            
-            if (val < 99) {
-              input.value = val + 1;
-              updatePrice(card, val + 1);
-            }
-          });
-        });
-
-        // Helper function to update price display based on quantity
-        function updatePrice(card, quantity) {
-          const priceEl = card.querySelector('span.ai-upsell-price');
-          if (!priceEl) return;
-
-          const originalPrice = priceEl.getAttribute('data-original-price') || priceEl.textContent;
-          const priceMatch = originalPrice.match(/[\d,]+\.?\d*/);
-          if (!priceMatch) return;
-
-          const numericPrice = parseFloat(priceMatch[0].replace(/,/g, ''));
-          const totalPrice = numericPrice * quantity;
-
-          // Format the price with the same currency symbol
-          const currencySymbol = originalPrice.match(/[^\d\s,\.]+/)?.[0] || '$';
-          const formattedPrice = currencySymbol + totalPrice.toFixed(2);
-
-          priceEl.textContent = formattedPrice;
-
-          // Store original price on first update
-          if (!priceEl.hasAttribute('data-original-price')) {
-            priceEl.setAttribute('data-original-price', originalPrice);
-          }
-
-          // Also update compare price
-          const compareEl = card.querySelector('span.ai-upsell-compare-price');
-          if (compareEl) {
-            const originalCompare = compareEl.getAttribute('data-original-price') || compareEl.textContent;
-            const compareMatch = originalCompare.match(/[\d,]+\.?\d*/);
-            if (compareMatch) {
-              const numericCompare = parseFloat(compareMatch[0].replace(/,/g, ''));
-              compareEl.textContent = currencySymbol + (numericCompare * quantity).toFixed(2);
-              if (!compareEl.hasAttribute('data-original-price')) {
-                compareEl.setAttribute('data-original-price', originalCompare);
-              }
-            }
-          }
-        }
+        attachQtyListeners(contentEl);
+        attachVariantListeners(contentEl);
 
         // Add event listeners to "Add to cart" buttons
         const addToCartButtons = contentEl.querySelectorAll('.ai-add-to-cart-btn');
@@ -997,6 +1155,9 @@
             e.stopPropagation();
 
             const variantId = button.getAttribute('data-variant-id');
+            const sourceVariantId = button.getAttribute('data-source-variant-id');
+            const sourceProductId = button.getAttribute('data-source-product-id');
+            const discountPercent = parseFloat(button.getAttribute('data-discount-percent') || '0');
             const upsellProductId = button.getAttribute('data-product-id');
             const recommendationType = button.getAttribute('data-recommendation-type');
             const confidence = button.getAttribute('data-confidence');
@@ -1013,16 +1174,38 @@
               button.disabled = true;
               button.textContent = 'Adding...';
 
+              // Apply bundle discount code before adding to cart
+              if (sourceVariantId && discountPercent > 0) {
+                try {
+                  const discRes = await fetch('/apps/ai-upsell/discount', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      productIds: [sourceProductId, upsellProductId].filter(Boolean),
+                      discountPercent
+                    })
+                  });
+                  if (discRes.ok) {
+                    const discData = await discRes.json();
+                    if (discData.code) {
+                      await fetch('/discount/' + discData.code).catch(() => {});
+                    }
+                  }
+                } catch (discErr) {
+                  console.warn('⚠️ Bundle discount apply failed (continuing without discount):', discErr);
+                }
+              }
+
               window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
+              const cartPayload = sourceVariantId
+                ? { items: [{ id: sourceVariantId, quantity: 1 }, { id: variantId, quantity: quantity }] }
+                : { id: variantId, quantity: quantity };
               const response = await fetch('/cart/add.js', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                  id: variantId,
-                  quantity: quantity
-                })
+                body: JSON.stringify(cartPayload)
               });
 
               if (!response.ok) throw new Error('Failed to add to cart');
@@ -1211,6 +1394,15 @@
           return;
         }
 
+        // Filter out products already in cart to avoid duplicate suggestions
+        const cartProductIdSet = new Set(cart.items.map(item => String(item.product_id)));
+        products = products.filter(p => !cartProductIdSet.has(String(p.id)));
+        if (products.length === 0) {
+          clearLoadingFallback(widget);
+          widget.style.display = 'none';
+          return;
+        }
+
         const cartProductTitles = cart.items.map(item => item.product_title).join(', ');
         const sourceTitle = cartProductTitles || 'Cart Items';
         widget.dataset.sourceTitle = sourceTitle;
@@ -1222,127 +1414,19 @@
           <div class="ai-upsell-grid ai-upsell-grid-${MAX_PRODUCTS}">
         `;
 
-        products.forEach(product => {
-          let variantId = product.variantId || product.id;
-          if (typeof variantId === 'string' && variantId.includes('/')) {
-            variantId = variantId.split('/').pop();
-          }
+        products.forEach(function(p){ html += buildCardHTML(p); });
 
-          html += `
-            <div class="ai-upsell-card"
-                 data-product-id="${product.id}"
-                 data-inventory-quantity="${product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999}"
-                 data-inventory-policy="${product.inventoryPolicy || 'continue'}">
-              <a href="${product.url}" class="ai-upsell-link">
-                <div class="ai-upsell-image-wrapper">
-                  ${product.image ? `<img src="${product.image}" alt="${product.title}" class="ai-upsell-image" loading="lazy" />` : ''}
-                </div>
-                <div class="ai-upsell-info">
-                  <h3 class="ai-upsell-product-title">${product.title}</h3>
-                  <p class="ai-upsell-price-block">
-                    ${product.compareAtPrice && parseFloat(product.compareAtPrice) > parseFloat(product.price) ? `<span class="ai-upsell-compare-price">$${parseFloat(product.compareAtPrice).toFixed(2)}</span> ` : ''}
-                    <span class="ai-upsell-price">$${parseFloat(product.price).toFixed(2)}</span>
-                  </p>
-                </div>
-              </a>
-              <div class="ai-upsell-actions">
-                <div class="ai-upsell-quantity">
-                  <span class="ai-qty-label">Quantity</span>
-                  <div class="ai-qty-controls">
-                    <button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">−</button>
-                    <input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly />
-                    <button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button>
-                  </div>
-                </div>
-                <button class="ai-add-to-cart-btn"
-                        data-variant-id="${variantId}"
-                        data-product-id="${product.id}"
-                        data-recommendation-type="${product.type}"
-                        data-confidence="${product.confidence}"
-                        ${!product.availableForSale ? 'disabled' : ''}>
-                  ${product.availableForSale ? 'Add to Cart' : 'Out of Stock'}
-                </button>
-              </div>
+        html += `
             </div>
-          `;
-        });
-
-        html += '</div>';
+        `;
 
         clearLoadingFallback(widget);
         loadingEl.style.display = 'none';
         contentEl.innerHTML = html;
         contentEl.style.display = 'block';
 
-        // Quantity button listeners
-        contentEl.querySelectorAll('.ai-qty-minus').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const card = btn.closest('.ai-upsell-card');
-            const input = btn.parentElement.querySelector('.ai-qty-input');
-            const val = parseInt(input.value);
-            if (val > 1) {
-              input.value = val - 1;
-              updateCartPrice(card, val - 1);
-            }
-          });
-        });
-        contentEl.querySelectorAll('.ai-qty-plus').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const card = btn.closest('.ai-upsell-card');
-            const input = btn.parentElement.querySelector('.ai-qty-input');
-            const val = parseInt(input.value);
-
-            const inventoryQty = parseInt(card.dataset.inventoryQuantity);
-            const inventoryPolicy = card.dataset.inventoryPolicy;
-
-            if (inventoryPolicy === 'deny' && val >= inventoryQty) {
-              btn.style.opacity = '0.5';
-              setTimeout(() => btn.style.opacity = '1', 200);
-              return;
-            }
-
-            if (val < 99) {
-              input.value = val + 1;
-              updateCartPrice(card, val + 1);
-            }
-          });
-        });
-
-        function updateCartPrice(card, quantity) {
-          const priceEl = card.querySelector('span.ai-upsell-price');
-          if (!priceEl) return;
-
-          const originalPrice = priceEl.getAttribute('data-original-price') || priceEl.textContent;
-          const priceMatch = originalPrice.match(/[\d,]+\.?\d*/);
-          if (!priceMatch) return;
-
-          const numericPrice = parseFloat(priceMatch[0].replace(/,/g, ''));
-          const totalPrice = numericPrice * quantity;
-
-          const currencySymbol = originalPrice.match(/[^\d\s,\.]+/)?.[0] || '$';
-          const formattedPrice = currencySymbol + totalPrice.toFixed(2);
-          priceEl.textContent = formattedPrice;
-
-          if (!priceEl.hasAttribute('data-original-price')) {
-            priceEl.setAttribute('data-original-price', originalPrice);
-          }
-
-          // Also update compare price
-          const compareEl = card.querySelector('span.ai-upsell-compare-price');
-          if (compareEl) {
-            const originalCompare = compareEl.getAttribute('data-original-price') || compareEl.textContent;
-            const compareMatch = originalCompare.match(/[\d,]+\.?\d*/);
-            if (compareMatch) {
-              const numericCompare = parseFloat(compareMatch[0].replace(/,/g, ''));
-              compareEl.textContent = currencySymbol + (numericCompare * quantity).toFixed(2);
-              if (!compareEl.hasAttribute('data-original-price')) {
-                compareEl.setAttribute('data-original-price', originalCompare);
-              }
-            }
-          }
-        }
+        attachQtyListeners(contentEl);
+        attachVariantListeners(contentEl);
 
         // Add to cart handlers (cart context)
         const addToCartButtons = contentEl.querySelectorAll('.ai-add-to-cart-btn');
@@ -1502,7 +1586,8 @@
 
       try {
         const productGids = productIds.map(id => `gid://shopify/Product/${id}`);
-        const apiUrl = `/apps/ai-upsell/cart?ids=${encodeURIComponent(JSON.stringify(productGids))}`;
+        const cartUid = window.__AI_UPSELL_USER_ID__ || '';
+        const apiUrl = `/apps/ai-upsell/cart?ids=${encodeURIComponent(JSON.stringify(productGids))}` + (cartUid ? `&userId=${encodeURIComponent(cartUid)}` : '');
         let fetchPromise = window.__AI_CART_PREFETCH__;
         if (fetchPromise) {
           window.__AI_CART_PREFETCH__ = null;
@@ -1766,15 +1851,22 @@
     .ai-upsell-grid-4 {
       grid-template-columns: repeat(2, 1fr);
     }
+    .ai-upsell-card {
+      flex: 0 0 200px;
+    }
   }
 
   @media (max-width: 750px) {
-    .ai-upsell-grid {
+    .ai-upsell-grid-2,
+    .ai-upsell-grid-3,
+    .ai-upsell-grid-4 {
       grid-template-columns: 1fr;
     }
   }
 
   .ai-upsell-card {
+    flex: 0 0 260px;
+    scroll-snap-align: start;
     background: {{ upsell_settings.card_background }};
     border-radius: {{ upsell_settings.card_border_radius }}px;
     overflow: hidden;
@@ -1865,6 +1957,114 @@
     font-weight: 700;
     color: {{ upsell_settings.price_color }};
   }
+
+  .ai-upsell-discount-pill {
+    font-size: 11px;
+    font-weight: 600;
+    color: #1b7a3a;
+    background: #e7f7ec;
+    border: 1px solid #c6ebd1;
+    padding: 2px 6px;
+    border-radius: 999px;
+    line-height: 1.2;
+  }
+
+  .ai-offer-type-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 5px 10px;
+    text-align: center;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-radius: 4px 4px 0 0;
+  }
+  .ai-offer-type-bundle { background: #16a34a; color: #fff; }
+  .ai-offer-type-volume { background: #2563eb; color: #fff; }
+  .ai-offer-type-volume .ai-volume-tiers {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 3px;
+    flex-wrap: wrap;
+  }
+  .ai-offer-type-volume .ai-volume-tier { font-size: 10px; opacity: 0.9; }
+  .ai-offer-type-subscription { background: #7c3aed; color: #fff; }
+  .ai-offer-type-cart-bundle { background: #4f46e5; color: #fff; }
+  .ai-cart-bundle-savings { font-size: 12px; color: #16a34a; font-weight: 600; margin: 4px 0 0; }
+
+  /* Bundle card */
+  .ai-bundle-card { display: flex; flex-direction: column; }
+  .ai-bundle-products {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 8px;
+    padding: 16px 12px 8px;
+  }
+  .ai-bundle-item { flex: 1; text-align: center; min-width: 0; }
+  .ai-bundle-img-link { display: block; }
+  .ai-bundle-img {
+    width: 100%;
+    max-width: 110px;
+    height: 110px;
+    object-fit: cover;
+    border-radius: 6px;
+    background: #f5f5f5;
+    margin: 0 auto;
+    display: block;
+  }
+  .ai-bundle-img-placeholder {
+    width: 100px;
+    height: 100px;
+    background: #f0f0f0;
+    border-radius: 6px;
+    margin: 0 auto;
+  }
+  .ai-bundle-item-title {
+    font-size: 12px;
+    margin: 6px 0 0;
+    line-height: 1.3;
+    color: #333;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .ai-bundle-plus {
+    font-size: 22px;
+    font-weight: 700;
+    color: #16a34a;
+    align-self: center;
+    flex-shrink: 0;
+    padding-bottom: 20px;
+  }
+  .ai-bundle-pricing {
+    padding: 10px 16px 4px;
+    text-align: center;
+    border-top: 1px solid #f0f0f0;
+    margin-top: 8px;
+  }
+  .ai-bundle-total-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #888;
+    margin: 0 0 4px;
+  }
+  .ai-bundle-price-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+    margin: 0 0 4px;
+  }
+  .ai-bundle-compare {
+    font-size: 14px;
+    color: #999;
+    text-decoration: line-through;
+  }
+  .ai-bundle-price { font-size: 20px; font-weight: 700; color: #111; }
+  .ai-bundle-savings { font-size: 12px; color: #16a34a; font-weight: 600; margin: 0 0 8px; }
 
   .ai-upsell-reason {
     font-size: {{ upsell_settings.reason_size }}px;
@@ -1989,6 +2189,27 @@
   .ai-qty-input::-webkit-inner-spin-button {
     -webkit-appearance: none;
     margin: 0;
+  }
+
+  .ai-variant-wrapper {
+    margin-bottom: 8px;
+  }
+
+  .ai-variant-select {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    font-size: 13px;
+    color: {{ upsell_settings.text_color }};
+    background: #f5f5f5;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+
+  .ai-variant-select:focus {
+    outline: none;
+    border-color: {{ upsell_settings.button_color }};
   }
 
   /* =============================================

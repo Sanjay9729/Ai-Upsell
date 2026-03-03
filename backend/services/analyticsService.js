@@ -217,13 +217,70 @@ export async function getUpsellStats(shopId, options = {}) {
  * Get conversion rate for upsells
  */
 export async function getConversionRate(shopId, options = {}) {
+   try {
+     const db = await getDb();
+     const {
+       startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+       endDate = new Date(),
+       sourceProductId = null,
+       includeNonUpsell = false // NEW: Only include upsell events by default
+     } = options;
+
+     const matchStage = {
+       shopId,
+       timestamp: { $gte: startDate, $lte: endDate }
+     };
+
+     // Only include upsell events by default
+     if (!includeNonUpsell) {
+       matchStage.isUpsellEvent = true;
+     }
+
+     if (sourceProductId) {
+       matchStage.sourceProductId = sourceProductId.toString();
+     }
+
+     const stats = await db.collection(collections.upsellEvents).aggregate([
+       { $match: matchStage },
+       {
+         $group: {
+           _id: '$eventType',
+           count: { $sum: 1 }
+         }
+       }
+     ]).toArray();
+
+     const clicks = stats.find(s => s._id === 'click')?.count || 0;
+     const cartAdds = stats.find(s => s._id === 'cart_add')?.count || 0;
+     const views = stats.find(s => s._id === 'view')?.count || 0;
+
+     return {
+       success: true,
+       conversionRate: {
+         views,
+         clicks,
+         cartAdds,
+         clickThroughRate: views > 0 ? (clicks / views * 100).toFixed(2) : 0,
+         addToCartRate: clicks > 0 ? (cartAdds / clicks * 100).toFixed(2) : 0,
+         overallConversionRate: views > 0 ? (cartAdds / views * 100).toFixed(2) : 0
+       }
+     };
+   } catch (error) {
+     console.error('Error calculating conversion rate:', error);
+     return { success: false, error: error.message };
+   }
+}
+
+/**
+ * Calculate AOV (Average Order Value) lift from upsells
+ * Compares orders with upsells vs. orders without upsells
+ */
+export async function getAOVLift(shopId, options = {}) {
   try {
     const db = await getDb();
     const {
       startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-      endDate = new Date(),
-      sourceProductId = null,
-      includeNonUpsell = false // NEW: Only include upsell events by default
+      endDate = new Date()
     } = options;
 
     const matchStage = {
@@ -231,42 +288,115 @@ export async function getConversionRate(shopId, options = {}) {
       timestamp: { $gte: startDate, $lte: endDate }
     };
 
-    // Only include upsell events by default
-    if (!includeNonUpsell) {
-      matchStage.isUpsellEvent = true;
-    }
-
-    if (sourceProductId) {
-      matchStage.sourceProductId = sourceProductId.toString();
-    }
-
-    const stats = await db.collection(collections.upsellEvents).aggregate([
-      { $match: matchStage },
+    // Get orders that included upsells (had cart_add events)
+    const ordersWithUpsells = await db.collection(collections.upsellEvents).aggregate([
+      { $match: { ...matchStage, eventType: 'cart_add' } },
       {
         $group: {
-          _id: '$eventType',
-          count: { $sum: 1 }
+          _id: '$sessionId',
+          upsellCount: { $sum: 1 },
+          totalUpsellValue: { $sum: { $toDouble: '$metadata.price' } },
+          avgUpsellValue: { $avg: { $toDouble: '$metadata.price' } }
         }
       }
     ]).toArray();
 
-    const clicks = stats.find(s => s._id === 'click')?.count || 0;
-    const cartAdds = stats.find(s => s._id === 'cart_add')?.count || 0;
-    const views = stats.find(s => s._id === 'view')?.count || 0;
+    const totalSessions = ordersWithUpsells.length;
+    const totalUpsellValue = ordersWithUpsells.reduce((sum, o) => sum + (o.totalUpsellValue || 0), 0);
+    const avgUpsellValuePerOrder = totalSessions > 0 ? totalUpsellValue / totalSessions : 0;
+
+    // Estimate AOV lift (assuming base order value ~100)
+    const estimatedAOVLift = (avgUpsellValuePerOrder / 100) * 100; // As percentage
 
     return {
       success: true,
-      conversionRate: {
-        views,
-        clicks,
-        cartAdds,
-        clickThroughRate: views > 0 ? (clicks / views * 100).toFixed(2) : 0,
-        addToCartRate: clicks > 0 ? (cartAdds / clicks * 100).toFixed(2) : 0,
-        overallConversionRate: views > 0 ? (cartAdds / views * 100).toFixed(2) : 0
+      aovMetrics: {
+        sessionsWithUpsells: totalSessions,
+        totalUpsellValue: Math.round(totalUpsellValue * 100) / 100,
+        avgUpsellValuePerOrder: Math.round(avgUpsellValuePerOrder * 100) / 100,
+        estimatedAOVLiftPercent: Math.round(estimatedAOVLift * 100) / 100,
+        period: { startDate, endDate }
       }
     };
   } catch (error) {
-    console.error('Error calculating conversion rate:', error);
+    console.error('Error calculating AOV lift:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Track revenue attribution to specific offers
+ */
+export async function getRevenueAttribution(shopId, options = {}) {
+  try {
+    const db = await getDb();
+    const {
+      startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+      endDate = new Date(),
+      topN = 10
+    } = options;
+
+    const matchStage = {
+      shopId,
+      eventType: 'cart_add',
+      timestamp: { $gte: startDate, $lte: endDate },
+      'metadata.price': { $exists: true }
+    };
+
+    // Revenue by upsell product
+    const revenueByProduct = await db.collection(collections.upsellEvents).aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: '$upsellProductId',
+          revenue: { $sum: { $toDouble: '$metadata.price' } },
+          orders: { $sum: 1 },
+          avgOrderValue: { $avg: { $toDouble: '$metadata.price' } }
+        }
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: topN }
+    ]).toArray();
+
+    // Revenue by offer type
+    const revenueByOfferType = await db.collection(collections.upsellEvents).aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: '$metadata.offerType',
+          revenue: { $sum: { $toDouble: '$metadata.price' } },
+          orders: { $sum: 1 }
+        }
+      },
+      { $sort: { revenue: -1 } }
+    ]).toArray();
+
+    const totalRevenue = revenueByProduct.reduce((sum, p) => sum + p.revenue, 0);
+    const totalOrders = revenueByProduct.reduce((sum, p) => sum + p.orders, 0);
+
+    return {
+      success: true,
+      attribution: {
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        totalOrders,
+        avgOrderValue: totalOrders > 0 ? Math.round((totalRevenue / totalOrders) * 100) / 100 : 0,
+        byProduct: revenueByProduct.map(p => ({
+          productId: p._id,
+          revenue: Math.round(p.revenue * 100) / 100,
+          orders: p.orders,
+          percentOfTotal: Math.round((p.revenue / totalRevenue) * 100 * 100) / 100
+        })),
+        byOfferType: revenueByOfferType.map(t => ({
+          offerType: t._id,
+          revenue: Math.round(t.revenue * 100) / 100,
+          orders: t.orders,
+          percentOfTotal: Math.round((t.revenue / totalRevenue) * 100 * 100) / 100
+        })),
+        period: { startDate, endDate }
+      }
+    };
+  } catch (error) {
+    console.error('Error calculating revenue attribution:', error);
     return { success: false, error: error.message };
   }
 }

@@ -1,0 +1,103 @@
+import { json } from "@remix-run/node";
+import { decideCartOffers } from "../../backend/services/decisionEngine.js";
+
+/**
+ * GET /api/checkout-upsell
+ *
+ * Direct API called by Shopify checkout UI extensions and thank-you page extensions.
+ * Does NOT go through the App Proxy (no HMAC signature required).
+ * Extensions authenticate by passing their shop domain — we verify it exists in our DB.
+ *
+ * Query params:
+ *   shop        — myshopify domain (e.g. mystore.myshopify.com)
+ *   ids         — JSON array of numeric product IDs already in cart/order
+ *   placement   — 'checkout' | 'post_purchase' (default: 'checkout')
+ *   limit       — number of offers to return (default: 1 for checkout, 2 for post_purchase)
+ */
+export const loader = async ({ request }) => {
+  const corsHeaders = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  try {
+    const url = new URL(request.url);
+    const shop = url.searchParams.get("shop");
+    const idsParam = url.searchParams.get("ids");
+    const placement = url.searchParams.get("placement") || "checkout";
+    const limitParam = url.searchParams.get("limit");
+
+    if (!shop || !idsParam) {
+      return json({ offers: [], offer: null }, { status: 400, headers: corsHeaders });
+    }
+
+    let productIds;
+    try {
+      const parsed = JSON.parse(idsParam);
+      productIds = (Array.isArray(parsed) ? parsed : [parsed])
+        .map(Number)
+        .filter(id => id > 0);
+    } catch {
+      return json({ offers: [], offer: null }, { status: 400, headers: corsHeaders });
+    }
+
+    if (productIds.length === 0) {
+      return json({ offers: [], offer: null }, { headers: corsHeaders });
+    }
+
+    const defaultLimit = placement === "post_purchase" ? 2 : 1;
+    const limit = Math.min(Number(limitParam) || defaultLimit, 4);
+
+    console.log(`🛒 Checkout upsell request — shop: ${shop}, placement: ${placement}, products: ${productIds}`);
+
+    const decision = await decideCartOffers({
+      shopId: shop,
+      cartProductIds: productIds,
+      limit,
+      placement,
+    });
+
+    const rawOffers = decision.offers || [];
+
+    const formattedOffers = rawOffers.map(product => {
+      const price = String(product.aiData?.price || product.variants?.[0]?.price || "0");
+      const discountPercent = product.discountPercent ?? 0;
+      return {
+        id: product.productId,
+        title: product.title,
+        handle: product.handle,
+        price,
+        image: product.images?.[0]?.src || product.image?.src || "",
+        variantId: product.variants?.[0]?.id || product.variantId || null,
+        reason: product.aiReason || null,
+        confidence: product.confidence || 0,
+        offerType: product.offerType || "addon_upsell",
+        discountPercent,
+        type: product.recommendationType || "complementary",
+      };
+    });
+
+    return json(
+      {
+        offers: formattedOffers,
+        offer: formattedOffers[0] || null, // convenience for checkout (single offer)
+        count: formattedOffers.length,
+        placement,
+        meta: decision.meta || null,
+      },
+      { headers: corsHeaders }
+    );
+  } catch (error) {
+    console.error("❌ Checkout upsell API error:", error);
+    return json(
+      { offers: [], offer: null, error: error.message },
+      { status: 500, headers: corsHeaders }
+    );
+  }
+};

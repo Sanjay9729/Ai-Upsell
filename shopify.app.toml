@@ -39,6 +39,10 @@ uri = "/webhooks/products/update"
 topics = ["products/delete"]
 uri = "/webhooks/products/delete"
 
+[[webhooks.subscriptions]]
+topics = ["inventory_levels/update"]
+uri = "/webhooks/inventory_levels/update"
+
 # ---------------------------
 # Mandatory Compliance Webhooks (REQUIRED)
 # ---------------------------
@@ -54,7 +58,7 @@ uri = "/webhooks/compliance"
 # Access scopes
 # ---------------------------
 [access_scopes]
-scopes = "write_products,read_products"
+scopes = "write_products,read_products,read_inventory,write_discounts,read_orders"
 
 # ---------------------------
 # Auth

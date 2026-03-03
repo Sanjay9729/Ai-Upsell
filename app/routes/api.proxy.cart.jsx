@@ -1,11 +1,32 @@
 import { json } from "@remix-run/node";
 import crypto from "crypto";
 import { authenticate } from "../shopify.server";
-import { GroqAIEngine } from "../../backend/services/groqAIEngine.js";
+import { decideCartOffers } from "../../backend/services/decisionEngine.js";
 
 /**
  * Fetch live inventory using authenticated admin client from appProxy
  */
+function getOfferTypeExtras(offerType, discountPercent) {
+  if (offerType === 'bundle') {
+    return { tagline: 'Complete Your Look', isCartBundle: true };
+  }
+  if (offerType === 'volume_discount') {
+    const t1 = Math.round((discountPercent || 0) * 0.6);
+    const t2 = discountPercent || 0;
+    return {
+      tagline: 'Buy More, Save More',
+      tiers: [
+        { quantity: 2, discountPercent: t1 },
+        { quantity: 3, discountPercent: t2 },
+      ],
+    };
+  }
+  if (offerType === 'subscription_upgrade') {
+    return { tagline: 'Subscribe & Save', interval: 'monthly' };
+  }
+  return {};
+}
+
 async function fetchLiveInventory(admin, productIds) {
   const inventoryMap = {};
   if (!admin) return inventoryMap;
@@ -20,10 +41,12 @@ async function fetchLiveInventory(admin, productIds) {
             id
             status
             totalInventory
-            variants(first: 1) {
+            variants(first: 100) {
               edges {
                 node {
                   id
+                  title
+                  price
                   inventoryPolicy
                   inventoryQuantity
                   compareAtPrice
@@ -44,12 +67,24 @@ async function fetchLiveInventory(admin, productIds) {
         const variant = node.variants?.edges?.[0]?.node;
         const policy = variant?.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
         const totalInv = node.totalInventory ?? variant?.inventoryQuantity ?? 0;
+        const allVariants = (node.variants?.edges || []).map(e => {
+          const v = e.node;
+          const vPolicy = v.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
+          return {
+            id: v.id.split('/').pop(),
+            title: v.title,
+            price: v.price,
+            compareAtPrice: v.compareAtPrice || null,
+            available: node.status === 'ACTIVE' && (v.inventoryQuantity > 0 || vPolicy === 'continue')
+          };
+        });
         inventoryMap[numericId] = {
           availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
           inventoryQuantity: totalInv,
           inventoryPolicy: policy,
           variantId: variant?.id || null,
-          compareAtPrice: variant?.compareAtPrice || null
+          compareAtPrice: variant?.compareAtPrice || null,
+          variants: allVariants
         };
       }
     }
@@ -107,6 +142,7 @@ export const loader = async ({ request }) => {
 
     const shop = params.shop;
     const productGidsJson = params.ids; // Format: JSON array of GIDs
+    const userId = params.userId || null;
 
     if (!shop || !productGidsJson) {
       return json({ error: "Missing required parameters" }, { status: 400 });
@@ -143,12 +179,15 @@ export const loader = async ({ request }) => {
 
     console.log(`🛒 Cart-based recommendations for ${productIds.length} products`);
 
-    // Initialize Groq AI Engine
-    const aiEngine = new GroqAIEngine();
-
-    // Run AI and auth in parallel — auth is not needed until inventory fetch
-    const [recommendations, authResult] = await Promise.all([
-      aiEngine.findCartUpsellProducts(shop, productIds, 4),
+    // Run decision engine and auth in parallel — auth is not needed until inventory fetch
+    const [decision, authResult] = await Promise.all([
+      decideCartOffers({
+        shopId: shop,
+        cartProductIds: productIds,
+        userId,
+        limit: 4,
+        placement: "cart_drawer"
+      }),
       authenticate.public.appProxy(request).catch(authErr => {
         console.error('⚠️ Cart appProxy auth failed:', authErr.message);
         return { admin: null };
@@ -157,7 +196,8 @@ export const loader = async ({ request }) => {
     const adminClient = authResult?.admin || null;
 
     // Use cart products already fetched by AI engine — no extra DB query needed
-    const validCartProducts = recommendations._cartProducts || [];
+    const recommendations = decision.offers || [];
+    const validCartProducts = decision.cartProducts || [];
     const cartSourceTitle = validCartProducts.length > 0
       ? validCartProducts.map(p => p.title).join(', ')
       : 'Cart Items';
@@ -171,6 +211,9 @@ export const loader = async ({ request }) => {
     // Format response for frontend
     const formattedRecommendations = recommendations.map(product => {
       const live = inventoryMap[product.productId] || {};
+      const recommendationType = product.recommendationType || "complementary";
+      const offerType = product.offerType || "addon_upsell";
+      const discountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
       return {
         id: product.productId,
         title: product.title,
@@ -180,12 +223,18 @@ export const loader = async ({ request }) => {
         image: product.images?.[0]?.src || product.image?.src || "",
         reason: product.aiReason,
         confidence: product.confidence,
-        type: product.recommendationType,
+        type: recommendationType,
+        offerType,
+        discountPercent,
+        decisionScore: product.decisionScore ?? null,
+        decisionReason: product.decisionReason ?? null,
         url: `/products/${product.handle}`,
         availableForSale: live.availableForSale ?? (product.status?.toUpperCase() === 'ACTIVE'),
         inventoryQuantity: live.inventoryQuantity ?? 0,
         inventoryPolicy: live.inventoryPolicy ?? 'continue',
-        variantId: live.variantId || product.variants?.[0]?.id || null
+        variantId: live.variantId || product.variants?.[0]?.id || null,
+        variants: live.variants || [],
+        ...getOfferTypeExtras(offerType, discountPercent),
       };
     });
 
@@ -196,7 +245,8 @@ export const loader = async ({ request }) => {
       shop,
       sourceTitle: cartSourceTitle, // <--- Added source title for frontend tracking
       recommendations: formattedRecommendations,
-      count: formattedRecommendations.length
+      count: formattedRecommendations.length,
+      decision: decision.meta || null
     }, {
       headers: {
         "Content-Type": "application/json",

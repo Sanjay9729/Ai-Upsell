@@ -1,9 +1,18 @@
-import shopify from "../../app/shopify.server.js";
 import { connectToMongoDB, getDb } from "../database/connection.js";
 import {
   pruneProductsNotInList,
   syncProductsWithGraphQL
 } from "../database/collections.js";
+
+// Lazy-loaded to avoid running shopifyApp() before dotenv.config() executes
+let _shopify = null;
+async function getShopify() {
+  if (!_shopify) {
+    const mod = await import("../../app/shopify.server.js");
+    _shopify = mod.default;
+  }
+  return _shopify;
+}
 
 let running = false;
 let timer = null;
@@ -42,11 +51,13 @@ async function getShopsFromSessions() {
 }
 
 async function getOfflineSession(shop) {
+  const shopify = await getShopify();
   const sessions = await shopify.sessionStorage.findSessionsByShop(shop);
   return sessions.find((s) => !s.isOnline && s.accessToken);
 }
 
-function makeAdminGraphQL(session) {
+async function makeAdminGraphQL(session) {
+  const shopify = await getShopify();
   const client = new shopify.api.clients.Graphql({ session });
   return async (query, options) => {
     const body = await client.request(query, options);
@@ -83,7 +94,7 @@ export async function runProductReconciliation(reason = "interval") {
           continue;
         }
 
-        const adminGraphQL = makeAdminGraphQL(session);
+        const adminGraphQL = await makeAdminGraphQL(session);
         const syncResult = await syncProductsWithGraphQL(
           shop,
           adminGraphQL,
