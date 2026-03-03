@@ -1,7 +1,6 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { getDb, collections } from "../../backend/database/mongodb.js";
 
 function fmtTime(seconds) {
   if (seconds == null || isNaN(seconds)) return '—';
@@ -15,6 +14,7 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
   try {
+    const { getDb, collections } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 

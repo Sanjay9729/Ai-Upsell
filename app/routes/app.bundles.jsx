@@ -2,19 +2,13 @@ import { useEffect, useState } from 'react';
 import { json } from '@remix-run/node';
 import { useLoaderData, useFetcher } from '@remix-run/react';
 import { authenticate } from '../shopify.server';
-import {
-  getBundles,
-  recommendBundles,
-  pauseBundle,
-  getBundleAnalytics,
-  createBundle
-} from '../../backend/services/bundleEngine.js';
-import { getDb, collections } from '../../backend/database/mongodb.js';
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
   try {
+    const { getDb, collections } = await import("../../backend/database/mongodb.js");
+    const { getBundles, getBundleAnalytics } = await import("../../backend/services/bundleEngine.js");
     const db = await getDb();
     
     // Fetch bundles for the shop
@@ -67,6 +61,7 @@ export const action = async ({ request }) => {
     const { actionType, bundleId, name, productIds, discountPercent } = await request.json();
 
     try {
+      const { pauseBundle, createBundle } = await import("../../backend/services/bundleEngine.js");
       if (actionType === 'pause') {
         const result = await pauseBundle(session.shop, bundleId, true);
         return json({ success: result.success, message: 'Bundle paused' });

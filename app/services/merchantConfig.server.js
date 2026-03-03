@@ -1,1 +1,1 @@
-export { getMerchantConfig, saveMerchantConfig } from "../../backend/services/merchantConfig.js";
+export { getMerchantConfig, saveMerchantConfig, updateMerchantConfig } from "../../backend/services/merchantConfig.js";

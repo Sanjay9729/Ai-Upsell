@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { authenticate } from "../shopify.server";
 import { decideCartOffers } from "../../backend/services/decisionEngine.js";
 

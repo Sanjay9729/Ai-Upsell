@@ -210,3 +210,28 @@ export async function saveMerchantConfig(shopId, { goal, riskTolerance, guardrai
     return { success: false, errors: ['Database error. Please try again.'] };
   }
 }
+
+/**
+ * updateMerchantConfig(shopId, partialUpdates)
+ *
+ * Convenience helper for partial updates. Merges with existing config
+ * and persists via saveMerchantConfig() so validation stays consistent.
+ */
+export async function updateMerchantConfig(shopId, updates = {}) {
+  try {
+    const existing = await getMerchantConfig(shopId);
+    const merged = {
+      goal: updates.goal ?? existing.goal ?? DEFAULT_CONFIG.goal,
+      riskTolerance: updates.riskTolerance ?? existing.riskTolerance ?? DEFAULT_CONFIG.riskTolerance,
+      guardrails: {
+        ...(existing.guardrails ?? DEFAULT_CONFIG.guardrails),
+        ...(updates.guardrails ?? {})
+      }
+    };
+
+    return await saveMerchantConfig(shopId, merged);
+  } catch (err) {
+    console.error('[merchantConfig] Update error:', err);
+    return { success: false, errors: ['Database error. Please try again.'] };
+  }
+}

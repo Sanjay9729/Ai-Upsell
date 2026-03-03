@@ -1,14 +1,14 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { getDb, collections } from "../../backend/database/mongodb.js";
-import { syncProductsWithGraphQL } from "../../backend/database/collections.js";
-import { ProductService } from "../../backend/services/productService.js";
 
 export const loader = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
 
   try {
+    const { getDb, collections } = await import("../../backend/database/mongodb.js");
+    const { syncProductsWithGraphQL } = await import("../../backend/database/collections.js");
+    const { ProductService } = await import("../../backend/services/productService.js");
     const db = await getDb();
     const totalConversions = await db.collection(collections.upsellEvents)
       .countDocuments({ shopId: session.shop, isUpsellEvent: true, eventType: 'cart_add' });

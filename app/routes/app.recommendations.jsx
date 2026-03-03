@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { getDb, collections } from "../../backend/database/mongodb.js";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
   try {
+    const { getDb, collections } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
 
     // Fetch all upsell recommendations for this shop

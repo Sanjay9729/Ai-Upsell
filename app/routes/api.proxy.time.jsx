@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { getDb, collections } from "../../backend/database/mongodb.js";
 import { clearUserProductCache } from "../../backend/services/groqAIEngine.js";
 

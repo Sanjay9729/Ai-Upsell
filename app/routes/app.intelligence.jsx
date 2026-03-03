@@ -2,7 +2,6 @@ import { json } from "@remix-run/node";
 import { useLoaderData, useActionData } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import { authenticate } from "../shopify.server";
-import { getDb, collections } from "../../backend/database/mongodb.js";
 import {
   getMerchantContext,
   saveMerchantContext,
@@ -54,6 +53,7 @@ function buildListText(ids = [], handles = []) {
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopId = session.shop;
+  const { getDb, collections } = await import("../../backend/database/mongodb.js");
   const db = await getDb();
 
   const [context, offerLogResult, contextDoc] = await Promise.all([

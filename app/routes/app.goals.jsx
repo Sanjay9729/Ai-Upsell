@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import { json } from '@remix-run/node';
 import { useLoaderData, useFetcher } from '@remix-run/react';
 import { authenticate } from '../shopify.server';
-import { getMerchantConfig, updateMerchantConfig } from '../../backend/services/merchantConfig.js';
 import { GOAL_MAPPING, RISK_MAPPING } from '../shared/merchantConfig.shared.js';
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
   try {
+    const { getMerchantConfig } = await import("../../backend/services/merchantConfig.js");
     const config = await getMerchantConfig(session.shop);
 
     const goals = Object.entries(GOAL_MAPPING).map(([key, value]) => ({
@@ -55,6 +55,7 @@ export const action = async ({ request }) => {
   const { goal, riskTolerance } = await request.json();
 
   try {
+    const { updateMerchantConfig } = await import("../../backend/services/merchantConfig.js");
     await updateMerchantConfig(session.shop, {
       goal: goal || 'revenue_per_visitor',
       riskTolerance: riskTolerance || 'moderate',

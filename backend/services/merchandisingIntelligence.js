@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import { getDb, collections } from '../database/mongodb.js';
 
 const DEFAULT_CONTEXT = {
@@ -215,4 +215,3 @@ export async function getOfferLogs(shopId, { limit = 100 } = {}) {
     return { offers: [], count: 0 };
   }
 }
-

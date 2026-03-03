@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import { json } from '@remix-run/node';
 import { useLoaderData, useFetcher } from '@remix-run/react';
 import { authenticate } from '../shopify.server';
-import { getMerchantConfig, updateMerchantConfig } from '../../backend/services/merchantConfig.js';
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
   try {
+    const { getMerchantConfig } = await import("../../backend/services/merchantConfig.js");
     const config = await getMerchantConfig(session.shop);
 
     const guardrails = config.guardrails || {
@@ -44,6 +44,7 @@ export const action = async ({ request }) => {
   const { guardrails } = await request.json();
 
   try {
+    const { updateMerchantConfig } = await import("../../backend/services/merchantConfig.js");
     await updateMerchantConfig(session.shop, {
       guardrails: {
         maxDiscountCap: Number(guardrails.maxDiscountCap) || 25,
