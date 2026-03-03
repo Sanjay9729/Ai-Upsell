@@ -17,7 +17,7 @@ const UpsellProductCard = ({ product, isClicked, onClick }) => {
     window.open(product.url, '_blank');
   };
 
-  const handleAddToCart = (e) => {
+  const handleAddToCart = async (e) => {
     e.stopPropagation(); // Prevent card click
 
     if (!product.availableForSale) return;
@@ -25,17 +25,36 @@ const UpsellProductCard = ({ product, isClicked, onClick }) => {
     // Get variant ID (assuming first variant if available)
     const variantId = product.variantId || product.id;
 
-    // Add to cart using Shopify's cart API
-    fetch('/cart/add.js', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        id: variantId,
-        quantity: 1
+    try {
+      // Step 1: Get discount code if this is a bundle offer
+      let discountCode = null;
+      if (product.offerType === 'bundle' && product.discountPercent > 0) {
+        const bundleProducts = [
+          { productId: product.id, variantId }
+        ];
+        
+        const discountRes = await fetch(
+          `/api/discount-code?bundleProducts=${encodeURIComponent(JSON.stringify(bundleProducts))}&discountPercent=${product.discountPercent}`
+        );
+        
+        if (discountRes.ok) {
+          const discountData = await discountRes.json();
+          discountCode = discountData.code;
+          console.log('✅ Got discount code:', discountCode);
+        }
+      }
+
+      // Step 2: Add to cart using Shopify's cart API
+      fetch('/cart/add.js', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: variantId,
+          quantity: 1
+        })
       })
-    })
     .then(response => response.json())
     .then(result => {
       // Use Shopify's publish/subscribe system to update the cart
@@ -88,24 +107,44 @@ const UpsellProductCard = ({ product, isClicked, onClick }) => {
                 }
               }
 
+              // Step 3: Apply discount code if we have one
+              if (discountCode) {
+                setTimeout(() => {
+                  const cartDrawerForm = document.querySelector('cart-drawer form, [data-cart-form]');
+                  if (cartDrawerForm) {
+                    const discountInput = document.createElement('input');
+                    discountInput.type = 'hidden';
+                    discountInput.name = 'discount';
+                    discountInput.value = discountCode;
+                    cartDrawerForm.appendChild(discountInput);
+                    
+                    console.log('✅ Applied discount code:', discountCode);
+                  }
+                }, 200);
+              }
+
               // Now open the cart drawer
               setTimeout(() => {
                 const cartIcon = document.querySelector('#cart-icon-bubble, summary[aria-controls="cart-drawer"]');
                 if (cartIcon) {
                   cartIcon.click();
                 }
-              }, 100);
-            });
-        });
+              }, discountCode ? 300 : 100);
+              });
+              });
 
-      // Show success feedback
-      alert('Product added to cart!');
-    })
-    .catch(error => {
-      console.error('Error adding to cart:', error);
-      alert('Failed to add product to cart. Please try again.');
-    });
-  };
+              // Show success feedback
+              alert('Product added to cart!');
+              })
+              .catch(error => {
+              console.error('Error adding to cart:', error);
+              alert('Failed to add product to cart. Please try again.');
+              });
+              } catch (error) {
+              console.error('Error in handleAddToCart:', error);
+              alert('Error preparing discount. Product may still be added to cart.');
+              }
+              };
 
   const hasDiscount = product.compareAtPrice && parseFloat(product.compareAtPrice) > parseFloat(product.price);
   const discountPercentage = hasDiscount ? 

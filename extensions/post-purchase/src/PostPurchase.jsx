@@ -26,20 +26,29 @@ export default extension('purchase.thank-you.block.render', async (root, api) =>
   // Fire-and-forget purchase tracking — Pillar 5
   if (lineItems.length > 0) {
     const orderId = order?.id?.split('/').pop() || order?.id;
+    const totalPrice = order?.totalPrice?.amount || 0;
     const trackItems = lineItems
       .map(li => ({
         variantId: li.variant?.id?.split('/').pop(),
         productId: li.variant?.product?.id?.split('/').pop(),
+        title: li.title,
         quantity: li.quantity || 1,
-        totalPrice: li.totalPrice?.amount || '0',
+        price: parseFloat(li.price?.amount || li.totalPrice?.amount || '0'),
       }))
-      .filter(li => li.variantId);
+      .filter(li => li.variantId && li.productId);
     if (trackItems.length > 0) {
-      fetch(`${BACKEND_URL}/api/track-purchase`, {
+      fetch(`${BACKEND_URL}/webhooks/orders/created`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop, orderId, lineItems: trackItems }),
-      }).catch(() => {});
+        body: JSON.stringify({ 
+          shopId: shop,
+          orderId, 
+          totalPrice,
+          lineItems: trackItems 
+        }),
+      }).catch((err) => {
+        console.error('Purchase tracking failed:', err);
+      });
     }
   }
 

@@ -36,24 +36,27 @@ export async function closeMongoDB() {
 
 // Collections
 export const collections = {
-  products: 'products',
-  stores: 'stores',
-  upsells: 'upsells',
-  upsellEvents: 'upsell_events',
-  upsellRecommendations: 'upsell_recommendations',
-  cartEvents: 'cart_events',
-  productTimeEvents: 'product_time_events',
-  cartTimeEvents: 'cart_time_events',
-  merchantConfig: 'merchant_config',
-  offerLogs: 'offer_logs',
-  offerControls: 'offer_controls',
-  merchantIntelligence: 'merchant_intelligence',
-  // V1 Autonomous Engine Collections
-  bundles: 'bundles',
-  bundleEvents: 'bundle_events',
-  optimizationLogs: 'optimization_logs',
-  decisionLogs: 'decision_logs'
-};
+   products: 'products',
+   stores: 'stores',
+   upsells: 'upsells',
+   upsellEvents: 'upsell_events',
+   upsellRecommendations: 'upsell_recommendations',
+   cartEvents: 'cart_events',
+   productTimeEvents: 'product_time_events',
+   cartTimeEvents: 'cart_time_events',
+   merchantConfig: 'merchant_config',
+   offerLogs: 'offer_logs',
+   offerControls: 'offer_controls',
+   merchantIntelligence: 'merchant_intelligence',
+   // V1 Autonomous Engine Collections
+   bundles: 'bundles',
+   bundleEvents: 'bundle_events',
+   optimizationLogs: 'optimization_logs',
+   decisionLogs: 'decision_logs',
+   // Purchase & AOV tracking — Pillar 5
+   purchaseEvents: 'purchase_events',
+   aovImpact: 'aov_impact'
+ };
 
 export async function initializeCollections() {
   const database = await getDb();
@@ -108,12 +111,17 @@ export async function initializeCollections() {
   await database.collection(collections.merchantIntelligence).createIndex({ shopId: 1 }, { unique: true });
 
   // Purchase events — Pillar 5
-  await database.collection('purchase_events').createIndex({ shopId: 1, timestamp: -1 });
-  await database.collection('purchase_events').createIndex({ shopId: 1, upsellProductId: 1 });
-  await database.collection('purchase_events').createIndex({ shopId: 1, sourceProductId: 1 });
-  await database.collection('purchase_events').createIndex(
+  await database.collection(collections.purchaseEvents).createIndex({ shopId: 1, timestamp: -1 });
+  await database.collection(collections.purchaseEvents).createIndex({ shopId: 1, upsellProductId: 1 });
+  await database.collection(collections.purchaseEvents).createIndex({ shopId: 1, sourceProductId: 1 });
+  await database.collection(collections.purchaseEvents).createIndex({ shopId: 1, orderId: 1 });
+  await database.collection(collections.purchaseEvents).createIndex(
     { shopId: 1, sourceProductId: 1, upsellProductId: 1, timestamp: -1 }
   );
 
+  // AOV impact tracking
+  await database.collection(collections.aovImpact).createIndex({ shopId: 1, timestamp: -1 });
+  await database.collection(collections.aovImpact).createIndex({ shopId: 1, orderId: 1 });
+
   console.log('MongoDB collections initialized');
-}
+  }
