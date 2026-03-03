@@ -113,12 +113,13 @@ async function createDiscountCodeInShopify(
       }
     `;
 
+    // Apply discount to entire cart subtotal (not specific products)
     const variables = {
       input: {
         code,
         combinesWith: {
           productDiscounts: true,
-          shippingDiscounts: true,
+          shippingDiscounts: false,
           orderDiscounts: true
         },
         usageLimit: 1000,
@@ -129,9 +130,10 @@ async function createDiscountCodeInShopify(
             percentage: percent / 100
           },
           items: {
-            allItems: true  // Apply discount to ALL items in cart when code is used
+            allItems: true
           }
         },
+        appliesOncePerCustomer: false,
         customerSelection: {
           all: true
         }
