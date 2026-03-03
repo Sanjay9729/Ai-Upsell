@@ -1,12 +1,12 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { getDb, collections } from "../../backend/database/mongodb.js";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
   try {
+    const { getDb, collections } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
 
     const recentConversions = await db.collection(collections.upsellEvents)

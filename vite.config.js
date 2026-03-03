@@ -49,6 +49,9 @@ export default defineConfig({
     },
   },
   plugins: [remix(), tsconfigPaths()],
+  ssr: {
+    external: ["mongodb"],
+  },
   build: {
     assetsInlineLimit: 0,
   },

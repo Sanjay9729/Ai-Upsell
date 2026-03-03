@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { trackUpsellEvent } from "../../backend/services/analyticsService.js";
 
 /**
