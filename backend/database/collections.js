@@ -1,5 +1,6 @@
 import { getDb } from './connection.js';
 import { ProductService } from '../services/productService.js';
+import { collections } from './mongodb.js';
 
 /**
  * Get all products from MongoDB
@@ -539,3 +540,5 @@ function extractFeatures(product) {
 
   return features;
 }
+
+

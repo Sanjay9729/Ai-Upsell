@@ -136,6 +136,37 @@ app.get('/api/merchant_config', async (req, res) => {
   }
 });
 
+// Get all merchant intelligence documents from MongoDB
+app.get('/api/merchant_intelligence', async (req, res) => {
+  try {
+    await connectToMongoDB();
+    const { getDb } = await import('./backend/database/connection.js');
+    const db = await getDb();
+
+    const filter = req.query.shopId ? { shopId: req.query.shopId } : {};
+    const docs = await db.collection('merchant_intelligence')
+      .find(filter)
+      .sort({ updatedAt: -1 })
+      .toArray();
+
+    res.json({
+      success: true,
+      count: docs.length,
+      merchant_intelligence: docs,
+      timestamp: new Date().toISOString(),
+      message: "Merchant intelligence retrieved successfully from MongoDB"
+    });
+  } catch (error) {
+    console.error("Error in merchant_intelligence API:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch merchant intelligence from MongoDB",
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 
 
 // Sync products from Shopify to MongoDB (Step 1 of AI Upsell Flow)
@@ -433,6 +464,145 @@ app.post('/api/webhooks/products/delete', verifyShopifyWebhook, async (req, res)
       error: 'Failed to process product delete webhook',
       details: error.message
     });
+  }
+});
+
+// Purchase Tracking — Pillar 5 (called directly by PostPurchase extension)
+app.post('/api/track-purchase', async (req, res) => {
+  res.status(200).json({ success: true });
+
+  try {
+    const { shop, orderId, lineItems } = req.body || {};
+    if (!shop || !orderId || !Array.isArray(lineItems) || lineItems.length === 0) return;
+
+    const { getDb } = await import('./backend/database/mongodb.js');
+    const db = await getDb();
+
+    // Find cart_add upsell events from this shop in last 2 hours
+    const since = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const recentCartAdds = await db.collection('upsell_events')
+      .find({ shopId: shop, eventType: 'cart_add', timestamp: { $gte: since } })
+      .toArray();
+
+    if (recentCartAdds.length === 0) return;
+
+    const purchasedVariantIds = new Set(lineItems.map(li => String(li.variantId)));
+
+    const now = new Date();
+    const purchases = [];
+    for (const event of recentCartAdds) {
+      if (!event.variantId) continue;
+      if (!purchasedVariantIds.has(String(event.variantId))) continue;
+      const lineItem = lineItems.find(li => String(li.variantId) === String(event.variantId));
+      if (!lineItem) continue;
+      const qty = lineItem.quantity || 1;
+      const totalPrice = parseFloat(lineItem.totalPrice || 0);
+      const unitPrice = qty > 0 ? totalPrice / qty : totalPrice;
+      const discountPct = event.discountPercent || 0;
+      purchases.push({
+        shopId: shop,
+        orderId: String(orderId),
+        sourceProductId: event.sourceProductId || null,
+        upsellProductId: event.upsellProductId,
+        variantId: event.variantId,
+        sessionId: event.sessionId || null,
+        quantity: qty,
+        originalPrice: unitPrice,
+        discountPercent: discountPct,
+        revenue: totalPrice,
+        netGain: totalPrice * (1 - discountPct / 100),
+        recommendationType: event.recommendationType || null,
+        confidence: event.confidence || null,
+        placement: event.metadata?.location || null,
+        timestamp: now,
+      });
+    }
+
+    if (purchases.length > 0) {
+      await db.collection('purchase_events').insertMany(purchases);
+      console.log(`✅ Pillar 5: Tracked ${purchases.length} upsell purchase(s) for order ${orderId} (shop: ${shop})`);
+    }
+  } catch (err) {
+    console.error('❌ track-purchase error:', err.message);
+  }
+});
+
+// Checkout & Post-Purchase Upsell API (called by Shopify UI extensions)
+// Debug — check recent purchase_events for a shop
+app.get('/api/debug/purchase-events', async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).json({ error: 'shop param required' });
+  try {
+    const { getDb } = await import('./backend/database/mongodb.js');
+    const db = await getDb();
+    const events = await db.collection('purchase_events')
+      .find({ shopId: shop })
+      .sort({ timestamp: -1 })
+      .limit(20)
+      .toArray();
+    res.json({ count: events.length, events });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/checkout-upsell', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  try {
+    const shop = req.query.shop;
+    const idsParam = req.query.ids;
+    const placement = req.query.placement || 'checkout';
+    const limitParam = req.query.limit;
+
+    if (!shop) {
+      return res.status(400).json({ offers: [], offer: null });
+    }
+
+    let productIds = [];
+    if (idsParam) {
+      try {
+        const parsed = JSON.parse(idsParam);
+        productIds = (Array.isArray(parsed) ? parsed : [parsed])
+          .map(Number)
+          .filter(id => id > 0);
+      } catch {
+        // ignore — proceed with empty ids
+      }
+    }
+
+    const defaultLimit = placement === 'post_purchase' ? 2 : 1;
+    const limit = Math.min(Number(limitParam) || defaultLimit, 4);
+
+    console.log(`🛒 Checkout upsell — shop: ${shop}, placement: ${placement}, products: ${productIds}`);
+
+    const { decideCartOffers } = await import('./backend/services/decisionEngine.js');
+    const decision = await decideCartOffers({ shopId: shop, cartProductIds: productIds, limit, placement });
+
+    const formattedOffers = (decision.offers || []).map(product => ({
+      id: product.productId,
+      title: product.title,
+      handle: product.handle,
+      price: String(product.aiData?.price || product.variants?.[0]?.price || '0'),
+      image: product.images?.[0]?.src || product.image?.src || '',
+      variantId: product.variants?.[0]?.id || product.variantId || null,
+      reason: product.aiReason || null,
+      confidence: product.confidence || 0,
+      offerType: product.offerType || 'addon_upsell',
+      discountPercent: product.discountPercent ?? 0,
+      type: product.recommendationType || 'complementary',
+    }));
+
+    res.json({
+      offers: formattedOffers,
+      offer: formattedOffers[0] || null,
+      count: formattedOffers.length,
+      placement,
+      meta: decision.meta || null,
+    });
+  } catch (error) {
+    console.error('❌ Checkout upsell error:', error);
+    res.status(500).json({ offers: [], offer: null, error: error.message });
   }
 });
 

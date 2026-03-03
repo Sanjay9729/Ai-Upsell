@@ -1,0 +1,14 @@
+api_version = "2026-01"
+
+[[extensions]]
+name = "AI Upsell - Post Purchase"
+handle = "ai-upsell-post-purchase"
+uid = "e4257fd5-408d-cc62-511d-8b4ae15c7f40604d6723"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  module = "./src/PostPurchase.jsx"
+  target = "purchase.thank-you.block.render"
+
+[capabilities]
+network_access = true

@@ -20,6 +20,7 @@ export default function App() {
         <s-link href="/app/goal-setup">Goal & Guardrails</s-link>
         <s-link href="/app/analytics">Analytics</s-link>
         <s-link href="/app/activity-logs">Activity Logs</s-link>
+        <s-link href="/app/intelligence">Merchandising Intelligence</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

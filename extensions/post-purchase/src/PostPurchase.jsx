@@ -1,0 +1,151 @@
+import {
+  extension,
+  BlockStack,
+  InlineStack,
+  Image,
+  Text,
+  Button,
+  Divider,
+  Heading,
+  Badge,
+  View,
+} from '@shopify/ui-extensions/checkout';
+
+const BACKEND_URL = 'https://ai-upsell.onrender.com';
+
+export default extension('purchase.thank-you.block.render', async (root, api) => {
+  const shop = api.shop.myshopifyDomain.current;
+
+  // Extract product IDs from order line items (best effort — may be empty)
+  const order = api.order?.current;
+  const lineItems = order?.lineItems ?? [];
+  const productIds = lineItems
+    .map(li => li.variant?.product?.id?.split('/').pop())
+    .filter(Boolean);
+
+  // Fire-and-forget purchase tracking — Pillar 5
+  if (lineItems.length > 0) {
+    const orderId = order?.id?.split('/').pop() || order?.id;
+    const trackItems = lineItems
+      .map(li => ({
+        variantId: li.variant?.id?.split('/').pop(),
+        productId: li.variant?.product?.id?.split('/').pop(),
+        quantity: li.quantity || 1,
+        totalPrice: li.totalPrice?.amount || '0',
+      }))
+      .filter(li => li.variantId);
+    if (trackItems.length > 0) {
+      fetch(`${BACKEND_URL}/api/track-purchase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop, orderId, lineItems: trackItems }),
+      }).catch(() => {});
+    }
+  }
+
+  // Build the fetch URL — if no product IDs, skip the ids param
+  const idsParam = productIds.length > 0
+    ? `&ids=${encodeURIComponent(JSON.stringify(productIds))}`
+    : '';
+
+  let offers = [];
+  try {
+    const res = await fetch(
+      `${BACKEND_URL}/api/checkout-upsell?shop=${shop}${idsParam}&placement=post_purchase&limit=2`
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+    offers = data.offers || (data.offer ? [data.offer] : []);
+  } catch {
+    return;
+  }
+
+  if (offers.length === 0) return;
+
+  // ── Build UI ──────────────────────────────────────────────────────────────
+  const container = root.createComponent(BlockStack, { spacing: 'loose' });
+  container.appendChild(root.createComponent(Divider));
+  container.appendChild(root.createComponent(Heading, { level: 2 }, 'You Might Also Love'));
+  container.appendChild(root.createComponent(Text, { appearance: 'subdued', size: 'small' },
+    'Customers who bought this also purchased:'));
+
+  const list = root.createComponent(BlockStack, { spacing: 'base' });
+
+  for (const offer of offers) {
+    const originalPrice = parseFloat(offer.price) || 0;
+    const discountPct = parseFloat(offer.discountPercent) || 0;
+    const discountedPrice = discountPct > 0
+      ? (originalPrice * (1 - discountPct / 100)).toFixed(2)
+      : originalPrice.toFixed(2);
+    const hasDiscount = discountPct > 0 && parseFloat(discountedPrice) < originalPrice;
+
+    const row = root.createComponent(InlineStack, { spacing: 'base', blockAlignment: 'center' });
+
+    if (offer.image) {
+      const imgWrap = root.createComponent(View, { maxInlineSize: 72 });
+      imgWrap.appendChild(root.createComponent(Image, {
+        source: offer.image,
+        accessibilityDescription: offer.title,
+      }));
+      row.appendChild(imgWrap);
+    }
+
+    const info = root.createComponent(BlockStack, { spacing: 'extraTight' });
+    info.appendChild(root.createComponent(Text, { size: 'medium', emphasis: 'bold' }, offer.title));
+
+    const priceRow = root.createComponent(InlineStack, { spacing: 'tight', blockAlignment: 'center' });
+    if (hasDiscount) {
+      priceRow.appendChild(root.createComponent(Text, {
+        size: 'small', appearance: 'subdued', accessibilityRole: 'deletion',
+      }, `$${originalPrice.toFixed(2)}`));
+    }
+    priceRow.appendChild(root.createComponent(Text, {
+      size: 'medium', appearance: hasDiscount ? 'accent' : 'base',
+    }, `$${discountedPrice}`));
+    if (hasDiscount) {
+      priceRow.appendChild(root.createComponent(Badge, { tone: 'success' }, `${Math.round(discountPct)}% off`));
+    }
+    info.appendChild(priceRow);
+
+    if (offer.reason) {
+      info.appendChild(root.createComponent(Text, { size: 'small', appearance: 'subdued' }, offer.reason));
+    }
+    row.appendChild(info);
+
+    // ── Add to Cart button ──────────────────────────────────────────────────
+    let added = false;
+    const btn = root.createComponent(Button, {
+      kind: 'secondary',
+      size: 'slim',
+      onPress: async () => {
+        if (added || !offer.variantId) return;
+        btn.updateProps({ loading: true });
+        try {
+          const result = await api.applyCartLinesChange({
+            type: 'addCartLine',
+            merchandiseId: `gid://shopify/ProductVariant/${offer.variantId}`,
+            quantity: 1,
+          });
+          if (result.type === 'success') {
+            added = true;
+            btn.updateProps({ loading: false, disabled: true });
+            btn.replaceChildren('Added ✓');
+          } else {
+            btn.updateProps({ loading: false });
+          }
+        } catch {
+          btn.updateProps({ loading: false });
+        }
+      },
+    }, 'Add to Cart');
+
+    const btnWrap = root.createComponent(View, { inlineAlignment: 'end' });
+    btnWrap.appendChild(btn);
+    row.appendChild(btnWrap);
+
+    list.appendChild(row);
+  }
+
+  container.appendChild(list);
+  root.appendChild(container);
+});

@@ -1,0 +1,14 @@
+api_version = "2026-01"
+
+[[extensions]]
+name = "AI Upsell - Checkout"
+handle = "ai-upsell-checkout"
+uid = "f6d229eb-ae0c-8c15-f277-cbb6b96cf766d8244ff1"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  module = "./src/Checkout.jsx"
+  target = "purchase.checkout.block.render"
+
+[capabilities]
+network_access = true

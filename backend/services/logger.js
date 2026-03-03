@@ -166,6 +166,20 @@ class Logger {
       responseTime: `${responseTime}ms`
     });
   }
+
+  /**
+   * Log errors with context
+   */
+  logError(operation, context = {}) {
+    this.error(`Operation failed: ${operation}`, null, context);
+  }
+
+  /**
+   * Log optimization results
+   */
+  logOptimization(operation, details = {}) {
+    this.info(`Optimization: ${operation}`, details);
+  }
 }
 
 // Export singleton instance

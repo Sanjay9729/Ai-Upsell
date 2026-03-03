@@ -1,5 +1,7 @@
 import { getDb } from '../database/connection.js';
 import { getMerchantConfig } from './merchantConfig.js';
+import { getConversionStats } from './conversionEngine.js';
+import { getMerchantContext } from './merchandisingIntelligence.js';
 
 // Simple in-memory cache with TTL for recommendations
 const recommendationCache = new Map();
@@ -133,12 +135,14 @@ export class GroqAIEngine {
         return this.finalizeSessionLimit(capped, effectiveLimit, userId, shopId, contextKey);
       }
 
-      // Fetch current product, all shop products, user interest profile, and cart history in parallel
-      const [currentProduct, allProducts, userProfile, rawCartHistory] = await Promise.all([
+      // Fetch current product, all shop products, user interest profile, cart history, and conversion context in parallel
+      const [currentProduct, allProducts, userProfile, rawCartHistory, conversionContext, merchantContext] = await Promise.all([
         this.getProductById(shopId, currentProductId),
         this.getProductsByShop(shopId),
         this.getUserInterestProfile(userId, shopId),
-        this.getUserCartHistory(userId, shopId)
+        this.getUserCartHistory(userId, shopId),
+        this.getConversionContext(shopId),
+        getMerchantContext(shopId).catch(() => null)
       ]);
 
       if (!currentProduct) {
@@ -179,9 +183,17 @@ export class GroqAIEngine {
         excludedIds
       );
 
+      const merchantContextBlock = this.buildMerchantContextBlock(merchantContext);
+      if (merchantContextBlock) {
+        console.log('🧭 Merchant intelligence injected into Groq prompt');
+      } else {
+        console.log('🧭 Merchant intelligence: no active context (skipping)');
+      }
+      const mergedContext = `${conversionContext || ''}${merchantContextBlock}`;
+
       let recommendations;
       try {
-        recommendations = await this.analyzeWithGroq(currentProduct, otherProducts, effectiveLimit, userProfile, cartHistory);
+        recommendations = await this.analyzeWithGroq(currentProduct, otherProducts, effectiveLimit, userProfile, cartHistory, mergedContext);
         if (!recommendations || recommendations.length === 0) {
           console.warn(`⚠️ No AI recommendations for product ${currentProductId}; using fallback`);
           recommendations = await this.fallbackRecommendations(shopId, currentProductId, effectiveLimit);
@@ -258,11 +270,13 @@ export class GroqAIEngine {
         return this.finalizeSessionLimit(capped, effectiveLimit, userId, shopId, contextKey);
       }
 
-      // Fetch all products, user profile, and cart history in parallel
-      const [allProducts, userProfile, rawCartHistory] = await Promise.all([
+      // Fetch all products, user profile, cart history, and conversion context in parallel
+      const [allProducts, userProfile, rawCartHistory, conversionContext, merchantContext] = await Promise.all([
         this.getProductsByShop(shopId),
         this.getUserInterestProfile(userId, shopId),
-        this.getUserCartHistory(userId, shopId)
+        this.getUserCartHistory(userId, shopId),
+        this.getConversionContext(shopId),
+        getMerchantContext(shopId).catch(() => null)
       ]);
 
       if (userProfile.length > 0) {
@@ -306,9 +320,17 @@ export class GroqAIEngine {
         cartProductIdSet
       );
 
+      const merchantContextBlock = this.buildMerchantContextBlock(merchantContext);
+      if (merchantContextBlock) {
+        console.log('🧭 Merchant intelligence injected into Groq cart prompt');
+      } else {
+        console.log('🧭 Merchant intelligence: no active context (skipping)');
+      }
+      const mergedContext = `${conversionContext || ''}${merchantContextBlock}`;
+
       let recommendations;
       try {
-        recommendations = await this.analyzeCartWithGroq(validCartProducts, otherProducts, effectiveLimit, userProfile, cartHistory);
+        recommendations = await this.analyzeCartWithGroq(validCartProducts, otherProducts, effectiveLimit, userProfile, cartHistory, mergedContext);
         if (!recommendations || recommendations.length === 0) {
           console.warn(`⚠️ No AI cart recommendations; using fallback`);
           recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, effectiveLimit);
@@ -362,7 +384,7 @@ export class GroqAIEngine {
   /**
    * Analyze products using Groq LLM
    */
-  async analyzeWithGroq(currentProduct, candidateProducts, limit, userProfile = [], cartHistory = []) {
+  async analyzeWithGroq(currentProduct, candidateProducts, limit, userProfile = [], cartHistory = [], conversionContext = '') {
     try {
       // Validate API key
       if (!this.groqApiKey) {
@@ -385,7 +407,7 @@ export class GroqAIEngine {
       // Sort: same-type candidates first, then others
       productData.sort((a, b) => (b.sameType ? 1 : 0) - (a.sameType ? 1 : 0));
 
-      const prompt = this.buildAnalysisPrompt(currentProduct, productData, limit, userProfile, cartHistory);
+      const prompt = this.buildAnalysisPrompt(currentProduct, productData, limit, userProfile, cartHistory) + conversionContext;
 
       console.log(`🤖 Calling Groq API with model: ${this.groqModel}`);
 
@@ -485,7 +507,7 @@ export class GroqAIEngine {
   /**
    * Analyze cart products using Groq LLM for cart-based recommendations
    */
-  async analyzeCartWithGroq(cartProducts, candidateProducts, limit, userProfile = [], cartHistory = []) {
+  async analyzeCartWithGroq(cartProducts, candidateProducts, limit, userProfile = [], cartHistory = [], conversionContext = '') {
     try {
       // Validate API key
       if (!this.groqApiKey) {
@@ -508,7 +530,7 @@ export class GroqAIEngine {
       // Sort: same-type candidates first, then others
       productData.sort((a, b) => (b.sameType ? 1 : 0) - (a.sameType ? 1 : 0));
 
-      const prompt = this.buildCartAnalysisPrompt(cartProducts, productData, limit, userProfile, cartHistory);
+      const prompt = this.buildCartAnalysisPrompt(cartProducts, productData, limit, userProfile, cartHistory) + conversionContext;
 
       console.log(`🤖 Calling Groq API for cart analysis with model: ${this.groqModel}`);
 
@@ -819,6 +841,42 @@ Return ONLY a valid JSON array in this EXACT format (productId must be a NUMBER)
 
 Valid recommendationType values: "complementary", "similar", "upgrade", "bundle"
 Return ONLY the JSON array, nothing else. Do not include any text before or after the JSON.
+`;
+  }
+
+  buildMerchantContextBlock(context) {
+    if (!context) return '';
+    const {
+      priority = 'none',
+      notes = '',
+      focusProductIds = [],
+      focusProductHandles = [],
+      focusCollectionIds = [],
+      focusCollectionHandles = [],
+      preferBundles = false
+    } = context;
+
+    const hasFocus =
+      (Array.isArray(focusProductIds) && focusProductIds.length > 0) ||
+      (Array.isArray(focusProductHandles) && focusProductHandles.length > 0) ||
+      (Array.isArray(focusCollectionIds) && focusCollectionIds.length > 0) ||
+      (Array.isArray(focusCollectionHandles) && focusCollectionHandles.length > 0) ||
+      (notes && String(notes).trim().length > 0) ||
+      (priority && priority !== 'none') ||
+      preferBundles;
+
+    if (!hasFocus) return '';
+
+    return `
+
+MERCHANT STRATEGY CONTEXT (use as a soft preference, never override relevance or guardrails):
+- Priority: ${priority}
+- Prefer bundles: ${preferBundles ? 'yes' : 'no'}
+- Focus product IDs: ${Array.isArray(focusProductIds) ? focusProductIds.join(', ') : ''}
+- Focus product handles: ${Array.isArray(focusProductHandles) ? focusProductHandles.join(', ') : ''}
+- Focus collection IDs: ${Array.isArray(focusCollectionIds) ? focusCollectionIds.join(', ') : ''}
+- Focus collection handles: ${Array.isArray(focusCollectionHandles) ? focusCollectionHandles.join(', ') : ''}
+- Notes: ${notes}
 `;
   }
 
@@ -1355,6 +1413,26 @@ Return ONLY the JSON array, nothing else. Do not include any text before or afte
    *   bonus = (min(avgTimeSeconds, 300) / 300) * 0.15
    *   Only applied when a product has ≥ 2 tracked sessions (avoids noise).
    */
+  /**
+   * getConversionContext(shopId) — Pillar 5
+   * Returns a short string summarising purchase performance for Groq prompts.
+   */
+  async getConversionContext(shopId) {
+    try {
+      const stats = await getConversionStats(shopId);
+      if (stats.dataAge === 'empty' || stats.topConverting.length === 0) return '';
+      const topIds = stats.topConverting.slice(0, 5).join(', ');
+      const typeLines = Object.entries(stats.byType)
+        .filter(([, v]) => v.views >= 5)
+        .sort(([, a], [, b]) => b.rate - a.rate)
+        .map(([type, v]) => `${type}: ${(v.rate * 100).toFixed(1)}% purchase rate`)
+        .join('; ');
+      return `\n\nHISTORICAL PURCHASE DATA (products that actually converted for this shop):\nTop converting product IDs: [${topIds}].\nBest performing offer types: ${typeLines || 'insufficient data yet'}.\nPrefer recommending products from the top converting list when relevant.`;
+    } catch {
+      return '';
+    }
+  }
+
   async getEngagementBoosts(shopId, productIds) {
     try {
       const db = await getDb();

@@ -35,8 +35,8 @@ export const RISK_MAPPING = {
     maxOfferFrequency: 4,
     minAcceptanceProbability: 0.15,
     discountMultiplier: 0.75,
-    allowedPlacements: ["product_page", "cart_drawer"],
-    description: "Four offers per view, 75% of discount ceiling, product and cart placements.",
+    allowedPlacements: ["product_page", "cart_drawer", "checkout", "post_purchase"],
+    description: "Four offers per view, 75% of discount ceiling, all placement stages enabled.",
   },
   aggressive: {
     maxOfferFrequency: 3,

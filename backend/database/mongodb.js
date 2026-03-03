@@ -40,10 +40,19 @@ export const collections = {
   stores: 'stores',
   upsells: 'upsells',
   upsellEvents: 'upsell_events',
+  upsellRecommendations: 'upsell_recommendations',
   cartEvents: 'cart_events',
   productTimeEvents: 'product_time_events',
   cartTimeEvents: 'cart_time_events',
-  merchantConfig: 'merchant_config'
+  merchantConfig: 'merchant_config',
+  offerLogs: 'offer_logs',
+  offerControls: 'offer_controls',
+  merchantIntelligence: 'merchant_intelligence',
+  // V1 Autonomous Engine Collections
+  bundles: 'bundles',
+  bundleEvents: 'bundle_events',
+  optimizationLogs: 'optimization_logs',
+  decisionLogs: 'decision_logs'
 };
 
 export async function initializeCollections() {
@@ -64,6 +73,15 @@ export async function initializeCollections() {
   await database.collection(collections.upsellEvents).createIndex({ shopId: 1, sourceProductId: 1 });
   await database.collection(collections.upsellEvents).createIndex({ shopId: 1, upsellProductId: 1 });
   await database.collection(collections.upsellEvents).createIndex({ isUpsellEvent: 1 });
+  // Adaptive placement analytics index — Pillar 4
+  await database.collection(collections.upsellEvents).createIndex(
+    { shopId: 1, 'metadata.location': 1, eventType: 1, timestamp: -1 },
+    { background: true }
+  );
+
+  // Upsell recommendations (optional archival)
+  await database.collection(collections.upsellRecommendations).createIndex({ shopId: 1, timestamp: -1 });
+  await database.collection(collections.upsellRecommendations).createIndex({ shopId: 1, sourceProductId: 1 });
 
   // Product time events indexes
   await database.collection(collections.productTimeEvents).createIndex({ shop: 1, productId: 1 });
@@ -76,6 +94,26 @@ export async function initializeCollections() {
 
   // Merchant config index
   await database.collection(collections.merchantConfig).createIndex({ shopId: 1 }, { unique: true });
+
+  // Merchandising intelligence (Pillar 6)
+  await database.collection(collections.offerLogs).createIndex({ shopId: 1, createdAt: -1 });
+  await database.collection(collections.offerLogs).createIndex({ shopId: 1, offerKey: 1 });
+  await database.collection(collections.offerLogs).createIndex({ shopId: 1, upsellProductId: 1 });
+  await database.collection(collections.offerLogs).createIndex({ shopId: 1, offerType: 1 });
+
+  await database.collection(collections.offerControls).createIndex(
+    { shopId: 1, offerKey: 1 },
+    { unique: true }
+  );
+  await database.collection(collections.merchantIntelligence).createIndex({ shopId: 1 }, { unique: true });
+
+  // Purchase events — Pillar 5
+  await database.collection('purchase_events').createIndex({ shopId: 1, timestamp: -1 });
+  await database.collection('purchase_events').createIndex({ shopId: 1, upsellProductId: 1 });
+  await database.collection('purchase_events').createIndex({ shopId: 1, sourceProductId: 1 });
+  await database.collection('purchase_events').createIndex(
+    { shopId: 1, sourceProductId: 1, upsellProductId: 1, timestamp: -1 }
+  );
 
   console.log('MongoDB collections initialized');
 }

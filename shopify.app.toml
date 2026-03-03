@@ -58,7 +58,7 @@ uri = "/webhooks/compliance"
 # Access scopes
 # ---------------------------
 [access_scopes]
-scopes = "write_products,read_products,read_inventory,write_discounts"
+scopes = "write_products,read_products,read_inventory,write_discounts,read_orders"
 
 # ---------------------------
 # Auth
