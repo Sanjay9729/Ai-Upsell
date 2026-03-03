@@ -18,20 +18,31 @@ import { processPurchaseEvent } from "../../backend/services/orderProcessingServ
  * }
  */
 export async function action({ request }) {
+  console.log('🔔 webhooks.orders.created received:', request.method);
+  
   if (request.method !== 'POST') {
-    return json({ error: 'Method not allowed' }, { status: 405 });
+    console.log('❌ Wrong method:', request.method);
+    return new Response(
+      JSON.stringify({ error: 'Method not allowed' }),
+      { status: 405, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
   try {
-    const { orderId, totalPrice, lineItems, customerId, createdAt, shopId } = 
-      await request.json();
+    const body = await request.json();
+    console.log('📥 Request body:', JSON.stringify(body));
+    
+    const { orderId, totalPrice, lineItems, customerId, createdAt, shopId } = body;
 
     if (!shopId || !orderId || !lineItems) {
-      return json(
-        { error: 'Missing required fields: shopId, orderId, lineItems' },
-        { status: 400 }
+      console.log('❌ Missing fields. shopId:', shopId, 'orderId:', orderId, 'lineItems:', lineItems);
+      return new Response(
+        JSON.stringify({ error: 'Missing required fields: shopId, orderId, lineItems' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
+    
+    console.log('✅ Valid request. Processing:', { shopId, orderId, itemCount: lineItems.length });
 
     // Mock order payload for compatibility with processPurchaseEvent
     const orderPayload = {
@@ -45,18 +56,24 @@ export async function action({ request }) {
 
     console.log(`📦 Manual purchase event: Order ${orderId}, Total: $${totalPrice}`);
 
+    console.log('📦 Processing order:', orderId);
     const result = await processPurchaseEvent(shopId, orderPayload);
     
-    return json({
-      success: true,
-      upsellsAttributed: result.upsellsAttributed,
-      purchases: result.purchases
-    });
+    console.log('✅ Order processed. Upsells attributed:', result.upsellsAttributed);
+    
+    return new Response(
+      JSON.stringify({
+        success: true,
+        upsellsAttributed: result.upsellsAttributed,
+        purchases: result.purchases
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
   } catch (error) {
     console.error('❌ Error processing purchase event:', error);
-    return json(
-      { error: error.message },
-      { status: 500 }
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 }

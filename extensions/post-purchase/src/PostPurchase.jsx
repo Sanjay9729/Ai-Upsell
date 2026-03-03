@@ -26,30 +26,61 @@ export default extension('purchase.thank-you.block.render', async (root, api) =>
   // Fire-and-forget purchase tracking — Pillar 5
   if (lineItems.length > 0) {
     const orderId = order?.id?.split('/').pop() || order?.id;
-    const totalPrice = order?.totalPrice?.amount || 0;
+    const totalPrice = parseFloat(order?.totalPrice?.amount || 0);
+    
+    console.log('📦 PostPurchase Extension Debug:');
+    console.log('   Shop:', shop);
+    console.log('   Order ID:', orderId);
+    console.log('   Total Price:', totalPrice);
+    console.log('   Line Items:', lineItems.length);
+    
     const trackItems = lineItems
-      .map(li => ({
-        variantId: li.variant?.id?.split('/').pop(),
-        productId: li.variant?.product?.id?.split('/').pop(),
-        title: li.title,
-        quantity: li.quantity || 1,
-        price: parseFloat(li.price?.amount || li.totalPrice?.amount || '0'),
-      }))
+      .map((li, idx) => {
+        const item = {
+          variantId: li.variant?.id?.split('/').pop(),
+          productId: li.variant?.product?.id?.split('/').pop(),
+          title: li.title,
+          quantity: li.quantity || 1,
+          price: parseFloat(li.price?.amount || li.totalPrice?.amount || '0'),
+        };
+        console.log(`   Item ${idx}:`, item);
+        return item;
+      })
       .filter(li => li.variantId && li.productId);
+    
+    console.log('   Filtered Items:', trackItems.length);
+    
     if (trackItems.length > 0) {
+      const payload = { 
+        shopId: shop,
+        orderId, 
+        totalPrice,
+        lineItems: trackItems 
+      };
+      
+      console.log('📤 Sending to:', `${BACKEND_URL}/webhooks/orders/created`);
+      console.log('📋 Payload:', JSON.stringify(payload));
+      
       fetch(`${BACKEND_URL}/webhooks/orders/created`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          shopId: shop,
-          orderId, 
-          totalPrice,
-          lineItems: trackItems 
-        }),
-      }).catch((err) => {
-        console.error('Purchase tracking failed:', err);
+        body: JSON.stringify(payload),
+      })
+      .then(res => {
+        console.log('✅ Purchase tracking response:', res.status, res.statusText);
+        return res.json();
+      })
+      .then(data => {
+        console.log('✅ Purchase tracking result:', data);
+      })
+      .catch((err) => {
+        console.error('❌ Purchase tracking failed:', err);
       });
+    } else {
+      console.warn('⚠️ No trackable items found');
     }
+  } else {
+    console.warn('⚠️ No line items in order');
   }
 
   // Build the fetch URL — if no product IDs, skip the ids param

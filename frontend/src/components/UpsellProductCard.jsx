@@ -27,20 +27,27 @@ const UpsellProductCard = ({ product, isClicked, onClick }) => {
 
     try {
       // Step 1: Get discount code if this is a bundle offer
+      // Bundle discount applies to ENTIRE CART, not specific products
       let discountCode = null;
       if (product.offerType === 'bundle' && product.discountPercent > 0) {
         const bundleProducts = [
           { productId: product.id, variantId }
         ];
         
-        const discountRes = await fetch(
-          `/api/discount-code?bundleProducts=${encodeURIComponent(JSON.stringify(bundleProducts))}&discountPercent=${product.discountPercent}`
-        );
-        
-        if (discountRes.ok) {
-          const discountData = await discountRes.json();
-          discountCode = discountData.code;
-          console.log('✅ Got discount code:', discountCode);
+        try {
+          const discountRes = await fetch(
+            `/api/discount-code?bundleProducts=${encodeURIComponent(JSON.stringify(bundleProducts))}&discountPercent=${product.discountPercent}`
+          );
+          
+          if (discountRes.ok) {
+            const discountData = await discountRes.json();
+            discountCode = discountData.code;
+            console.log('✅ Got discount code:', discountCode);
+          } else {
+            console.warn('⚠️ Failed to get discount code:', await discountRes.text());
+          }
+        } catch (err) {
+          console.warn('⚠️ Error fetching discount code:', err);
         }
       }
 
@@ -109,18 +116,35 @@ const UpsellProductCard = ({ product, isClicked, onClick }) => {
 
               // Step 3: Apply discount code if we have one
               if (discountCode) {
-                setTimeout(() => {
-                  const cartDrawerForm = document.querySelector('cart-drawer form, [data-cart-form]');
-                  if (cartDrawerForm) {
-                    const discountInput = document.createElement('input');
-                    discountInput.type = 'hidden';
-                    discountInput.name = 'discount';
-                    discountInput.value = discountCode;
-                    cartDrawerForm.appendChild(discountInput);
-                    
-                    console.log('✅ Applied discount code:', discountCode);
-                  }
-                }, 200);
+               setTimeout(() => {
+                 console.log('Applying discount code:', discountCode);
+                 
+                 // Apply discount via cart API (correct format)
+                 fetch('/cart/update.json', {
+                   method: 'POST',
+                   headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({ 
+                     discount: discountCode
+                   })
+                 })
+                 .then(res => res.json())
+                 .then(data => {
+                   console.log('✅ Discount applied via API:', discountCode, 'Response:', data);
+                   
+                   // Refresh cart display
+                   fetch('/cart.json')
+                     .then(r => r.json())
+                     .then(cart => {
+                       console.log('Cart after discount:', cart);
+                       // Dispatch event to update UI
+                       document.dispatchEvent(new CustomEvent('cart:updated', {
+                         bubbles: true,
+                         detail: { cart }
+                       }));
+                     });
+                 })
+                 .catch(err => console.error('❌ Failed to apply discount:', err));
+               }, 300);
               }
 
               // Now open the cart drawer
