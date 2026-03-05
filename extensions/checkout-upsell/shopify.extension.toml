@@ -10,5 +10,9 @@ type = "ui_extension"
   module = "./src/Checkout.jsx"
   target = "purchase.checkout.block.render"
 
+  [[extensions.targeting]]
+  module = "./src/PostPurchase.jsx"
+  target = "purchase.thank-you.block.render"
+
 [capabilities]
 network_access = true

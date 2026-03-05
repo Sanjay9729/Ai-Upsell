@@ -10,6 +10,7 @@ import { GOAL_MAPPING, RISK_MAPPING } from '../../app/shared/merchantConfig.shar
 import { GroqAIEngine } from './groqAIEngine.js';
 import { getPlacementStats, shouldPreferHighConfidenceOnly } from './adaptivePlacement.js';
 import { getConfidenceBoost } from './conversionEngine.js';
+import { getSafetyMode } from './safetyMode.js';
 import {
   getMerchantContext,
   getOfferControlMap,
@@ -37,6 +38,13 @@ export async function decideProductOffers({
 } = {}) {
   if (!shopId || !productId) {
     return { offers: [], meta: { reason: 'missing_inputs' }, sourceProduct: null };
+  }
+
+  // Safety Mode check — block all offers when active
+  const safetyActive = await getSafetyMode(shopId).catch(() => false);
+  if (safetyActive) {
+    console.log(`🛡️ Safety mode active for ${shopId} — skipping all offers`);
+    return { offers: [], meta: { reason: 'safety_mode_active', status: 'safety_mode' }, sourceProduct: null };
   }
 
   const config = await loadConfig(shopId);
@@ -126,6 +134,13 @@ export async function decideCartOffers({
 } = {}) {
   if (!shopId || !Array.isArray(cartProductIds) || cartProductIds.length === 0) {
     return { offers: [], meta: { reason: 'missing_inputs' }, cartProducts: [] };
+  }
+
+  // Safety Mode check — block all offers when active
+  const safetyActive = await getSafetyMode(shopId).catch(() => false);
+  if (safetyActive) {
+    console.log(`🛡️ Safety mode active for ${shopId} — skipping all cart offers`);
+    return { offers: [], meta: { reason: 'safety_mode_active', status: 'safety_mode' }, cartProducts: [] };
   }
 
   const config = await loadConfig(shopId);

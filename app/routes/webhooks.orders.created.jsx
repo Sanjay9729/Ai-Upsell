@@ -2,78 +2,60 @@ import { json } from '@remix-run/node';
 import { processPurchaseEvent } from "../../backend/services/orderProcessingService.js";
 
 /**
- * API Route: POST /api/purchase-event
- * 
- * Accepts manual purchase event tracking from frontend/checkout.
- * Since orders/create webhook requires protected data approval,
- * we track purchases via frontend API instead.
- * 
- * Request body:
- * {
- *   orderId: string,
- *   totalPrice: number,
- *   lineItems: [{ productId, variantId, title, price, quantity }],
- *   customerId?: string,
- *   createdAt?: string
- * }
+ * POST /webhooks/orders/created
+ *
+ * Called from the PostPurchase checkout extension on the thank-you page.
+ * Receives order data and attributes any upsell purchases to purchase_events.
+ *
+ * Body: { shopId, orderId, totalPrice, lineItems: [{ product_id, variant_id, title, price, quantity }], createdAt }
  */
-export async function action({ request }) {
-  console.log('🔔 webhooks.orders.created received:', request.method);
-  
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export const action = async ({ request }) => {
+  // Handle CORS preflight from checkout extension
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   if (request.method !== 'POST') {
-    console.log('❌ Wrong method:', request.method);
-    return new Response(
-      JSON.stringify({ error: 'Method not allowed' }),
-      { status: 405, headers: { 'Content-Type': 'application/json' } }
-    );
+    return json({ error: 'Method not allowed' }, { status: 405 });
   }
 
   try {
     const body = await request.json();
-    console.log('📥 Request body:', JSON.stringify(body));
-    
-    const { orderId, totalPrice, lineItems, customerId, createdAt, shopId } = body;
+    const { shopId, orderId, totalPrice, lineItems, customerId, createdAt } = body;
 
-    if (!shopId || !orderId || !lineItems) {
-      console.log('❌ Missing fields. shopId:', shopId, 'orderId:', orderId, 'lineItems:', lineItems);
-      return new Response(
-        JSON.stringify({ error: 'Missing required fields: shopId, orderId, lineItems' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
+    console.log('[orders/created] Received:', { shopId, orderId, lineItemCount: lineItems?.length, lineItems: JSON.stringify(lineItems) });
+
+    if (!shopId || !orderId || !lineItems?.length) {
+      console.log('[orders/created] Missing fields:', { shopId, orderId, hasLineItems: !!lineItems?.length });
+      return json({ error: 'Missing required fields: shopId, orderId, lineItems' }, { status: 400 });
     }
-    
-    console.log('✅ Valid request. Processing:', { shopId, orderId, itemCount: lineItems.length });
 
-    // Mock order payload for compatibility with processPurchaseEvent
     const orderPayload = {
       id: orderId,
       total_price: totalPrice,
       line_items: lineItems,
       customer: customerId ? { id: customerId } : null,
       created_at: createdAt || new Date().toISOString(),
-      client_ip_address: request.headers.get('x-forwarded-for') || 'unknown'
     };
 
-    console.log(`📦 Manual purchase event: Order ${orderId}, Total: $${totalPrice}`);
-
-    console.log('📦 Processing order:', orderId);
     const result = await processPurchaseEvent(shopId, orderPayload);
-    
-    console.log('✅ Order processed. Upsells attributed:', result.upsellsAttributed);
-    
-    return new Response(
-      JSON.stringify({
-        success: true,
-        upsellsAttributed: result.upsellsAttributed,
-        purchases: result.purchases
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
-    );
+
+    return json({
+      success: true,
+      upsellsAttributed: result.upsellsAttributed,
+    }, { headers: CORS_HEADERS });
   } catch (error) {
-    console.error('❌ Error processing purchase event:', error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    console.error('Error processing purchase event:', error);
+    return json({ error: error.message }, { status: 500, headers: CORS_HEADERS });
   }
-}
+};
+
+export const loader = async () => {
+  return json({ status: 'ok' });
+};
