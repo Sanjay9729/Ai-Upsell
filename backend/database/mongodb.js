@@ -123,5 +123,9 @@ export async function initializeCollections() {
   await database.collection(collections.aovImpact).createIndex({ shopId: 1, timestamp: -1 });
   await database.collection(collections.aovImpact).createIndex({ shopId: 1, orderId: 1 });
 
+  // Safety Mode — Pillar rollback & emergency stop
+  await database.collection('safety_mode').createIndex({ shopId: 1 }, { unique: true });
+  await database.collection('config_snapshots').createIndex({ shopId: 1, createdAt: -1 });
+
   console.log('MongoDB collections initialized');
   }

@@ -65,8 +65,15 @@ export const action = async ({ request }) => {
             recommendationType,
             confidence,
             quantity,
-            metadata
+            metadata,
+            segment
         } = body;
+
+        // Merge segment into metadata so intelligence layer can group by segment
+        const enrichedMetadata = {
+            ...(metadata || {}),
+            ...(segment ? { segment: String(segment) } : {})
+        };
 
         // Validate required fields
         if (!eventType || !shopId || !upsellProductId) {
@@ -89,7 +96,7 @@ export const action = async ({ request }) => {
             recommendationType,
             confidence,
             quantity: quantity || 1,
-            metadata: metadata || {}
+            metadata: enrichedMetadata
         });
 
         return json({

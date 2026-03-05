@@ -654,6 +654,7 @@ async function startServer() {
         await initializeCollections();
         console.log('📊 All collections and indexes initialized successfully');
         startProductReconciliationJob();
+        startOptimizationCron();
       } catch (error) {
         console.error('❌ Mongo init failed (server is still running):', error);
       }
@@ -662,6 +663,68 @@ async function startServer() {
     console.error('❌ Failed to start server:', error);
     process.exit(1);
   }
+}
+
+// ─── Optimization Cron — Pillar 5 ────────────────────────────────────────────
+/**
+ * Runs the learning & optimization loop every 24 hours for all active shops.
+ * Reads all shops from merchant_config collection and runs optimizeForShop on each.
+ */
+async function startOptimizationCron() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  const runOptimization = async () => {
+    try {
+      console.log('⚙️ [Optimization Cron] Starting daily optimization run...');
+      const { getDb } = await import('./backend/database/mongodb.js');
+      const { optimizeForShop } = await import('./backend/services/optimizationEngine.js');
+      const db = await getDb();
+
+      const shops = await db.collection('merchant_config')
+        .find({}, { projection: { shopId: 1 } })
+        .toArray();
+
+      if (shops.length === 0) {
+        console.log('⚙️ [Optimization Cron] No shops to optimize.');
+        return;
+      }
+
+      let successCount = 0;
+      let skippedCount = 0;
+
+      for (const { shopId } of shops) {
+        if (!shopId) continue;
+        try {
+          const result = await optimizeForShop(shopId);
+          if (result.success) {
+            successCount++;
+            if (result.optimization?.updatesMade > 0) {
+              console.log(`✅ [Optimization Cron] ${shopId}: ${result.optimization.updatesMade} update(s) applied`);
+            }
+          } else {
+            skippedCount++;
+            if (result.reason !== 'insufficient_data') {
+              console.warn(`⚠️ [Optimization Cron] ${shopId}: ${result.reason || result.error}`);
+            }
+          }
+        } catch (shopErr) {
+          console.error(`❌ [Optimization Cron] ${shopId}:`, shopErr.message);
+        }
+      }
+
+      console.log(`⚙️ [Optimization Cron] Done. ${successCount} optimized, ${skippedCount} skipped.`);
+    } catch (err) {
+      console.error('❌ [Optimization Cron] Fatal error:', err.message);
+    }
+  };
+
+  // Run once after 2 min delay (let server warm up first), then every 24h
+  setTimeout(() => {
+    runOptimization();
+    setInterval(runOptimization, INTERVAL_MS);
+  }, 2 * 60 * 1000);
+
+  console.log('⚙️ [Optimization Cron] Scheduled — runs 2 min after startup, then every 24h');
 }
 
 // Start the server

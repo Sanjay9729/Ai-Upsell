@@ -43,6 +43,7 @@ uri = "/webhooks/products/delete"
 topics = ["inventory_levels/update"]
 uri = "/webhooks/inventory_levels/update"
 
+
 # ---------------------------
 # Mandatory Compliance Webhooks (REQUIRED)
 # ---------------------------
