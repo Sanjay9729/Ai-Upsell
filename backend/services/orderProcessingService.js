@@ -33,6 +33,16 @@ export async function processPurchaseEvent(shopId, orderPayload) {
     const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
     const purchases = [];
 
+    console.log(`[processPurchaseEvent] shopId="${shopId}" orderId="${orderId}" lineItems=${lineItems.length} sixHoursAgo=${sixHoursAgo.toISOString()}`);
+
+    // Log recent cart_add events for this shop to help debug
+    const recentCartAdds = await db.collection(collections.upsellEvents).find({
+      shopId,
+      eventType: 'cart_add',
+      timestamp: { $gte: sixHoursAgo }
+    }).toArray();
+    console.log(`[processPurchaseEvent] Recent cart_add events in last 6h: ${recentCartAdds.length}`, recentCartAdds.map(e => ({ upsellProductId: e.upsellProductId, timestamp: e.timestamp })));
+
     for (const lineItem of lineItems) {
       const productId = String(lineItem.product_id || '');
       const variantId = String(lineItem.variant_id || '');
@@ -40,6 +50,8 @@ export async function processPurchaseEvent(shopId, orderPayload) {
       const quantity = Number(lineItem.quantity || 1);
       const price = parseFloat(lineItem.price || 0);
       const lineTotal = price * quantity;
+
+      console.log(`[processPurchaseEvent] Checking lineItem product_id="${productId}" title="${title}"`);
 
       // Find matching upsell event
       const upsellEvent = await db
@@ -51,8 +63,10 @@ export async function processPurchaseEvent(shopId, orderPayload) {
             eventType: 'cart_add',
             timestamp: { $gte: sixHoursAgo }
           },
-          { sort: { timestamp: -1 } } // Most recent
+          { sort: { timestamp: -1 } }
         );
+
+      console.log(`[processPurchaseEvent] Match for product "${productId}":`, upsellEvent ? 'FOUND' : 'NOT FOUND');
 
       if (upsellEvent) {
         // This product was an upsell! Log the purchase
