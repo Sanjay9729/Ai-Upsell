@@ -9,6 +9,32 @@ import { MongoDBSessionStorage } from "@shopify/shopify-app-session-storage-mong
 
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-upsell';
 
+async function registerOrderStatusScriptTag(admin, shop) {
+  const scriptSrc = `${process.env.SHOPIFY_APP_URL}/scripts/order-status-tracking.js`;
+  try {
+    // Check if already registered
+    const existing = await admin.rest.get({ path: 'script_tags', query: { src: scriptSrc } });
+    if (existing?.body?.script_tags?.length > 0) {
+      console.log(`[ScriptTag] Already registered for ${shop}`);
+      return;
+    }
+    // Register new ScriptTag scoped to order status page only
+    await admin.rest.post({
+      path: 'script_tags',
+      data: {
+        script_tag: {
+          event: 'onload',
+          src: scriptSrc,
+          display_scope: 'order_status',
+        }
+      }
+    });
+    console.log(`[ScriptTag] Registered order-status tracking for ${shop}`);
+  } catch (err) {
+    console.error(`[ScriptTag] Failed to register for ${shop}:`, err.message);
+  }
+}
+
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
@@ -18,6 +44,11 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new MongoDBSessionStorage(mongoUri, 'ai-upsell'),
   distribution: AppDistribution.AppStore,
+  hooks: {
+    afterAuth: async ({ session, admin }) => {
+      await registerOrderStatusScriptTag(admin, session.shop);
+    }
+  },
   webhooks: {
     APP_UNINSTALLED: {
       deliveryMethod: DeliveryMethod.Http,

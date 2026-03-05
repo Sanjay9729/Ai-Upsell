@@ -3,8 +3,26 @@ import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { authenticate } from "../shopify.server";
 
+async function ensureScriptTag(admin) {
+  const scriptSrc = `${process.env.SHOPIFY_APP_URL}/scripts/order-status-tracking.js`;
+  try {
+    const existing = await admin.rest.get({ path: 'script_tags', query: { src: scriptSrc } });
+    if (existing?.body?.script_tags?.length > 0) return;
+    await admin.rest.post({
+      path: 'script_tags',
+      data: { script_tag: { event: 'onload', src: scriptSrc, display_scope: 'order_status' } }
+    });
+    console.log('[ScriptTag] Registered order-status tracking script');
+  } catch (err) {
+    console.error('[ScriptTag] Registration error:', err.message);
+  }
+}
+
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
+
+  // Ensure ScriptTag is registered for this shop (idempotent)
+  ensureScriptTag(admin).catch(() => {});
 
   // eslint-disable-next-line no-undef
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
