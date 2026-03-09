@@ -9,6 +9,7 @@ import {
   setOfferControl,
   getOfferLogs
 } from "../services/merchandisingIntelligence.server";
+import { syncProductsWithGraphQL } from "../../backend/database/collections.js";
 
 function parseDelimitedList(value) {
   return String(value || "")
@@ -213,6 +214,14 @@ export const action = async ({ request }) => {
       focusCollectionHandles
     });
 
+    if (result.success) {
+      // Auto-sync products so collection data is fresh in MongoDB
+      const { admin } = await authenticate.admin(request);
+      syncProductsWithGraphQL(shopId, admin.graphql).catch(err =>
+        console.warn("[intelligence] Background sync failed:", err.message)
+      );
+    }
+
     return json({ success: result.success, error: result.error || null, intent });
   }
 
@@ -303,7 +312,7 @@ export default function IntelligencePage() {
         <div style={{ fontSize: "13px", color: "#6d7175", marginBottom: "12px" }}>
           Provide strategic guidance. The AI treats this as a soft preference and never violates guardrails.
         </div>
-        <form method="post" style={{ display: "grid", gap: "12px" }}>
+        <form key={lastSavedAt || 'default'} method="post" style={{ display: "grid", gap: "12px" }}>
           <input type="hidden" name="intent" value="save_context" />
           <label style={{ fontSize: "12px", fontWeight: 600, color: "#303030" }}>
             Priority
@@ -487,9 +496,20 @@ export default function IntelligencePage() {
                         {offer.sourceProductName || offer.sourceProductId || "Cart"} → {offer.upsellProductName || offer.upsellProductId}
                       </div>
                     </div>
-                    <s-badge tone={status === "paused" ? "critical" : status === "approved" ? "success" : "neutral"}>
+                    <span style={{
+                      display: "inline-block",
+                      padding: "4px 12px",
+                      borderRadius: "999px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.5px",
+                      background: status === "paused" ? "#fde8e8" : status === "approved" ? "#e3f5e1" : status === "guided" ? "#eaf0ff" : "#f1f2f3",
+                      color: status === "paused" ? "#b42318" : status === "approved" ? "#1a7f37" : status === "guided" ? "#3b5998" : "#6d7175",
+                      border: `1px solid ${status === "paused" ? "#f3bebe" : status === "approved" ? "#b7e4b0" : status === "guided" ? "#c5d4f5" : "#d2d5d8"}`
+                    }}>
                       {status}
-                    </s-badge>
+                    </span>
                   </div>
 
                   <div style={{ display: "grid", gap: "6px", fontSize: "13px", color: "#4a4a4a" }}>

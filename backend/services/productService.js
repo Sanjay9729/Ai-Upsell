@@ -147,6 +147,10 @@ export class ProductService {
       collectionIds: [],
       collectionHandles: [],
       collectionTitles: [],
+      sellingPlanGroupIds: [],
+      sellingPlanIds: [],
+      sellingPlanId: null,
+      sellingPlanIdNumeric: null,
       images: product.images || [],
       image: product.image || null,
       variants: this.mapVariantsFromRest(product.variants || []),
@@ -193,6 +197,24 @@ export class ProductService {
 
     const unique = (arr) => Array.from(new Set(arr));
 
+    const sellingPlanGroups = product.sellingPlanGroups?.edges
+      ? product.sellingPlanGroups.edges.map((edge) => edge.node)
+      : (product.sellingPlanGroups?.nodes || []);
+
+    const sellingPlanGroupIds = unique(
+      (sellingPlanGroups || [])
+        .map((g) => g?.id)
+        .filter(Boolean)
+    );
+
+    const sellingPlanIds = unique(
+      (sellingPlanGroups || [])
+        .flatMap((g) => (g?.sellingPlans?.edges || []).map((e) => e.node?.id))
+        .filter(Boolean)
+    );
+    const sellingPlanId = sellingPlanIds[0] || null;
+    const sellingPlanIdNumeric = this.extractNumericId(sellingPlanId);
+
     return {
       shopId,
       productId: this.toNumber(product.legacyResourceId, null),
@@ -206,6 +228,10 @@ export class ProductService {
       collectionIds: unique(collectionIds),
       collectionHandles: unique(collectionHandles),
       collectionTitles: unique(collectionTitles),
+      sellingPlanGroupIds,
+      sellingPlanIds,
+      sellingPlanId,
+      sellingPlanIdNumeric,
       createdAt: new Date(product.createdAt),
       updatedAt: new Date(product.updatedAt),
       images,
@@ -233,7 +259,7 @@ export class ProductService {
       variantId: this.toNumber(variant.id, null),
       price: this.toNumber(variant.price, 0),
       compareAtPrice: this.toNumber(variant.compare_at_price, null),
-      inventoryQuantity: this.toNumber(variant.inventory_quantity, 0),
+      inventoryQuantity: this.toNumber(variant.inventory_quantity, null),
       inventoryItemId: this.toNumber(variant.inventory_item_id, null)
     }));
   }
@@ -243,7 +269,7 @@ export class ProductService {
       variantId: this.toNumber(this.extractNumericId(node?.id), null),
       price: this.toNumber(node?.price, 0),
       compareAtPrice: this.toNumber(node?.compareAtPrice, null),
-      inventoryQuantity: this.toNumber(node?.inventoryQuantity, 0),
+      inventoryQuantity: this.toNumber(node?.inventoryQuantity, null),
       inventoryItemId: this.toNumber(this.extractNumericId(node?.inventoryItem?.id), null)
     }));
   }

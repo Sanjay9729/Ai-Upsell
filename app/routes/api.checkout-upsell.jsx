@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { decideCartOffers } from "../../backend/services/decisionEngine.js";
+import { getSafetyMode } from "../../backend/services/safetyMode.js";
 
 /**
  * GET /api/checkout-upsell
@@ -56,6 +57,16 @@ export const loader = async ({ request }) => {
 
     console.log(`🛒 Checkout upsell request — shop: ${shop}, placement: ${placement}, products: ${productIds}`);
 
+    // Block all offers if safety mode is active
+    const safetyActive = await getSafetyMode(shop).catch(() => false);
+    if (safetyActive) {
+      console.warn(`🛑 Safety mode active for ${shop} — blocking checkout/post-purchase offers`);
+      return json(
+        { offers: [], offer: null, count: 0, placement, meta: { reason: 'safety_mode_active', status: 'safety_mode' } },
+        { headers: corsHeaders }
+      );
+    }
+
     const decision = await decideCartOffers({
       shopId: shop,
       cartProductIds: productIds,
@@ -67,7 +78,11 @@ export const loader = async ({ request }) => {
 
     const formattedOffers = rawOffers.map(product => {
       const price = String(product.aiData?.price || product.variants?.[0]?.price || "0");
-      const discountPercent = product.discountPercent ?? 0;
+      const offerType = product.offerType || "addon_upsell";
+      const baseDiscountPercent = product.discountPercent ?? 0;
+      const discountPercent = offerType === 'volume_discount' ? 0 : baseDiscountPercent;
+      const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
+      const sellingPlanIdNumeric = product.sellingPlanIdNumeric || (sellingPlanId ? String(sellingPlanId).match(/\/(\d+)$/)?.[1] : null);
       return {
         id: product.productId,
         title: product.title,
@@ -77,8 +92,10 @@ export const loader = async ({ request }) => {
         variantId: product.variants?.[0]?.id || product.variantId || null,
         reason: product.aiReason || null,
         confidence: product.confidence || 0,
-        offerType: product.offerType || "addon_upsell",
+        offerType,
         discountPercent,
+        sellingPlanId,
+        sellingPlanIdNumeric,
         type: product.recommendationType || "complementary",
       };
     });

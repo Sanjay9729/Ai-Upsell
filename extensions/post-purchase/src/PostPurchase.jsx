@@ -118,6 +118,7 @@ export default extension('purchase.thank-you.block.render', async (root, api) =>
       ? (originalPrice * (1 - discountPct / 100)).toFixed(2)
       : originalPrice.toFixed(2);
     const hasDiscount = discountPct > 0 && parseFloat(discountedPrice) < originalPrice;
+    const sellingPlanGid = offer.sellingPlanId || (offer.sellingPlanIdNumeric ? `gid://shopify/SellingPlan/${offer.sellingPlanIdNumeric}` : null);
 
     const row = root.createComponent(InlineStack, { spacing: 'base', blockAlignment: 'center' });
 
@@ -161,11 +162,15 @@ export default extension('purchase.thank-you.block.render', async (root, api) =>
         if (added || !offer.variantId) return;
         btn.updateProps({ loading: true });
         try {
-          const result = await api.applyCartLinesChange({
+          const payload = {
             type: 'addCartLine',
             merchandiseId: `gid://shopify/ProductVariant/${offer.variantId}`,
             quantity: 1,
-          });
+          };
+          if (sellingPlanGid) {
+            payload.sellingPlanId = sellingPlanGid;
+          }
+          const result = await api.applyCartLinesChange(payload);
           if (result.type === 'success') {
             added = true;
             btn.updateProps({ loading: false, disabled: true });

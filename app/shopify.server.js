@@ -10,6 +10,7 @@ import { MongoDBSessionStorage } from "@shopify/shopify-app-session-storage-mong
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-upsell';
 
 async function registerOrderStatusScriptTag(admin, shop) {
+  if (!admin?.rest) return; // REST client not available
   const scriptSrc = `${process.env.SHOPIFY_APP_URL}/scripts/order-status-tracking.js`;
   try {
     // Check if already registered

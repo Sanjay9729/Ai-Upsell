@@ -33,7 +33,11 @@ export const loader = async ({ params, request }) => {
     const recommendations = decision.offers || [];
 
     // Format response for frontend (inventory will be enriched by proxy route)
-    const formattedRecommendations = recommendations.map(product => ({
+    const formattedRecommendations = recommendations.map(product => {
+      const offerType = product.offerType || "addon_upsell";
+      const baseDiscountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
+      const discountPercent = offerType === 'volume_discount' ? 0 : baseDiscountPercent;
+      return ({
       id: product.productId,
       title: product.title,
       handle: product.handle,
@@ -42,14 +46,16 @@ export const loader = async ({ params, request }) => {
       reason: product.aiReason,
       confidence: product.confidence,
       type: product.recommendationType || "similar",
-      offerType: product.offerType || "addon_upsell",
-      discountPercent: product.discountPercent ?? decision.meta?.discountPercent ?? null,
+      offerType,
+      discountPercent,
+      sellingPlanId: product.sellingPlanId || product.sellingPlanIds?.[0] || null,
+      sellingPlanIdNumeric: product.sellingPlanIdNumeric || (product.sellingPlanId ? String(product.sellingPlanId).match(/\/(\d+)$/)?.[1] : null),
       decisionScore: product.decisionScore ?? null,
       decisionReason: product.decisionReason ?? null,
       url: `https://${shop}/products/${product.handle}`,
       availableForSale: product.status?.toUpperCase() === 'ACTIVE',
       variantId: product.variants?.[0]?.id || null
-    }));
+    })});
 
     console.log('📊 Recommendations (before inventory enrichment):', formattedRecommendations.map(r => ({
       title: r.title,

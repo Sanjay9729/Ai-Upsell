@@ -81,7 +81,12 @@ export async function getSeenProductsInSession(shopId, sessionId) {
     const since = new Date(Date.now() - 30 * 60 * 1000);
     const docs = await col
       .find(
-        { shopId, sessionId, timestamp: { $gte: since } },
+        {
+          shopId,
+          sessionId,
+          eventType: 'view',
+          timestamp: { $gte: since }
+        },
         { projection: { upsellProductId: 1 } }
       )
       .toArray();

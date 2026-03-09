@@ -55,7 +55,10 @@ export const collections = {
    decisionLogs: 'decision_logs',
    // Purchase & AOV tracking — Pillar 5
    purchaseEvents: 'purchase_events',
-   aovImpact: 'aov_impact'
+   aovImpact: 'aov_impact',
+   // Learning & Optimization Loop scheduler — Pillar 5
+   schedulerState: 'scheduler_state',
+   optimizationHistory: 'optimization_history'
  };
 
 export async function initializeCollections() {
@@ -122,6 +125,10 @@ export async function initializeCollections() {
   // AOV impact tracking
   await database.collection(collections.aovImpact).createIndex({ shopId: 1, timestamp: -1 });
   await database.collection(collections.aovImpact).createIndex({ shopId: 1, orderId: 1 });
+
+  // Pillar 5 — Scheduler & optimization history
+  await database.collection(collections.schedulerState).createIndex({ shopId: 1 }, { unique: true });
+  await database.collection(collections.optimizationHistory).createIndex({ shopId: 1, startedAt: -1 });
 
   // Safety Mode — Pillar rollback & emergency stop
   await database.collection('safety_mode').createIndex({ shopId: 1 }, { unique: true });

@@ -2,6 +2,8 @@ import { json } from "@remix-run/node";
 import crypto from "node:crypto";
 import { authenticate } from "../shopify.server";
 import { decideCartOffers } from "../../backend/services/decisionEngine.js";
+import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
+import { getSafetyMode } from "../../backend/services/safetyMode.js";
 
 /**
  * Fetch live inventory using authenticated admin client from appProxy
@@ -16,8 +18,8 @@ function getOfferTypeExtras(offerType, discountPercent) {
     return {
       tagline: 'Buy More, Save More',
       tiers: [
-        { quantity: 2, discountPercent: t1 },
-        { quantity: 3, discountPercent: t2 },
+        { quantity: 2, discountPercent: t1, label: '2+ items' },
+        { quantity: 3, discountPercent: t2, label: '3+ items' },
       ],
     };
   }
@@ -25,6 +27,12 @@ function getOfferTypeExtras(offerType, discountPercent) {
     return { tagline: 'Subscribe & Save', interval: 'monthly' };
   }
   return {};
+}
+
+function extractNumericId(gid) {
+  if (!gid || typeof gid !== 'string') return null;
+  const match = gid.match(/\/(\d+)$/);
+  return match ? match[1] : null;
 }
 
 async function fetchLiveInventory(admin, productIds) {
@@ -179,21 +187,58 @@ export const loader = async ({ request }) => {
 
     console.log(`🛒 Cart-based recommendations for ${productIds.length} products`);
 
-    // Run decision engine and auth in parallel — auth is not needed until inventory fetch
-    const [decision, authResult] = await Promise.all([
-      decideCartOffers({
-        shopId: shop,
+    // Block all offers if safety mode is active
+    const safetyActive = await getSafetyMode(shop).catch(() => false);
+    if (safetyActive) {
+      console.warn(`🛑 Safety mode active for ${shop} — blocking cart offers`);
+      return json({
+        success: true,
         cartProductIds: productIds,
-        userId,
-        limit: 4,
-        placement: "cart_drawer"
-      }),
-      authenticate.public.appProxy(request).catch(authErr => {
-        console.error('⚠️ Cart appProxy auth failed:', authErr.message);
-        return { admin: null };
-      })
-    ]);
-    const adminClient = authResult?.admin || null;
+        shop,
+        recommendations: [],
+        count: 0,
+        decision: { reason: 'safety_mode_active', status: 'safety_mode' }
+      }, {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        }
+      });
+    }
+
+    // Authenticate via app proxy to get admin client
+    let adminClient = null;
+    try {
+      const authResult = await authenticate.public.appProxy(request);
+      adminClient = authResult?.admin || null;
+    } catch (authErr) {
+      console.error('⚠️ Cart appProxy auth failed:', authErr.message);
+    }
+
+    // Self-heal: sync any cart products missing from MongoDB (same as product page proxy)
+    if (adminClient?.graphql) {
+      await Promise.all(productIds.map(async (productId) => {
+        try {
+          const existing = await getProductById(shop, productId);
+          const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+          const stale = !existing || (Date.now() - updatedAt > 10 * 60 * 1000);
+          if (stale) {
+            await ensureProductFromAdminGraphQL(shop, adminClient.graphql, productId);
+          }
+        } catch (syncErr) {
+          console.warn(`⚠️ Cart product sync failed for ${productId}:`, syncErr.message);
+        }
+      }));
+    }
+
+    const decision = await decideCartOffers({
+      shopId: shop,
+      cartProductIds: productIds,
+      userId,
+      limit: 4,
+      placement: "cart_drawer"
+    });
 
     // Use cart products already fetched by AI engine — no extra DB query needed
     const recommendations = decision.offers || [];
@@ -213,7 +258,11 @@ export const loader = async ({ request }) => {
       const live = inventoryMap[product.productId] || {};
       const recommendationType = product.recommendationType || "complementary";
       const offerType = product.offerType || "addon_upsell";
-      const discountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
+      const baseDiscountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
+      const offerTypeExtras = getOfferTypeExtras(offerType, baseDiscountPercent);
+      const discountPercent = offerType === 'volume_discount' ? 0 : baseDiscountPercent;
+      const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
+      const sellingPlanIdNumeric = product.sellingPlanIdNumeric || extractNumericId(sellingPlanId);
       return {
         id: product.productId,
         title: product.title,
@@ -226,6 +275,8 @@ export const loader = async ({ request }) => {
         type: recommendationType,
         offerType,
         discountPercent,
+        sellingPlanId,
+        sellingPlanIdNumeric,
         decisionScore: product.decisionScore ?? null,
         decisionReason: product.decisionReason ?? null,
         url: `/products/${product.handle}`,
@@ -234,7 +285,7 @@ export const loader = async ({ request }) => {
         inventoryPolicy: live.inventoryPolicy ?? 'continue',
         variantId: live.variantId || product.variants?.[0]?.id || null,
         variants: live.variants || [],
-        ...getOfferTypeExtras(offerType, discountPercent),
+        ...offerTypeExtras,
       };
     });
 
@@ -251,6 +302,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
       }
     });
 
@@ -265,6 +317,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
       }
     });
   }
