@@ -20,9 +20,14 @@ import { logger } from './logger.js';
 export async function processPurchaseEvent(shopId, orderPayload) {
   try {
     const db = await getDb();
-    const orderId = orderPayload.id;
-    const orderValue = parseFloat(orderPayload.total_price || 0);
-    const lineItems = Array.isArray(orderPayload.line_items) ? orderPayload.line_items : [];
+    // Support both camelCase (PostPurchase extension) and snake_case (Shopify webhooks)
+    const orderId = orderPayload.orderId || orderPayload.id;
+    const orderValue = parseFloat(orderPayload.totalPrice || orderPayload.total_price || 0);
+    const lineItems = Array.isArray(orderPayload.lineItems)
+      ? orderPayload.lineItems
+      : Array.isArray(orderPayload.line_items)
+        ? orderPayload.line_items
+        : [];
 
     if (lineItems.length === 0) {
       console.log(`⚠️ Order ${orderId} has no line items`);
@@ -44,8 +49,9 @@ export async function processPurchaseEvent(shopId, orderPayload) {
     console.log(`[processPurchaseEvent] Recent cart_add events in last 6h: ${recentCartAdds.length}`, recentCartAdds.map(e => ({ upsellProductId: e.upsellProductId, timestamp: e.timestamp })));
 
     for (const lineItem of lineItems) {
-      const productId = String(lineItem.product_id || '');
-      const variantId = String(lineItem.variant_id || '');
+      // Support both camelCase (PostPurchase extension) and snake_case (Shopify webhooks)
+      const productId = String(lineItem.productId || lineItem.product_id || '');
+      const variantId = String(lineItem.variantId || lineItem.variant_id || '');
       const title = lineItem.title || '';
       const quantity = Number(lineItem.quantity || 1);
       const price = parseFloat(lineItem.price || 0);
