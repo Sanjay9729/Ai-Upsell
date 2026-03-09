@@ -67,7 +67,11 @@ export const loader = async ({ request }) => {
 
     const formattedOffers = rawOffers.map(product => {
       const price = String(product.aiData?.price || product.variants?.[0]?.price || "0");
-      const discountPercent = product.discountPercent ?? 0;
+      const offerType = product.offerType || "addon_upsell";
+      const baseDiscountPercent = product.discountPercent ?? 0;
+      const discountPercent = offerType === 'volume_discount' ? 0 : baseDiscountPercent;
+      const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
+      const sellingPlanIdNumeric = product.sellingPlanIdNumeric || (sellingPlanId ? String(sellingPlanId).match(/\/(\d+)$/)?.[1] : null);
       return {
         id: product.productId,
         title: product.title,
@@ -77,8 +81,10 @@ export const loader = async ({ request }) => {
         variantId: product.variants?.[0]?.id || product.variantId || null,
         reason: product.aiReason || null,
         confidence: product.confidence || 0,
-        offerType: product.offerType || "addon_upsell",
+        offerType,
         discountPercent,
+        sellingPlanId,
+        sellingPlanIdNumeric,
         type: product.recommendationType || "complementary",
       };
     });

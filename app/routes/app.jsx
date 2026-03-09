@@ -4,6 +4,7 @@ import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { authenticate } from "../shopify.server";
 
 async function ensureScriptTag(admin) {
+  if (!admin?.rest) return; // REST client not available
   const scriptSrc = `${process.env.SHOPIFY_APP_URL}/scripts/order-status-tracking.js`;
   try {
     const existing = await admin.rest.get({ path: 'script_tags', query: { src: scriptSrc } });
@@ -39,6 +40,7 @@ export default function App() {
         <s-link href="/app/analytics">Analytics</s-link>
         <s-link href="/app/activity-logs">Activity Logs</s-link>
         <s-link href="/app/intelligence">Merchandising Intelligence</s-link>
+        <s-link href="/app/optimization">Learning & Optimization</s-link>
         <s-link href="/app/safety">Safety Mode</s-link>
       </s-app-nav>
       <Outlet />

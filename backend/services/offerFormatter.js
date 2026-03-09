@@ -85,8 +85,8 @@ export function formatVolumeDiscountOffer(product, variant, discountPercent) {
     discountPercent,
     discountedPrice,
     tiers: [
-      { quantity: 2, discountPercent: tier1Discount, pricePerUnit: roundToTwo(originalPrice * (1 - tier1Discount / 100)) },
-      { quantity: 3, discountPercent: tier2Discount, pricePerUnit: roundToTwo(originalPrice * (1 - tier2Discount / 100)) },
+      { quantity: 2, discountPercent: tier1Discount, pricePerUnit: roundToTwo(originalPrice * (1 - tier1Discount / 100)), label: '2+ items' },
+      { quantity: 3, discountPercent: tier2Discount, pricePerUnit: roundToTwo(originalPrice * (1 - tier2Discount / 100)), label: '3+ items' },
     ],
     tagline: 'Buy More, Save More',
   };

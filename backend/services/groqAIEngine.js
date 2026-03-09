@@ -1168,8 +1168,11 @@ MERCHANT STRATEGY CONTEXT (use as a soft preference, never override relevance or
     const threshold = Number(guardrails?.inventoryMinThreshold);
     if (Number.isFinite(threshold) && threshold > 0) {
       const variants = Array.isArray(product.variants) ? product.variants : [];
+      // Only include variants where inventory is explicitly tracked (non-null).
+      // null means tracking is disabled — don't block the product for those.
       const quantities = variants
-        .map(v => Number(v?.inventoryQuantity))
+        .filter(v => v?.inventoryQuantity != null)
+        .map(v => Number(v.inventoryQuantity))
         .filter(qty => Number.isFinite(qty));
 
       // If inventory is not tracked in the DB, don't block the product.
@@ -1188,6 +1191,9 @@ MERCHANT STRATEGY CONTEXT (use as a soft preference, never override relevance or
   }
 
   isSubscriptionProduct(product) {
+    if (Array.isArray(product?.sellingPlanIds) && product.sellingPlanIds.length > 0) {
+      return true;
+    }
     const tags = Array.isArray(product?.tags) ? product.tags.join(' ') : (product?.tags || '');
     const haystack = `${product?.productType || ''} ${product?.handle || ''} ${tags}`.toLowerCase();
     return /subscription|subscribe|recurring/.test(haystack);

@@ -106,6 +106,22 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}
                     }
                   }
                 }
+                sellingPlanGroups(first: 5) {
+                  edges {
+                    node {
+                      id
+                      name
+                      sellingPlans(first: 10) {
+                        edges {
+                          node {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -326,6 +342,22 @@ export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, produc
               }
             }
           }
+          sellingPlanGroups(first: 5) {
+            edges {
+              node {
+                id
+                name
+                sellingPlans(first: 10) {
+                  edges {
+                    node {
+                      id
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }`,
       { variables: { id: gid } }
@@ -540,5 +572,4 @@ function extractFeatures(product) {
 
   return features;
 }
-
 

@@ -44,6 +44,7 @@ export default extension('purchase.checkout.block.render', async (root, api) => 
     ? (originalPrice * (1 - discountPct / 100)).toFixed(2)
     : originalPrice.toFixed(2);
   const hasDiscount = discountPct > 0 && parseFloat(discountedPrice) < originalPrice;
+  const sellingPlanGid = offer.sellingPlanId || (offer.sellingPlanIdNumeric ? `gid://shopify/SellingPlan/${offer.sellingPlanIdNumeric}` : null);
 
   // ── Build UI ──────────────────────────────────────────────────────────────
   const card = root.createComponent(BlockStack, { spacing: 'base' });
@@ -92,14 +93,18 @@ export default extension('purchase.checkout.block.render', async (root, api) => 
   const btn = root.createComponent(Button, {
     kind: 'secondary',
     onPress: async () => {
-      if (added || !offer.variantId) return;
-      btn.updateProps({ loading: true });
-      try {
-        const result = await api.applyCartLinesChange({
-          type: 'addCartLine',
-          merchandiseId: `gid://shopify/ProductVariant/${offer.variantId}`,
-          quantity: 1,
-        });
+        if (added || !offer.variantId) return;
+        btn.updateProps({ loading: true });
+        try {
+          const payload = {
+            type: 'addCartLine',
+            merchandiseId: `gid://shopify/ProductVariant/${offer.variantId}`,
+            quantity: 1,
+          };
+          if (sellingPlanGid) {
+            payload.sellingPlanId = sellingPlanGid;
+          }
+          const result = await api.applyCartLinesChange(payload);
         if (result.type === 'success') {
           added = true;
           btn.updateProps({ loading: false, disabled: true });

@@ -62,6 +62,7 @@ export const action = async ({ request }) => {
             variantId,
             customerId,
             sessionId,
+            userId,
             recommendationType,
             confidence,
             quantity,
@@ -83,6 +84,8 @@ export const action = async ({ request }) => {
             }, { status: 400 });
         }
 
+        const resolvedSessionId = sessionId || userId || customerId || null;
+
         const result = await trackUpsellEvent({
             eventType,
             shopId,
@@ -92,7 +95,7 @@ export const action = async ({ request }) => {
             upsellProductName,
             variantId,
             customerId,
-            sessionId,
+            sessionId: resolvedSessionId,
             recommendationType,
             confidence,
             quantity: quantity || 1,

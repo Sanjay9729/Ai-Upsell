@@ -22,8 +22,8 @@ function getOfferTypeExtras(offerType, discountPercent) {
     return {
       tagline: 'Buy More, Save More',
       tiers: [
-        { quantity: 2, discountPercent: t1 },
-        { quantity: 3, discountPercent: t2 },
+        { quantity: 2, discountPercent: t1, label: '2+ items' },
+        { quantity: 3, discountPercent: t2, label: '3+ items' },
       ],
     };
   }
@@ -31,6 +31,12 @@ function getOfferTypeExtras(offerType, discountPercent) {
     return { tagline: 'Subscribe & Save', interval: 'monthly' };
   }
   return {};
+}
+
+function extractNumericId(gid) {
+  if (!gid || typeof gid !== 'string') return null;
+  const match = gid.match(/\/(\d+)$/);
+  return match ? match[1] : null;
 }
 
 function verifyProxySignature(query) {
@@ -75,6 +81,19 @@ export const loader = async ({ request }) => {
 
     if (!shop || !productGid) {
       return json({ error: "Missing required parameters" }, { status: 400 });
+    }
+
+    // Pillar 5: Lazy-trigger optimization in background if overdue (fire-and-forget)
+    if (shop) {
+      import("../../backend/services/schedulerService.js")
+        .then(({ shouldRunOptimization, runScheduledOptimization }) =>
+          shouldRunOptimization(shop).then((overdue) => {
+            if (overdue) {
+              runScheduledOptimization(shop, "lazy_proxy").catch(() => {});
+            }
+          })
+        )
+        .catch(() => {}); // Never block the response
     }
 
     // Extract numeric product ID from GID
@@ -136,7 +155,11 @@ export const loader = async ({ request }) => {
     const formattedRecommendations = recommendations.map(product => {
       const recommendationType = product.recommendationType || "similar";
       const offerType = product.offerType || "addon_upsell";
-      const discountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
+      const baseDiscountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
+      const offerTypeExtras = getOfferTypeExtras(offerType, baseDiscountPercent);
+      const discountPercent = offerType === 'volume_discount' ? 0 : baseDiscountPercent;
+      const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
+      const sellingPlanIdNumeric = product.sellingPlanIdNumeric || extractNumericId(sellingPlanId);
       return ({
       id: product.productId,
       title: product.title,
@@ -149,12 +172,14 @@ export const loader = async ({ request }) => {
       type: recommendationType,
       offerType,
       discountPercent,
+      sellingPlanId,
+      sellingPlanIdNumeric,
       decisionScore: product.decisionScore ?? null,
       decisionReason: product.decisionReason ?? null,
       url: `/products/${product.handle}`,
       availableForSale: product.status?.toUpperCase() === 'ACTIVE',
       variantId: product.variants?.[0]?.id || null,
-      ...getOfferTypeExtras(offerType, discountPercent),
+      ...offerTypeExtras,
     })});
 
     // Enrich with live inventory from Shopify Admin API

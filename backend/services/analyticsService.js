@@ -21,6 +21,12 @@ export async function trackUpsellEvent({
 }) {
   try {
     const db = await getDb();
+    const resolvedSessionId =
+      sessionId ||
+      metadata?.sessionId ||
+      metadata?.userId ||
+      (customerId ? String(customerId) : null);
+
     const event = {
       eventType,
       shopId,
@@ -30,7 +36,7 @@ export async function trackUpsellEvent({
       upsellProductName,
       variantId: variantId?.toString(),
       customerId,
-      sessionId,
+      sessionId: resolvedSessionId,
       recommendationType,
       confidence,
       quantity,
@@ -165,12 +171,19 @@ export async function getUpsellStats(shopId, options = {}) {
       { $limit: 10 }
     ]).toArray();
 
-    // Performance by recommendation type
+    // Performance by offer type (only valid decision-engine types)
+    const VALID_OFFER_TYPES = ['bundle', 'volume_discount', 'addon_upsell', 'subscription_upgrade'];
     const performanceByType = await db.collection(collections.upsellEvents).aggregate([
-      { $match: { ...matchStage, eventType: 'cart_add', recommendationType: { $ne: null } } },
+      {
+        $match: {
+          ...matchStage,
+          eventType: 'cart_add',
+          'metadata.offerType': { $in: VALID_OFFER_TYPES }
+        }
+      },
       {
         $group: {
-          _id: '$recommendationType',
+          _id: '$metadata.offerType',
           count: { $sum: 1 },
           avgConfidence: { $avg: '$confidence' }
         }

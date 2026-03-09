@@ -11,6 +11,16 @@ const DEFAULT_CONTEXT = {
   preferBundles: false
 };
 
+function normalizePreferBundles(value) {
+  return (
+    value === true ||
+    value === 'true' ||
+    value === 'on' ||
+    value === 1 ||
+    value === '1'
+  );
+}
+
 function normalizeList(value, { lower = false } = {}) {
   if (!value) return [];
   const base = Array.isArray(value) ? value : [value];
@@ -36,9 +46,11 @@ export async function getMerchantContext(shopId) {
       { projection: { _id: 0 } }
     );
     if (!doc) return { ...DEFAULT_CONTEXT };
+    const context = doc.context || {};
     return {
       ...DEFAULT_CONTEXT,
-      ...doc.context
+      ...context,
+      preferBundles: normalizePreferBundles(context.preferBundles)
     };
   } catch (err) {
     console.warn('⚠️ getMerchantContext failed:', err.message);
@@ -51,10 +63,11 @@ export async function saveMerchantContext(shopId, context = {}) {
   try {
     const db = await getDb();
     const now = new Date();
+    const preferBundles = normalizePreferBundles(context.preferBundles);
     const payload = {
       priority: String(context.priority || 'none'),
       notes: String(context.notes || '').trim(),
-      preferBundles: Boolean(context.preferBundles),
+      preferBundles,
       focusProductIds: normalizeList(context.focusProductIds),
       focusProductHandles: normalizeList(context.focusProductHandles, { lower: true }),
       focusCollectionIds: normalizeList(context.focusCollectionIds),

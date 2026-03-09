@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG = {
   riskTolerance: 'balanced',
   guardrails: {
     maxDiscountCap: 20,
-    inventoryMinThreshold: 5,
+    inventoryMinThreshold: 0,
     sessionOfferLimit: 3,
     premiumSkuProtection: false,
     subscriptionProtection: false,
@@ -28,6 +28,10 @@ export const DEFAULT_CONFIG = {
     excludedCollectionIds: [],
     excludedCollectionHandles: [],
   },
+  optimization: {
+    topOfferType: null,
+    updatedAt: null
+  }
 };
 
 // ─── Goal/Risk mappings are shared (client-safe) ─────────────────────────────
@@ -138,11 +142,25 @@ export async function getMerchantConfig(shopId) {
     ...(saved?.guardrails ?? {}),
   };
 
+  // Auto-migrate: if merchant never changed inventoryMinThreshold from the old default of 5,
+  // reset it to the new default of 0 so existing stores aren't blocked by inventory filtering.
+  if (guardrails.inventoryMinThreshold === 5 && saved?.guardrails?.inventoryMinThreshold === 5) {
+    guardrails.inventoryMinThreshold = 0;
+  }
+
+  const VALID_OFFER_TYPES = new Set(['bundle', 'volume_discount', 'addon_upsell', 'subscription_upgrade']);
+  const rawOptimization = saved?.optimization || DEFAULT_CONFIG.optimization;
+  const optimization = {
+    ...rawOptimization,
+    topOfferType: VALID_OFFER_TYPES.has(rawOptimization?.topOfferType) ? rawOptimization.topOfferType : null,
+  };
+
   return {
     shopId,
     goal,
     riskTolerance,
     guardrails,
+    optimization,
     // Computed mappings — ready for the decision engine
     goalConfig: GOAL_MAPPING[goal],
     riskConfig: RISK_MAPPING[riskTolerance],
@@ -161,7 +179,7 @@ export async function getMerchantConfig(shopId) {
  * Validates and persists merchant config.
  * Returns { success: boolean, errors: string[] }
  */
-export async function saveMerchantConfig(shopId, { goal, riskTolerance, guardrails }) {
+export async function saveMerchantConfig(shopId, { goal, riskTolerance, guardrails, optimization }) {
   const validation = validateConfig({ goal, riskTolerance, guardrails });
   if (!validation.valid) {
     return { success: false, errors: validation.errors };
@@ -179,25 +197,36 @@ export async function saveMerchantConfig(shopId, { goal, riskTolerance, guardrai
       return Array.from(new Set(clean));
     };
 
+    const updateDoc = {
+      shopId,
+      goal,
+      riskTolerance,
+      guardrails: {
+        maxDiscountCap: guardrails.maxDiscountCap,
+        inventoryMinThreshold: guardrails.inventoryMinThreshold,
+        sessionOfferLimit: guardrails.sessionOfferLimit,
+        premiumSkuProtection: Boolean(guardrails.premiumSkuProtection),
+        subscriptionProtection: Boolean(guardrails.subscriptionProtection),
+        excludedProductIds: normalizeList(guardrails.excludedProductIds),
+        excludedProductHandles: normalizeList(guardrails.excludedProductHandles).map((h) => h.toLowerCase()),
+        excludedCollectionIds: normalizeList(guardrails.excludedCollectionIds),
+        excludedCollectionHandles: normalizeList(guardrails.excludedCollectionHandles).map((h) => h.toLowerCase()),
+      },
+      updatedAt: now,
+    };
+
+    if (optimization !== undefined) {
+      updateDoc.optimization = {
+        topOfferType: optimization?.topOfferType ?? null,
+        updatedAt: optimization?.updatedAt ?? now
+      };
+    }
+
     await db.collection(collections.merchantConfig).updateOne(
       { shopId },
       {
         $set: {
-          shopId,
-          goal,
-          riskTolerance,
-          guardrails: {
-            maxDiscountCap: guardrails.maxDiscountCap,
-            inventoryMinThreshold: guardrails.inventoryMinThreshold,
-            sessionOfferLimit: guardrails.sessionOfferLimit,
-            premiumSkuProtection: Boolean(guardrails.premiumSkuProtection),
-            subscriptionProtection: Boolean(guardrails.subscriptionProtection),
-            excludedProductIds: normalizeList(guardrails.excludedProductIds),
-            excludedProductHandles: normalizeList(guardrails.excludedProductHandles).map((h) => h.toLowerCase()),
-            excludedCollectionIds: normalizeList(guardrails.excludedCollectionIds),
-            excludedCollectionHandles: normalizeList(guardrails.excludedCollectionHandles).map((h) => h.toLowerCase()),
-          },
-          updatedAt: now,
+          ...updateDoc,
         },
         $setOnInsert: { createdAt: now },
       },
@@ -226,6 +255,10 @@ export async function updateMerchantConfig(shopId, updates = {}) {
       guardrails: {
         ...(existing.guardrails ?? DEFAULT_CONFIG.guardrails),
         ...(updates.guardrails ?? {})
+      },
+      optimization: {
+        ...(existing.optimization ?? DEFAULT_CONFIG.optimization),
+        ...(updates.optimization ?? {})
       }
     };
 

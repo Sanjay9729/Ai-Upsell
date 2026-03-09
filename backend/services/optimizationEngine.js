@@ -12,6 +12,7 @@ import { getDb, collections } from '../database/mongodb.js';
 import { getUpsellStats, getConversionRate } from './analyticsService.js';
 import { getMerchantConfig, updateMerchantConfig } from './merchantConfig.js';
 import { logger } from './logger.js';
+import { recommendBundles } from './bundleEngine.js';
 
 const OPTIMIZATION_CONFIG = {
   minDataPoints: 20, // Min events to run optimization
@@ -67,21 +68,43 @@ export async function optimizeForShop(shopId, options = {}) {
     const tuning = computeTuning(performance, currentConfig, tuningRate);
 
     // 4. Apply tuning if meets threshold
-    const updates = {};
+    const updates = { guardrails: {}, optimization: {} };
     let updatesMade = 0;
 
     for (const [key, value] of Object.entries(tuning)) {
       if (value.changePercent >= OPTIMIZATION_CONFIG.minChangeThreshold) {
-        updates[key] = value.recommended;
-        updatesMade += 1;
+        if (key === 'discountCap') {
+          updates.guardrails.maxDiscountCap = value.recommended;
+          updatesMade += 1;
+        }
+        if (key === 'topOfferType') {
+          updates.optimization.topOfferType = value.recommended;
+          updatesMade += 1;
+        }
       }
     }
 
-    if (updatesMade > 0) {
+    const hasGuardrailUpdates = Object.keys(updates.guardrails).length > 0;
+    const hasOptimizationUpdates = Object.keys(updates.optimization).length > 0;
+    if (hasGuardrailUpdates || hasOptimizationUpdates) {
       await updateMerchantConfig(shopId, updates);
     }
 
-    // 5. Log optimization result
+    // 5. Autonomously recommend bundles based on co-purchase patterns
+    const bundleResult = await recommendBundles(shopId).catch((err) => ({
+      success: false,
+      error: err?.message || String(err),
+      count: 0
+    }));
+
+    // 6. Run segment-aware optimization in parallel
+    const [segmentResult, elasticityResult, guardrailResult] = await Promise.all([
+      optimizeForSegments(shopId).catch(() => ({ success: false })),
+      analyzeDiscountElasticity(shopId, { startDate: since }).catch(() => ({ success: false })),
+      analyzeGuardrailTriggers(shopId, { startDate: since }).catch(() => ({ success: false }))
+    ]);
+
+    // 7. Log optimization result
     const result = {
       success: true,
       optimization: {
@@ -91,7 +114,14 @@ export async function optimizeForShop(shopId, options = {}) {
         performance,
         tuning,
         updatesMade,
-        appliedUpdates: updates
+        appliedUpdates: updates,
+        bundleRecommendations: bundleResult?.success ? bundleResult.count : 0,
+        segmentInsights: segmentResult.success ? {
+          bestSegment: segmentResult.bestSegment,
+          conversionRate: segmentResult.conversionRate
+        } : null,
+        discountOptimal: elasticityResult.success ? elasticityResult.optimalBucket : null,
+        guardrailRate: guardrailResult.success ? guardrailResult.guardrailRate : null
       }
     };
 
@@ -374,6 +404,8 @@ export async function simulateParameterChanges(shopId, parameterChanges = {}) {
   }
 }
 
+export const VALID_OFFER_TYPES = new Set(['bundle', 'volume_discount', 'addon_upsell', 'subscription_upgrade']);
+
 // ─── Internal Helpers ────────────────────────────────────────────────────────
 
 /**
@@ -414,11 +446,13 @@ function computeTuning(performance, currentConfig, tuningRate) {
 
   if (topPerformer && currentConfig.goal) {
     const [type] = topPerformer;
-    tuning.topOfferType = {
-      current: currentConfig.topOfferType,
-      recommended: type,
-      changePercent: 1 // Always apply if there's clear winner
-    };
+    if (VALID_OFFER_TYPES.has(type)) {
+      tuning.topOfferType = {
+        current: currentConfig.optimization?.topOfferType || null,
+        recommended: type,
+        changePercent: 1 // Always apply if there's clear winner
+      };
+    }
   }
 
   // Tune discount based on event count sensitivity
@@ -443,4 +477,257 @@ function computeTuning(performance, currentConfig, tuningRate) {
   }
 
   return tuning;
+}
+
+// ─── New Pillar 5 Analysis Functions ─────────────────────────────────────────
+
+/**
+ * Analyze performance broken down by customer segment.
+ * Segments: anonymous, known_customer (has customerId), or metadata.segment values.
+ */
+export async function analyzeSegmentPerformance(shopId, options = {}) {
+  try {
+    const db = await getDb();
+    const {
+      startDate = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
+      endDate = new Date()
+    } = options;
+
+    const rows = await db.collection(collections.upsellEvents).aggregate([
+      {
+        $match: {
+          shopId,
+          isUpsellEvent: true,
+          timestamp: { $gte: startDate, $lte: endDate }
+        }
+      },
+      {
+        $project: {
+          eventType: 1,
+          'metadata.offerType': 1,
+          segment: {
+            $ifNull: [
+              '$metadata.segment',
+              {
+                $cond: [
+                  { $ifNull: ['$customerId', false] },
+                  'known_customer',
+                  'anonymous'
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: { segment: '$segment', eventType: '$eventType' },
+          count: { $sum: 1 }
+        }
+      }
+    ]).toArray();
+
+    const segmentMap = {};
+    for (const row of rows) {
+      const seg = row._id.segment || 'unknown';
+      if (!segmentMap[seg]) {
+        segmentMap[seg] = { segment: seg, views: 0, clicks: 0, cartAdds: 0 };
+      }
+      if (row._id.eventType === 'view') segmentMap[seg].views += row.count;
+      if (row._id.eventType === 'click') segmentMap[seg].clicks += row.count;
+      if (row._id.eventType === 'cart_add') segmentMap[seg].cartAdds += row.count;
+    }
+
+    const segments = Object.values(segmentMap).map((s) => ({
+      ...s,
+      ctr: s.views > 0 ? +((s.clicks / s.views) * 100).toFixed(2) : 0,
+      conversionRate: s.views > 0 ? +((s.cartAdds / s.views) * 100).toFixed(2) : 0
+    }));
+
+    return { success: true, segments, period: { startDate, endDate } };
+  } catch (error) {
+    logger.logError('analyzeSegmentPerformance', { shopId, error: error.message });
+    return { success: false, error: error.message, segments: [] };
+  }
+}
+
+/**
+ * Analyze discount elasticity — how does discount % affect acceptance rate?
+ * Groups events by discount bucket (0%, 1-5%, 6-10%, 11-15%, 16-20%, 21%+)
+ * and measures cart_add rate per bucket.
+ */
+export async function analyzeDiscountElasticity(shopId, options = {}) {
+  try {
+    const db = await getDb();
+    const {
+      startDate = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
+      endDate = new Date()
+    } = options;
+
+    const buckets = await db.collection(collections.upsellEvents).aggregate([
+      {
+        $match: {
+          shopId,
+          isUpsellEvent: true,
+          timestamp: { $gte: startDate, $lte: endDate },
+          'metadata.discountPercent': { $exists: true }
+        }
+      },
+      {
+        $bucket: {
+          groupBy: '$metadata.discountPercent',
+          boundaries: [0, 1, 6, 11, 16, 21, 100],
+          default: 'unknown',
+          output: {
+            total: { $sum: 1 },
+            cartAdds: {
+              $sum: { $cond: [{ $eq: ['$eventType', 'cart_add'] }, 1, 0] }
+            },
+            avgDiscount: { $avg: '$metadata.discountPercent' }
+          }
+        }
+      }
+    ]).toArray();
+
+    const bucketLabels = {
+      0: '0%',
+      1: '1–5%',
+      6: '6–10%',
+      11: '11–15%',
+      16: '16–20%',
+      21: '21%+',
+      unknown: 'No discount data'
+    };
+
+    const elasticity = buckets.map((b) => ({
+      bucket: bucketLabels[b._id] || String(b._id),
+      total: b.total,
+      cartAdds: b.cartAdds,
+      conversionRate: b.total > 0 ? +((b.cartAdds / b.total) * 100).toFixed(2) : 0,
+      avgDiscount: b.avgDiscount != null ? +b.avgDiscount.toFixed(1) : null
+    }));
+
+    // Find optimal bucket (highest conversion with at least 5 events)
+    const optimal = [...elasticity]
+      .filter((b) => b.total >= 5)
+      .sort((a, b) => b.conversionRate - a.conversionRate)[0] || null;
+
+    return {
+      success: true,
+      elasticity,
+      optimalBucket: optimal?.bucket || null,
+      optimalConversionRate: optimal?.conversionRate || null,
+      period: { startDate, endDate }
+    };
+  } catch (error) {
+    logger.logError('analyzeDiscountElasticity', { shopId, error: error.message });
+    return { success: false, error: error.message, elasticity: [] };
+  }
+}
+
+/**
+ * Analyze how often guardrails were triggered.
+ * Reads decision logs where guardrails blocked or modified offers.
+ */
+export async function analyzeGuardrailTriggers(shopId, options = {}) {
+  try {
+    const db = await getDb();
+    const {
+      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      endDate = new Date()
+    } = options;
+
+    const triggers = await db.collection(collections.decisionLogs).aggregate([
+      {
+        $match: {
+          shopId,
+          timestamp: { $gte: startDate, $lte: endDate },
+          'guardrailsApplied': { $exists: true, $ne: [] }
+        }
+      },
+      { $unwind: '$guardrailsApplied' },
+      {
+        $group: {
+          _id: '$guardrailsApplied',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]).toArray();
+
+    const totalDecisions = await db.collection(collections.decisionLogs).countDocuments({
+      shopId,
+      timestamp: { $gte: startDate, $lte: endDate }
+    });
+
+    const totalTriggers = triggers.reduce((sum, t) => sum + t.count, 0);
+
+    return {
+      success: true,
+      triggers: triggers.map((t) => ({
+        guardrail: t._id,
+        count: t.count,
+        percentage: totalDecisions > 0 ? +((t.count / totalDecisions) * 100).toFixed(1) : 0
+      })),
+      totalDecisions,
+      totalTriggers,
+      guardrailRate: totalDecisions > 0
+        ? +((totalTriggers / totalDecisions) * 100).toFixed(1)
+        : 0,
+      period: { startDate, endDate }
+    };
+  } catch (error) {
+    logger.logError('analyzeGuardrailTriggers', { shopId, error: error.message });
+    return { success: false, error: error.message, triggers: [] };
+  }
+}
+
+/**
+ * Run segment-aware optimization: tune parameters per segment.
+ * Currently adjusts topOfferType globally based on best-converting segment signals.
+ */
+export async function optimizeForSegments(shopId) {
+  try {
+    const segmentResult = await analyzeSegmentPerformance(shopId);
+    if (!segmentResult.success || segmentResult.segments.length === 0) {
+      return { success: false, reason: 'no_segment_data' };
+    }
+
+    const db = await getDb();
+
+    // Find which segment converts best and capture its profile
+    const best = [...segmentResult.segments].sort(
+      (a, b) => b.conversionRate - a.conversionRate
+    )[0];
+
+    if (!best || best.views < 10) {
+      return { success: false, reason: 'insufficient_segment_data' };
+    }
+
+    // Persist segment insights for the decision engine to reference
+    await db.collection(collections.merchantConfig).updateOne(
+      { shopId },
+      {
+        $set: {
+          'optimization.segmentInsights': {
+            bestSegment: best.segment,
+            bestCtr: best.ctr,
+            bestConversionRate: best.conversionRate,
+            analyzedAt: new Date()
+          }
+        }
+      },
+      { upsert: true }
+    );
+
+    return {
+      success: true,
+      bestSegment: best.segment,
+      conversionRate: best.conversionRate,
+      segments: segmentResult.segments
+    };
+  } catch (error) {
+    logger.logError('optimizeForSegments', { shopId, error: error.message });
+    return { success: false, error: error.message };
+  }
 }

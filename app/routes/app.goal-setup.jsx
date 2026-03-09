@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { useActionData, useLoaderData } from "@remix-run/react";
+import { useActionData, useLoaderData, useFetcher } from "@remix-run/react";
 import { useState, useEffect, useRef } from "react";
 import { authenticate } from "../shopify.server";
 import { getMerchantConfig, saveMerchantConfig } from "../services/merchantConfig.server";
@@ -40,7 +40,7 @@ export const action = async ({ request }) => {
   const goal = formData.get("goal");
   const riskTolerance = formData.get("riskTolerance");
   const maxDiscountCap = parseInt(formData.get("maxDiscountCap") || "20", 10);
-  const inventoryMinThreshold = parseInt(formData.get("inventoryMinThreshold") || "5", 10);
+  const inventoryMinThreshold = parseInt(formData.get("inventoryMinThreshold") || "0", 10);
   const sessionOfferLimit = parseInt(formData.get("sessionOfferLimit") || "3", 10);
   const premiumSkuProtection = formData.get("premiumSkuProtection") === "on";
   const subscriptionProtection = formData.get("subscriptionProtection") === "on";
@@ -221,9 +221,8 @@ const textAreaStyle = {
 export default function GoalSetup() {
   const data = useLoaderData();
   const actionData = useActionData();
-  const [saving, setSaving] = useState(false);
-
-  // ALL form values as controlled state
+  const fetcher = useFetcher();
+  const saving = fetcher.state !== "idle";
   const [selectedGoal, setSelectedGoal] = useState(data.goal);
   const [selectedRisk, setSelectedRisk] = useState(data.riskTolerance);
   const [maxDiscountCap, setMaxDiscountCap] = useState(data.guardrails.maxDiscountCap);
@@ -247,32 +246,23 @@ export default function GoalSetup() {
   const toastTimer = useRef(null);
 
 
-  // Direct fetch POST — bypasses Remix client router entirely.
-  // Guaranteed to show in the server (npm) terminal when the button is clicked.
-  async function handleSave() {
-    const clickId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    console.log("[goal-setup] Save button clicked", { clickId });
-    setSaving(true);
-
-    // Debug ping so the server terminal shows a log even if validation fails.
-    try {
-      const debugBody = new URLSearchParams({
-        __debug: "1",
-        __debugClickId: clickId,
-        __debugReason: "clicked",
-      });
-      fetch(window.location.pathname, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: debugBody.toString(),
-        keepalive: true,
-      })
-        .then(() => console.log("[goal-setup] Debug ping sent", { clickId }))
-        .catch((err) => console.warn("[goal-setup] Debug ping failed", err));
-    } catch (err) {
-      console.warn("[goal-setup] Debug ping error", err);
+  // Watch fetcher result and show toast
+  useEffect(() => {
+    if (fetcher.state !== "idle") return;
+    if (!fetcher.data) return;
+    const result = fetcher.data;
+    if (result?.success === false) {
+      setToast({ message: (result.errors || ["Save failed."]).join(" | "), type: "error" });
+    } else if (result?.success === true) {
+      const now = new Date().toISOString();
+      setLastSavedAt(now);
+      setIsDefault(false);
+      setToast({ message: "Settings saved successfully.", type: "success" });
+      setTimeout(() => setToast(null), 4000);
     }
+  }, [fetcher.state, fetcher.data]);
 
+  function handleSave() {
     const errors = validateForm({
       maxDiscountCap: Number(maxDiscountCap),
       inventoryMinThreshold: Number(inventoryMin),
@@ -280,83 +270,25 @@ export default function GoalSetup() {
     });
 
     if (errors.length > 0) {
-      console.warn("[goal-setup] Validation failed:", errors);
       setClientErrors(errors);
-      setSaving(false);
       return;
     }
     setClientErrors([]);
 
-    const body = new URLSearchParams({
-      __debugClickId: clickId,
-      goal: selectedGoal,
-      riskTolerance: selectedRisk,
-      maxDiscountCap: String(maxDiscountCap),
-      inventoryMinThreshold: String(inventoryMin),
-      sessionOfferLimit: String(sessionLimit),
-      premiumSkuProtection: premiumSkuProtection ? "on" : "off",
-      subscriptionProtection: subscriptionProtection ? "on" : "off",
-      excludedProducts: excludedProducts || "",
-      excludedCollections: excludedCollections || "",
-    });
-
-    console.log("[goal-setup] POSTing to action:", body.toString());
-
-    try {
-      const response = await fetch(window.location.pathname, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: body.toString(),
-      });
-
-      const contentType = response.headers.get("content-type") || "";
-      console.log("[goal-setup] Response status:", response.status, {
-        redirected: response.redirected,
-        url: response.url,
-        contentType,
-      });
-
-      let rawText = "";
-      let result = null;
-      try {
-        rawText = await response.text();
-        if (rawText) {
-          try {
-            result = JSON.parse(rawText);
-          } catch (parseErr) {
-            console.warn("[goal-setup] Non-JSON response:", rawText.slice(0, 500));
-          }
-        }
-      } catch (readErr) {
-        console.warn("[goal-setup] Failed to read response body:", readErr);
-      }
-
-      if (result) {
-        console.log("[goal-setup] Response body:", result);
-      }
-
-      if (!response.ok) {
-        const msg =
-          result?.errors?.join(" | ") ||
-          result?.message ||
-          rawText ||
-          `Request failed (${response.status}).`;
-        setToast({ message: msg, type: "error" });
-      } else if (result?.success === false) {
-        setToast({ message: (result.errors || ["Save failed."]).join(" | "), type: "error" });
-      } else if (result?.success === true || response.ok) {
-        const now = new Date().toISOString();
-        setLastSavedAt(now);
-        setIsDefault(false);
-        setToast({ message: "Settings saved successfully.", type: "success" });
-        setTimeout(() => setToast(null), 4000);
-      }
-    } catch (err) {
-      console.error("[goal-setup] Fetch error:", err);
-      setToast({ message: "Network error — could not reach server.", type: "error" });
-    } finally {
-      setSaving(false);
-    }
+    fetcher.submit(
+      {
+        goal: selectedGoal,
+        riskTolerance: selectedRisk,
+        maxDiscountCap: String(maxDiscountCap),
+        inventoryMinThreshold: String(inventoryMin),
+        sessionOfferLimit: String(sessionLimit),
+        premiumSkuProtection: premiumSkuProtection ? "on" : "off",
+        subscriptionProtection: subscriptionProtection ? "on" : "off",
+        excludedProducts: excludedProducts || "",
+        excludedCollections: excludedCollections || "",
+      },
+      { method: "POST" }
+    );
   }
 
   const activeGoalConfig = GOAL_MAPPING[selectedGoal];
