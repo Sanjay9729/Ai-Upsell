@@ -29,7 +29,7 @@ const UpsellProducts = ({
   useEffect(() => {
     if (upsellProducts.length > 0 && currentProductId && shopDomain) {
       // Track views for all displayed upsell products
-      const upsellProductIds = upsellProducts.map(p => p.id);
+      const upsellProductIds = upsellProducts.map(p => p.legacyResourceId || p.id);
       
       apiService.trackUpsellAnalytics(
         currentProductId,
@@ -69,7 +69,7 @@ const UpsellProducts = ({
     setClickedProducts(newClickedProducts);
 
     // Track clicks (already tracked views from useEffect above)
-    const upsellProductIds = upsellProducts.map(p => p.id);
+    const upsellProductIds = upsellProducts.map(p => p.legacyResourceId || p.id);
     apiService.trackUpsellAnalytics(
       currentProductId,
       shopDomain,
@@ -121,10 +121,10 @@ const UpsellProducts = ({
       <div className="upsell-grid">
         {upsellProducts.map((product) => (
           <UpsellProductCard
-            key={product.id}
+            key={product.legacyResourceId || product.id}
             product={product}
-            isClicked={clickedProducts.has(product.id)}
-            onClick={() => handleProductClick(product.id)}
+            isClicked={clickedProducts.has(product.legacyResourceId || product.id)}
+            onClick={() => handleProductClick(product.legacyResourceId || product.id)}
           />
         ))}
       </div>
