@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { decideCartOffers } from "../../backend/services/decisionEngine.js";
+import { getSafetyMode } from "../../backend/services/safetyMode.js";
 
 /**
  * GET /api/checkout-upsell
@@ -55,6 +56,16 @@ export const loader = async ({ request }) => {
     const limit = Math.min(Number(limitParam) || defaultLimit, 4);
 
     console.log(`🛒 Checkout upsell request — shop: ${shop}, placement: ${placement}, products: ${productIds}`);
+
+    // Block all offers if safety mode is active
+    const safetyActive = await getSafetyMode(shop).catch(() => false);
+    if (safetyActive) {
+      console.warn(`🛑 Safety mode active for ${shop} — blocking checkout/post-purchase offers`);
+      return json(
+        { offers: [], offer: null, count: 0, placement, meta: { reason: 'safety_mode_active', status: 'safety_mode' } },
+        { headers: corsHeaders }
+      );
+    }
 
     const decision = await decideCartOffers({
       shopId: shop,

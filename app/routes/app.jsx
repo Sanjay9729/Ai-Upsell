@@ -40,7 +40,7 @@ export default function App() {
         <s-link href="/app/analytics">Analytics</s-link>
         <s-link href="/app/activity-logs">Activity Logs</s-link>
         <s-link href="/app/intelligence">Merchandising Intelligence</s-link>
-        <s-link href="/app/optimization">Learning & Optimization</s-link>
+        <s-link href="/app/optimization">Learning & Optimization & Bundles</s-link>
         <s-link href="/app/safety">Safety Mode</s-link>
       </s-app-nav>
       <Outlet />

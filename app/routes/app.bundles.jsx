@@ -102,11 +102,21 @@ export default function BundlesPage() {
   const { bundles, shopId } = useLoaderData();
   const fetcher = useFetcher();
   const [showCreate, setShowCreate] = useState(false);
+  const [expandedBundles, setExpandedBundles] = useState(new Set());
   const [formData, setFormData] = useState({
     name: '',
     productIds: [],
     discountPercent: 10
   });
+
+  const toggleDetails = (bundleId) => {
+    setExpandedBundles(prev => {
+      const next = new Set(prev);
+      if (next.has(bundleId)) next.delete(bundleId);
+      else next.add(bundleId);
+      return next;
+    });
+  };
 
   const handleCreateBundle = () => {
     fetcher.submit(
@@ -294,6 +304,27 @@ export default function BundlesPage() {
               </div>
             </div>
 
+            {expandedBundles.has(bundle._id) && (
+              <div style={{
+                marginBottom: '12px',
+                padding: '12px',
+                background: '#f8f9fa',
+                borderRadius: '6px',
+                border: '1px solid #e9ecef',
+                fontSize: '13px'
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: '8px', color: '#343a40' }}>Bundle Details</div>
+                <div style={{ display: 'grid', gap: '6px', color: '#495057' }}>
+                  <div><span style={{ color: '#6c757d' }}>Type:</span> {bundle.bundleType === 'auto' ? 'Auto-generated' : 'Merchant-created'}</div>
+                  <div><span style={{ color: '#6c757d' }}>Confidence:</span> {bundle.confidence != null ? `${(bundle.confidence * 100).toFixed(0)}%` : '—'}</div>
+                  <div><span style={{ color: '#6c757d' }}>Products ({bundle.productIds?.length || 0}):</span> {bundle.displayNames.join(', ')}</div>
+                  <div><span style={{ color: '#6c757d' }}>Click-through:</span> {bundle.analytics?.stats?.view > 0 ? `${((bundle.analytics.stats.click || 0) / bundle.analytics.stats.view * 100).toFixed(1)}%` : '—'}</div>
+                  <div><span style={{ color: '#6c757d' }}>Conversion:</span> {bundle.analytics?.stats?.view > 0 ? `${((bundle.analytics.stats.cart_add || 0) / bundle.analytics.stats.view * 100).toFixed(1)}%` : '—'}</div>
+                  <div><span style={{ color: '#6c757d' }}>Status:</span> <span style={{ fontWeight: 600, color: bundle.status === 'paused' ? '#dc3545' : '#28a745' }}>{bundle.status}</span></div>
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 onClick={() => handlePauseBundle(bundle._id, bundle.status === 'paused')}
@@ -312,10 +343,11 @@ export default function BundlesPage() {
                 {bundle.status === 'paused' ? '▶ Resume' : '⏸ Pause'}
               </button>
               <button
+                onClick={() => toggleDetails(bundle._id)}
                 style={{
                   flex: 1,
                   padding: '8px 12px',
-                  backgroundColor: '#6c757d',
+                  backgroundColor: expandedBundles.has(bundle._id) ? '#343a40' : '#6c757d',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '4px',
@@ -324,7 +356,7 @@ export default function BundlesPage() {
                   cursor: 'pointer'
                 }}
               >
-                📊 Details
+                {expandedBundles.has(bundle._id) ? '▲ Hide Details' : '📊 Details'}
               </button>
             </div>
           </div>

@@ -279,6 +279,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
       }
     });
 
@@ -293,6 +294,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
       }
     });
   }

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { authenticate } from "../shopify.server";
 import { decideCartOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
+import { getSafetyMode } from "../../backend/services/safetyMode.js";
 
 /**
  * Fetch live inventory using authenticated admin client from appProxy
@@ -186,6 +187,26 @@ export const loader = async ({ request }) => {
 
     console.log(`🛒 Cart-based recommendations for ${productIds.length} products`);
 
+    // Block all offers if safety mode is active
+    const safetyActive = await getSafetyMode(shop).catch(() => false);
+    if (safetyActive) {
+      console.warn(`🛑 Safety mode active for ${shop} — blocking cart offers`);
+      return json({
+        success: true,
+        cartProductIds: productIds,
+        shop,
+        recommendations: [],
+        count: 0,
+        decision: { reason: 'safety_mode_active', status: 'safety_mode' }
+      }, {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        }
+      });
+    }
+
     // Authenticate via app proxy to get admin client
     let adminClient = null;
     try {
@@ -281,6 +302,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
       }
     });
 
@@ -295,6 +317,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
       }
     });
   }

@@ -97,12 +97,55 @@ export async function optimizeForShop(shopId, options = {}) {
       count: 0
     }));
 
-    // 6. Run segment-aware optimization in parallel
-    const [segmentResult, elasticityResult, guardrailResult] = await Promise.all([
+    // 6. Run segment-aware optimization in parallel (+ confidence thresholds + placement perf)
+    const [segmentResult, elasticityResult, guardrailResult, thresholdResult, placementResult] = await Promise.all([
       optimizeForSegments(shopId).catch(() => ({ success: false })),
       analyzeDiscountElasticity(shopId, { startDate: since }).catch(() => ({ success: false })),
-      analyzeGuardrailTriggers(shopId, { startDate: since }).catch(() => ({ success: false }))
+      analyzeGuardrailTriggers(shopId, { startDate: since }).catch(() => ({ success: false })),
+      recommendConfidenceThresholds(shopId, { startDate: since }).catch(() => ({ success: false })),
+      analyzePerformanceByOfferType(shopId, { startDate: since }).catch(() => ({ success: false }))
     ]);
+
+    // Additional tuning from full-cycle analysis: session offer limit, confidence threshold, top placement
+    const secondaryUpdates = { guardrails: {}, optimization: {} };
+    let secondaryUpdatesMade = 0;
+
+    if (guardrailResult.success && guardrailResult.guardrailRate > 30) {
+      const currentLimit = currentConfig.guardrails?.sessionOfferLimit ?? 3;
+      const newLimit = Math.max(1, currentLimit - 1);
+      if (newLimit < currentLimit) {
+        secondaryUpdates.guardrails.sessionOfferLimit = newLimit;
+        secondaryUpdatesMade += 1;
+      }
+    }
+
+    if (thresholdResult.success) {
+      const recommended = thresholdResult.analysis?.recommendedThreshold;
+      const currentThreshold = currentConfig.optimization?.confidenceThreshold ?? 0.5;
+      if (recommended != null && Math.abs(recommended - currentThreshold) >= 0.1) {
+        secondaryUpdates.optimization.confidenceThreshold = recommended;
+        secondaryUpdatesMade += 1;
+      }
+    }
+
+    if (placementResult.success) {
+      const placements = (placementResult.analysis?.byPlacement || [])
+        .filter(p => p.cartAdds >= 5)
+        .sort((a, b) => b.conversionRate - a.conversionRate);
+      const bestPlacement = placements[0];
+      if (bestPlacement?._id) {
+        secondaryUpdates.optimization.topPlacement = bestPlacement._id;
+        secondaryUpdatesMade += 1;
+      }
+    }
+
+    if (secondaryUpdatesMade > 0) {
+      await updateMerchantConfig(shopId, secondaryUpdates);
+      updatesMade += secondaryUpdatesMade;
+      // Merge secondary updates into appliedUpdates for logging
+      Object.assign(updates.guardrails, secondaryUpdates.guardrails);
+      Object.assign(updates.optimization, secondaryUpdates.optimization);
+    }
 
     // 7. Log optimization result
     const result = {
@@ -121,7 +164,9 @@ export async function optimizeForShop(shopId, options = {}) {
           conversionRate: segmentResult.conversionRate
         } : null,
         discountOptimal: elasticityResult.success ? elasticityResult.optimalBucket : null,
-        guardrailRate: guardrailResult.success ? guardrailResult.guardrailRate : null
+        guardrailRate: guardrailResult.success ? guardrailResult.guardrailRate : null,
+        confidenceThreshold: thresholdResult.success ? thresholdResult.analysis?.recommendedThreshold : null,
+        topPlacement: placementResult.success ? (placementResult.analysis?.byPlacement || []).filter(p => p.cartAdds >= 5).sort((a, b) => b.conversionRate - a.conversionRate)[0]?._id : null
       }
     };
 
