@@ -50,8 +50,29 @@ export async function processPurchaseEvent(shopId, orderPayload) {
 
     for (const lineItem of lineItems) {
       // Support both camelCase (PostPurchase extension) and snake_case (Shopify webhooks)
-      const productId = String(lineItem.productId || lineItem.product_id || '');
-      const variantId = String(lineItem.variantId || lineItem.variant_id || '');
+      const rawProductId = lineItem.productId || lineItem.product_id || '';
+      const rawVariantId = lineItem.variantId || lineItem.variant_id || '';
+
+      // Normalize product/variant ids to handle both numeric IDs and GraphQL GIDs
+      const normalizeId = (id, type, resource = 'Product') => {
+        if (!id) return type === 'array' ? [] : '';
+        const str = String(id);
+        // If already a GID, return both gid and legacy forms
+        if (str.startsWith('gid://')) {
+          const legacy = str.split('/').pop();
+          return type === 'array'
+            ? [str, legacy]
+            : legacy;
+        }
+        // If numeric/legacy, also generate the GID form for matching
+        const gid = `gid://shopify/${resource}/${str}`;
+        return type === 'array' ? [str, gid] : str;
+      };
+
+      const productId = normalizeId(rawProductId, 'single', 'Product');
+      const productIdVariants = normalizeId(rawProductId, 'array', 'Product');
+      const variantId = normalizeId(rawVariantId, 'single', 'ProductVariant');
+      const variantIdVariants = normalizeId(rawVariantId, 'array', 'ProductVariant');
       const title = lineItem.title || '';
       const quantity = Number(lineItem.quantity || 1);
       const price = parseFloat(lineItem.price || 0);
@@ -59,13 +80,16 @@ export async function processPurchaseEvent(shopId, orderPayload) {
 
       console.log(`[processPurchaseEvent] Checking lineItem product_id="${productId}" title="${title}"`);
 
-      // Find matching upsell event
+      // Find matching upsell event (accept both legacy id and GID)
       const upsellEvent = await db
         .collection(collections.upsellEvents)
         .findOne(
           {
             shopId,
-            upsellProductId: productId,
+            $or: [
+              { upsellProductId: { $in: productIdVariants } },
+              { variantId: { $in: variantIdVariants.filter(Boolean) } }
+            ],
             eventType: 'cart_add',
             timestamp: { $gte: sixHoursAgo }
           },

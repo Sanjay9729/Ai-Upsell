@@ -9,6 +9,7 @@ import { getAllProducts, syncProductsToMongoDB } from './backend/database/collec
 import { connectToMongoDB } from './backend/database/connection.js';
 import { initializeCollections } from './backend/database/mongodb.js';
 import analyticsRouter from './backend/routes/analytics.js';
+import { processPurchaseEvent } from './backend/services/orderProcessingService.js';
 import { startProductReconciliationJob } from './backend/jobs/productReconciliation.js';
 
 // Load environment variables
@@ -73,6 +74,32 @@ app.get('/api/upsell-events', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Fallback webhook (bypasses Remix build) for local testing
+app.post('/webhooks/orders/created', async (req, res) => {
+  try {
+    const { shopId, orderId, totalPrice, lineItems, customerId, createdAt } = req.body || {};
+
+    if (!shopId || !orderId || !Array.isArray(lineItems) || lineItems.length === 0) {
+      return res.status(400).json({ error: 'Missing required fields: shopId, orderId, lineItems' });
+    }
+
+    const orderPayload = {
+      id: orderId,
+      total_price: totalPrice,
+      line_items: lineItems,
+      customer: customerId ? { id: customerId } : null,
+      created_at: createdAt || new Date().toISOString()
+    };
+
+    const result = await processPurchaseEvent(shopId, orderPayload);
+
+    return res.json({ success: true, upsellsAttributed: result.upsellsAttributed });
+  } catch (error) {
+    console.error('[express/webhooks/orders/created] Error:', error);
+    return res.status(500).json({ error: error.message });
   }
 });
 

@@ -43,6 +43,7 @@ class ApiService {
           node(id: $id) {
             ... on Product {
               id
+              legacyResourceId
               title
               description
               handle
@@ -83,6 +84,7 @@ class ApiService {
                 edges {
                   node {
                     id
+                    legacyResourceId
                     availableForSale
                     quantityAvailable
                     price {
@@ -124,9 +126,14 @@ class ApiService {
       }
 
       const product = data.data.node;
+      const legacyProductId = product?.legacyResourceId?.toString() || productId;
+      const primaryVariant = product?.variants?.edges?.[0]?.node || null;
+      const legacyVariantId = primaryVariant?.legacyResourceId?.toString() || null;
       
       return {
-        id: product.id,
+        id: legacyProductId,
+        legacyResourceId: legacyProductId,
+        gid: product.id,
         title: product.title,
         description: product.description,
         handle: product.handle,
@@ -144,7 +151,8 @@ class ApiService {
           altText: edge.node.altText
         })) || [],
         url: `https://${shopDomain}/products/${product.handle}`,
-        variant: product.variants?.edges?.[0]?.node || null
+        variantId: legacyVariantId,
+        variantGid: primaryVariant?.id || null
       };
     } catch (error) {
       console.error('Error fetching Shopify product details:', error);
