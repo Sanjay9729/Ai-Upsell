@@ -658,15 +658,29 @@
       var userId = window.__AI_UPSELL_USER_ID__ || '';
       var apiUrl = '/apps/ai-upsell?id=gid://shopify/Product/' + productId + (userId ? '&userId=' + encodeURIComponent(userId) : '');
       var fetchPromise = window.__AI_UPSELL_PREFETCH__;
-      if (fetchPromise) window.__AI_UPSELL_PREFETCH__ = null;
-      else fetchPromise = fetch(apiUrl);
+      if (fetchPromise) {
+        window.__AI_UPSELL_PREFETCH__ = null;
+        console.log('[AI Upsell] Using prefetch promise');
+      } else {
+        console.log('[AI Upsell] No prefetch, fetching fresh:', apiUrl);
+        fetchPromise = fetch(apiUrl);
+      }
       var response = await fetchPromise;
-      console.log('[AI Upsell] API response status:', response.status, response.url);
+      console.log('[AI Upsell] API response status:', response.status);
       if (!response.ok) { console.error('[AI Upsell] API returned non-ok:', response.status); return null; }
-      var data = await response.json();
-      console.log('[AI Upsell] API data:', JSON.stringify(data).substring(0, 500));
+      // Clone response in case body was already consumed
+      var data;
+      try {
+        data = await response.json();
+      } catch (jsonErr) {
+        console.warn('[AI Upsell] Prefetch body already consumed, fetching fresh');
+        var freshRes = await fetch(apiUrl);
+        if (!freshRes.ok) return null;
+        data = await freshRes.json();
+      }
+      console.log('[AI Upsell] API data: success=' + data.success + ' count=' + (data.recommendations ? data.recommendations.length : 0));
       if (!data.success || !data.recommendations || data.recommendations.length === 0) {
-        console.warn('[AI Upsell] No recommendations in response. success:', data.success, 'count:', data.recommendations?.length);
+        console.warn('[AI Upsell] No recommendations in response');
         return null;
       }
       return data.recommendations.slice(0, maxProducts);
@@ -803,16 +817,21 @@
         var products = null;
         try { products = await fetchAiRecommendations(currentProductId, MAX_PRODUCTS); } catch (fetchErr) { console.error('[AI Upsell] fetchAiRecommendations error:', fetchErr); }
         if (!products) { try { products = await fetchShopifyRecommendations(currentProductId, MAX_PRODUCTS); } catch (fallbackErr) { console.error('[AI Upsell] fetchShopifyRecommendations error:', fallbackErr); } }
-        console.log('[AI Upsell] Products fetched:', products ? products.length : 0, products);
+        console.log('[AI Upsell] Products fetched:', products ? products.length : 0);
+        if (products && products.length > 0) { console.log('[AI Upsell] First product:', JSON.stringify(products[0]).substring(0, 300)); }
         if (!products || products.length === 0) { clearLoadingFallback(widget); widget.__aiUpsellFetchInFlight = false; widget.style.display = 'none'; return; }
         var productMap = new Map(products.map(function (p) { return [String(p.id), p]; }));
         if (secondaryAllProducts.length === 0) secondaryAllProducts = products;
         var html = '<div class="ai-upsell-header"><h2 class="ai-upsell-title">' + (_C.heading || 'Recommended for You') + '</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + MAX_PRODUCTS + '">';
-        products.forEach(function (p) { html += buildCardHTML(p); });
+        products.forEach(function (p, idx) {
+          try { html += buildCardHTML(p); } catch (cardErr) { console.error('[AI Upsell] buildCardHTML error for product ' + idx + ':', cardErr); }
+        });
         html += '</div>';
+        console.log('[AI Upsell] HTML built, length=' + html.length + ', rendering now...');
         clearLoadingFallback(widget);
         widget.__aiUpsellFetched = true; widget.__aiUpsellFetchInFlight = false;
         loadingEl.style.display = 'none'; contentEl.innerHTML = html; contentEl.style.display = 'block';
+        console.log('[AI Upsell] ✅ Products rendered successfully');
         attachQtyListeners(contentEl); attachVariantListeners(contentEl);
         trackViewEvents(products, { location: 'product_detail_page', sourceProductId: PRODUCT_ID || null, sourceProductName: _C.productTitle || '' });
 
