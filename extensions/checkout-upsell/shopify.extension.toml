@@ -14,5 +14,5 @@ type = "ui_extension"
   module = "./src/PostPurchase.jsx"
   target = "purchase.thank-you.block.render"
 
-[capabilities]
+[extensions.capabilities]
 network_access = true
