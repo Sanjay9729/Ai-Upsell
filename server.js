@@ -9,6 +9,7 @@ import { getAllProducts, syncProductsToMongoDB } from './backend/database/collec
 import { connectToMongoDB } from './backend/database/connection.js';
 import { initializeCollections } from './backend/database/mongodb.js';
 import analyticsRouter from './backend/routes/analytics.js';
+import { processPurchaseEvent } from './backend/services/orderProcessingService.js';
 import { startProductReconciliationJob } from './backend/jobs/productReconciliation.js';
 
 // Load environment variables
@@ -73,6 +74,67 @@ app.get('/api/upsell-events', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Fallback webhook (bypasses Remix build) for PostPurchase extension + local testing
+app.post('/webhooks/orders/created', async (req, res) => {
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('📨 [EXPRESS /webhooks/orders/created] REQUEST RECEIVED');
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('📨 [EXPRESS] Request body:', JSON.stringify(req.body, null, 2));
+
+  try {
+    const { shopId, orderId, totalPrice, lineItems, customerId, createdAt } = req.body || {};
+
+    console.log('📨 [EXPRESS] Parsed fields:', { shopId, orderId, totalPrice, lineItemCount: lineItems?.length, customerId });
+
+    if (!shopId || !orderId || !Array.isArray(lineItems) || lineItems.length === 0) {
+      console.log('❌ [EXPRESS] VALIDATION FAILED:', {
+        hasShopId: !!shopId,
+        hasOrderId: !!orderId,
+        isLineItemsArray: Array.isArray(lineItems),
+        lineItemsLength: lineItems?.length
+      });
+      return res.status(400).json({ error: 'Missing required fields: shopId, orderId, lineItems' });
+    }
+
+    // Normalize line items — extension sends camelCase (productId, variantId),
+    // but processPurchaseEvent supports both camelCase and snake_case.
+    const normalizedLineItems = lineItems.map((item, idx) => {
+      const normalized = {
+        product_id: item.product_id || item.productId || '',
+        variant_id: item.variant_id || item.variantId || '',
+        productId: item.productId || item.product_id || '',
+        variantId: item.variantId || item.variant_id || '',
+        title: item.title || '',
+        price: String(item.price || '0'),
+        quantity: Number(item.quantity || 1),
+      };
+      console.log(`📨 [EXPRESS] Normalized lineItem[${idx}]:`, normalized);
+      return normalized;
+    });
+
+    const orderPayload = {
+      id: orderId,
+      total_price: totalPrice,
+      line_items: normalizedLineItems,
+      customer: customerId ? { id: customerId } : null,
+      created_at: createdAt || new Date().toISOString()
+    };
+
+    console.log('📨 [EXPRESS] Calling processPurchaseEvent...');
+    const result = await processPurchaseEvent(shopId, orderPayload);
+
+    console.log('✅ [EXPRESS] Result:', { upsellsAttributed: result.upsellsAttributed });
+    console.log('═══════════════════════════════════════════════════════════');
+
+    return res.json({ success: true, upsellsAttributed: result.upsellsAttributed });
+  } catch (error) {
+    console.error('❌ [EXPRESS /webhooks/orders/created] ERROR:', error.message);
+    console.error('❌ [EXPRESS] Stack:', error.stack);
+    console.log('═══════════════════════════════════════════════════════════');
+    return res.status(500).json({ error: error.message });
   }
 });
 
