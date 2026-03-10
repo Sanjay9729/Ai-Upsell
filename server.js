@@ -11,6 +11,7 @@ import { initializeCollections } from './backend/database/mongodb.js';
 import analyticsRouter from './backend/routes/analytics.js';
 import { processPurchaseEvent } from './backend/services/orderProcessingService.js';
 import { startProductReconciliationJob } from './backend/jobs/productReconciliation.js';
+import { getMerchantConfig } from './backend/services/merchantConfig.js';
 
 // Load environment variables
 dotenv.config();
