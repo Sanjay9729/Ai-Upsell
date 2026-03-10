@@ -34,6 +34,48 @@ export async function processPurchaseEvent(shopId, orderPayload) {
       return { upsellsAttributed: 0, purchases: [] };
     }
 
+    console.log('───────────────────────────────────────────────────────────');
+    console.log(`🔄 [processPurchaseEvent] shopId=${shopId} orderId=${orderId} orderValue=${orderValue} lineItems=${lineItems.length}`);
+
+    // Log each line item for debugging
+    lineItems.forEach((li, idx) => {
+      console.log(`🔄 [processPurchaseEvent] LineItem[${idx}]:`, {
+        productId: li.productId || li.product_id || '(missing)',
+        variantId: li.variantId || li.variant_id || '(missing)',
+        title: li.title || '(no title)',
+        price: li.price,
+        quantity: li.quantity
+      });
+    });
+
+    // Always store the raw order event so we have a record of every purchase
+    try {
+      const storeResult = await db.collection(collections.purchaseEvents).updateOne(
+        { shopId, orderId: String(orderId), eventType: 'order_received' },
+        {
+          $setOnInsert: {
+            eventType: 'order_received',
+            shopId,
+            orderId: String(orderId),
+            orderValue,
+            lineItemCount: lineItems.length,
+            lineItems: lineItems.map(li => ({
+              productId: li.productId || li.product_id || '',
+              variantId: li.variantId || li.variant_id || '',
+              title: li.title || '',
+              price: parseFloat(li.price || 0),
+              quantity: Number(li.quantity || 1),
+            })),
+            timestamp: new Date(),
+          }
+        },
+        { upsert: true }
+      );
+      console.log(`📝 [processPurchaseEvent] Order ${orderId} stored in DB — upserted=${storeResult.upsertedCount > 0}, matched=${storeResult.matchedCount}`);
+    } catch (storeErr) {
+      console.error(`⚠️ [processPurchaseEvent] Failed to store raw order ${orderId}:`, storeErr.message);
+    }
+
     // Check each line item against upsell events from the last 6 hours
     const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
     const purchases = [];

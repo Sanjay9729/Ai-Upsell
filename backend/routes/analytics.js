@@ -57,7 +57,7 @@ router.post('/track', async (req, res) => {
       });
     }
 
-    const validLocations = ['product_detail_page', 'cart_page'];
+    const validLocations = ['product_detail_page', 'cart_page', 'cart_page_secondary', 'checkout', 'post_purchase'];
     if (!validLocations.includes(metadata.location)) {
       return res.status(400).json({
         success: false,

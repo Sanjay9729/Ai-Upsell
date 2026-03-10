@@ -175,6 +175,30 @@ export default extension('purchase.thank-you.block.render', async (root, api) =>
             added = true;
             btn.updateProps({ loading: false, disabled: true });
             btn.replaceChildren('Added ✓');
+
+            // Track cart_add event for purchase attribution
+            fetch(`${BACKEND_URL}/api/proxy/analytics/track`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                eventType: 'cart_add',
+                shopId: shop,
+                sourceProductId: productIds[0] || null,
+                sourceProductName: '',
+                upsellProductId: String(offer.id),
+                upsellProductName: offer.title || '',
+                variantId: String(offer.variantId),
+                recommendationType: offer.type || 'complementary',
+                confidence: offer.confidence || 0,
+                quantity: 1,
+                isUpsellEvent: true,
+                metadata: {
+                  location: 'post_purchase',
+                  offerType: offer.offerType || 'addon_upsell',
+                  discountPercent: parseFloat(offer.discountPercent) || 0,
+                },
+              }),
+            }).catch(() => {});
           } else {
             btn.updateProps({ loading: false });
           }

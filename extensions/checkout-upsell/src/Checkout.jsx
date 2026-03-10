@@ -109,6 +109,30 @@ export default extension('purchase.checkout.block.render', async (root, api) => 
           added = true;
           btn.updateProps({ loading: false, disabled: true });
           btn.replaceChildren('Added to Order ✓');
+
+          // Track cart_add event so processPurchaseEvent can attribute this upsell
+          fetch(`${BACKEND_URL}/api/proxy/analytics/track`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              eventType: 'cart_add',
+              shopId: shop,
+              sourceProductId: productIds[0] || null,
+              sourceProductName: '',
+              upsellProductId: String(offer.id),
+              upsellProductName: offer.title || '',
+              variantId: String(offer.variantId),
+              recommendationType: offer.type || 'complementary',
+              confidence: offer.confidence || 0,
+              quantity: 1,
+              isUpsellEvent: true,
+              metadata: {
+                location: 'checkout',
+                offerType: offer.offerType || 'addon_upsell',
+                discountPercent: discountPct,
+              },
+            }),
+          }).catch(() => {});
         } else {
           btn.updateProps({ loading: false });
         }

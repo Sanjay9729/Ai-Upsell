@@ -661,9 +661,14 @@
       if (fetchPromise) window.__AI_UPSELL_PREFETCH__ = null;
       else fetchPromise = fetch(apiUrl);
       var response = await fetchPromise;
-      if (!response.ok) return null;
+      console.log('[AI Upsell] API response status:', response.status, response.url);
+      if (!response.ok) { console.error('[AI Upsell] API returned non-ok:', response.status); return null; }
       var data = await response.json();
-      if (!data.success || !data.recommendations || data.recommendations.length === 0) return null;
+      console.log('[AI Upsell] API data:', JSON.stringify(data).substring(0, 500));
+      if (!data.success || !data.recommendations || data.recommendations.length === 0) {
+        console.warn('[AI Upsell] No recommendations in response. success:', data.success, 'count:', data.recommendations?.length);
+        return null;
+      }
       return data.recommendations.slice(0, maxProducts);
     }
 
@@ -794,9 +799,11 @@
       if (!currentProductId) { startLoadingFallback(widget, loadingEl, 6000); return; }
       try {
         widget.__aiUpsellFetchInFlight = true;
-        startLoadingFallback(widget, loadingEl, 6000);
-        var products = await fetchAiRecommendations(currentProductId, MAX_PRODUCTS);
-        if (!products) products = await fetchShopifyRecommendations(currentProductId, MAX_PRODUCTS);
+        startLoadingFallback(widget, loadingEl, 15000);
+        var products = null;
+        try { products = await fetchAiRecommendations(currentProductId, MAX_PRODUCTS); } catch (fetchErr) { console.error('[AI Upsell] fetchAiRecommendations error:', fetchErr); }
+        if (!products) { try { products = await fetchShopifyRecommendations(currentProductId, MAX_PRODUCTS); } catch (fallbackErr) { console.error('[AI Upsell] fetchShopifyRecommendations error:', fallbackErr); } }
+        console.log('[AI Upsell] Products fetched:', products ? products.length : 0, products);
         if (!products || products.length === 0) { clearLoadingFallback(widget); widget.__aiUpsellFetchInFlight = false; widget.style.display = 'none'; return; }
         var productMap = new Map(products.map(function (p) { return [String(p.id), p]; }));
         if (secondaryAllProducts.length === 0) secondaryAllProducts = products;
@@ -858,7 +865,7 @@
             } catch (_) { button.textContent = 'Failed'; button.style.background = '#d72c0d'; setTimeout(function () { button.textContent = originalText; button.disabled = false; button.style.background = ''; }, 2000); }
           });
         });
-      } catch (_) { clearLoadingFallback(widget); widget.__aiUpsellFetchInFlight = false; widget.style.display = 'none'; }
+      } catch (renderErr) { console.error('[AI Upsell] loadAIUpsells render error:', renderErr); clearLoadingFallback(widget); widget.__aiUpsellFetchInFlight = false; widget.style.display = 'none'; }
     }
 
     async function loadCartUpsells() {
