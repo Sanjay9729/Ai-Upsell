@@ -780,9 +780,8 @@
           var sellingPlanId = normalizeSellingPlanId((productCard.dataset && productCard.dataset.sellingPlanId) || productData.sellingPlanIdNumeric || productData.sellingPlanId);
           var effectiveDiscount;
           if (offerType === 'volume_discount') {
-            var cartRes = await fetch('/cart.js'); var cartData = await cartRes.json();
-            var cartProductIds = new Set((cartData.items || []).map(function (item) { return item.product_id; }));
-            effectiveDiscount = getVolumeDiscountPercent(productData, cartProductIds.size + (cartProductIds.has(Number(upsellProductId)) ? 0 : 1));
+            var tiers = Array.isArray(productData.tiers) ? productData.tiers : [];
+            effectiveDiscount = tiers.length > 0 ? (Number(tiers[0].discountPercent) || 0) : (parseFloat(productData.discountPercent) || 0);
           } else { effectiveDiscount = parseFloat(productData.discountPercent) || 0; }
           try {
             button.disabled = true; button.textContent = 'Adding...';
@@ -855,9 +854,8 @@
             var sellingPlanId = normalizeSellingPlanId((productCard.dataset && productCard.dataset.sellingPlanId) || productData.sellingPlanIdNumeric || productData.sellingPlanId);
             var effectiveDiscount;
             if (offerType === 'volume_discount') {
-              var cartRes = await fetch('/cart.js'); var cartData = await cartRes.json();
-              var cartProductIds = new Set((cartData.items || []).map(function (item) { return item.product_id; }));
-              effectiveDiscount = getVolumeDiscountPercent(productData, cartProductIds.size + (cartProductIds.has(Number(upsellProductId)) ? 0 : 1));
+              var tiers = Array.isArray(productData.tiers) ? productData.tiers : [];
+              effectiveDiscount = tiers.length > 0 ? (Number(tiers[0].discountPercent) || 0) : (parseFloat(productData.discountPercent) || 0);
             } else { effectiveDiscount = parseFloat(discountPercent) || parseFloat(productData.discountPercent) || 0; }
             try {
               button.disabled = true; button.textContent = 'Adding...';
@@ -932,9 +930,8 @@
             var sellingPlanId = normalizeSellingPlanId((productCard.dataset && productCard.dataset.sellingPlanId) || productData.sellingPlanIdNumeric || productData.sellingPlanId);
             var effectiveDiscount;
             if (offerType === 'volume_discount') {
-              var cartRes = await fetch('/cart.js'); var cartData = await cartRes.json();
-              var cartProductIds = new Set((cartData.items || []).map(function (item) { return item.product_id; }));
-              effectiveDiscount = getVolumeDiscountPercent(productData, cartProductIds.size + (cartProductIds.has(Number(upsellProductId)) ? 0 : 1));
+              var tiers = Array.isArray(productData.tiers) ? productData.tiers : [];
+              effectiveDiscount = tiers.length > 0 ? (Number(tiers[0].discountPercent) || 0) : (parseFloat(productData.discountPercent) || 0);
             } else { effectiveDiscount = parseFloat(productData.discountPercent) || 0; }
             try {
               button.disabled = true; button.textContent = 'Adding...';
