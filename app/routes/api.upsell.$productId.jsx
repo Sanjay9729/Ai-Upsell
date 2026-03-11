@@ -36,7 +36,7 @@ export const loader = async ({ params, request }) => {
     const formattedRecommendations = recommendations.map(product => {
       const offerType = product.offerType || "addon_upsell";
       const baseDiscountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
-      const discountPercent = offerType === 'volume_discount' ? 0 : baseDiscountPercent;
+      const discountPercent = (offerType === 'volume_discount' || offerType === 'subscription_upgrade') ? 0 : baseDiscountPercent;
       return ({
       id: product.productId,
       title: product.title,

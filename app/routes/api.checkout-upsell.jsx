@@ -80,7 +80,7 @@ export const loader = async ({ request }) => {
       const price = String(product.aiData?.price || product.variants?.[0]?.price || "0");
       const offerType = product.offerType || "addon_upsell";
       const baseDiscountPercent = product.discountPercent ?? 0;
-      const discountPercent = offerType === 'volume_discount' ? 0 : baseDiscountPercent;
+      const discountPercent = (offerType === 'volume_discount' || offerType === 'subscription_upgrade') ? 0 : baseDiscountPercent;
       const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
       const sellingPlanIdNumeric = product.sellingPlanIdNumeric || (sellingPlanId ? String(sellingPlanId).match(/\/(\d+)$/)?.[1] : null);
       return {
