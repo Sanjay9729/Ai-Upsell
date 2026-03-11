@@ -59,6 +59,7 @@ export const action = async ({ request }) => {
     await updateMerchantConfig(session.shop, {
       goal: goal || 'revenue_per_visitor',
       riskTolerance: riskTolerance || 'moderate',
+      optimization: { topOfferType: null },
       updatedAt: new Date()
     });
 

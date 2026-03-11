@@ -8,6 +8,8 @@ import {
 import { MongoDBSessionStorage } from "@shopify/shopify-app-session-storage-mongodb";
 
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-upsell';
+const enableProtectedOrdersWebhook =
+  (process.env.ENABLE_PROTECTED_ORDERS_WEBHOOK || '').toLowerCase() === 'true';
 
 async function registerOrderStatusScriptTag(admin, shop) {
   if (!admin?.rest) return; // REST client not available
@@ -50,48 +52,59 @@ const shopify = shopifyApp({
       await registerOrderStatusScriptTag(admin, session.shop);
     }
   },
-  webhooks: {
-    APP_UNINSTALLED: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/app/uninstalled",
-    },
-    APP_SCOPES_UPDATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/app/scopes_update",
-    },
-    PRODUCTS_CREATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/products/create",
-    },
-    PRODUCTS_UPDATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/products/update",
-    },
-    PRODUCTS_DELETE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/products/delete",
-    },
-    ORDERS_PAID: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/orders/paid",
-    },
-    INVENTORY_LEVELS_UPDATE: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/inventory_levels/update",
-    },
-    CUSTOMERS_DATA_REQUEST: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/compliance",
-    },
-    CUSTOMERS_REDACT: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/compliance",
-    },
-    SHOP_REDACT: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/compliance",
-    },
-  },
+  webhooks: (() => {
+    const base = {
+      APP_UNINSTALLED: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/app/uninstalled",
+      },
+      APP_SCOPES_UPDATE: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/app/scopes_update",
+      },
+      PRODUCTS_CREATE: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/products/create",
+      },
+      PRODUCTS_UPDATE: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/products/update",
+      },
+      PRODUCTS_DELETE: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/products/delete",
+      },
+      INVENTORY_LEVELS_UPDATE: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/inventory_levels/update",
+      },
+      CUSTOMERS_DATA_REQUEST: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/compliance",
+      },
+      CUSTOMERS_REDACT: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/compliance",
+      },
+      SHOP_REDACT: {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/compliance",
+      },
+    };
+
+    if (enableProtectedOrdersWebhook) {
+      base.ORDERS_PAID = {
+        deliveryMethod: DeliveryMethod.Http,
+        callbackUrl: "/webhooks/orders/paid",
+      };
+    } else {
+      console.warn(
+        "[Webhooks] Skipping protected webhook ORDERS_PAID (ENABLE_PROTECTED_ORDERS_WEBHOOK != true)"
+      );
+    }
+
+    return base;
+  })(),
   future: {
     expiringOfflineAccessTokens: true,
     unstable_newEmbeddedAuthStrategy: true,

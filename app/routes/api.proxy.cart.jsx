@@ -260,7 +260,7 @@ export const loader = async ({ request }) => {
       const offerType = product.offerType || "addon_upsell";
       const baseDiscountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
       const offerTypeExtras = getOfferTypeExtras(offerType, baseDiscountPercent);
-      const discountPercent = offerType === 'volume_discount' ? 0 : baseDiscountPercent;
+      const discountPercent = (offerType === 'volume_discount' || offerType === 'subscription_upgrade') ? 0 : baseDiscountPercent;
       const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
       const sellingPlanIdNumeric = product.sellingPlanIdNumeric || extractNumericId(sellingPlanId);
       return {

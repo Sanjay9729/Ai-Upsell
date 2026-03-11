@@ -503,12 +503,14 @@ function applyOptimizationOverrides(goalConfig, optimization) {
 
   const priority = Array.isArray(base.offerPriority) ? [...base.offerPriority] : [];
   const idx = priority.indexOf(topOfferType);
-  if (idx > 0) {
-    priority.splice(idx, 1);
-    priority.unshift(topOfferType);
-  } else if (idx === -1) {
-    priority.unshift(topOfferType);
-  }
+
+  // Only allow promotion within the top 2 positions of the goal's natural priority.
+  // Prevents the learning engine from overriding the goal's primary offer type
+  // with a lower-ranked type (e.g. volume_discount overriding addon_upsell for revenue_per_visitor).
+  if (idx <= 0 || idx > 1) return base;
+
+  priority.splice(idx, 1);
+  priority.unshift(topOfferType);
 
   return {
     ...base,
