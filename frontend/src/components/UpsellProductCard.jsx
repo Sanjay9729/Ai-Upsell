@@ -172,7 +172,7 @@ const UpsellProductCard = ({ product, isClicked, onClick }) => {
 
   const hasDiscount = product.compareAtPrice && parseFloat(product.compareAtPrice) > parseFloat(product.price);
   const discountPercentage = hasDiscount ? 
-    Math.round(((parseFloat(product.compareAtPrice) - parseFloat(product.price)) / parseFloat(product.compareAtPrice)) * 100) : 0;
+    (Math.round(((parseFloat(product.compareAtPrice) - parseFloat(product.price)) / parseFloat(product.compareAtPrice)) * 100 * 100) / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1') : 0;
 
   return (
     <div

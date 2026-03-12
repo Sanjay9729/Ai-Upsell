@@ -1,6 +1,63 @@
 (function () {
   'use strict';
   var _C = window.__AI_UPSELL_CONFIG__ || {};
+  if (typeof window.__AI_UPSELL_GOAL__ === 'undefined') window.__AI_UPSELL_GOAL__ = null;
+  if (typeof window.__AI_UPSELL_LAST_DECISION__ === 'undefined') window.__AI_UPSELL_LAST_DECISION__ = null;
+
+  function setDecisionMeta(meta) {
+    if (!meta) return;
+    window.__AI_UPSELL_LAST_DECISION__ = meta;
+    if (meta.goal) window.__AI_UPSELL_GOAL__ = meta.goal;
+  }
+
+  function getCurrentGoal() {
+    return window.__AI_UPSELL_GOAL__ || (window.__AI_UPSELL_LAST_DECISION__ && window.__AI_UPSELL_LAST_DECISION__.goal) || null;
+  }
+
+  function isBuy2Goal(goal) {
+    return goal === 'increase_aov' || goal === 'inventory_movement';
+  }
+
+  function isImmediateDiscountGoal(goal) {
+    return goal === 'revenue_per_visitor' || goal === 'subscription_adoption';
+  }
+
+  function shouldUseFunctionDiscount(goal) {
+    return isImmediateDiscountGoal(goal) || isBuy2Goal(goal);
+  }
+
+  var __AI_UPSELL_CART_GOAL__ = null;
+
+  async function ensureCartGoalAttribute(goal) {
+    if (!goal) return;
+    if (__AI_UPSELL_CART_GOAL__ === goal) return;
+    try {
+      await fetch('/cart/update.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attributes: { ai_goal: goal } })
+      });
+      __AI_UPSELL_CART_GOAL__ = goal;
+    } catch (_) {}
+  }
+
+  function normalizeImmediateDiscount(offerType, productData, effectiveDiscount, goal) {
+    if (!isImmediateDiscountGoal(goal)) return effectiveDiscount;
+    var current = Number(effectiveDiscount) || 0;
+    if (current > 0) return current;
+    // Fallback: use configured discountPercent if present
+    var pd = productData || {};
+    var cfg = Number(pd.discountPercent || pd.aiDiscountPercent || 0);
+    if (cfg > 0) return cfg;
+    // Last resort: max tier discount
+    var tiers = Array.isArray(pd.tiers) ? pd.tiers : [];
+    var best = 0;
+    tiers.forEach(function (t) {
+      var d = Number(t && t.discountPercent || 0);
+      if (d > best) best = d;
+    });
+    return best;
+  }
 
   // ── Fetch interceptor (must run ASAP) ──────────────────────────────────────
   if (!window.__AI_UPSELL_FETCH_HOOK__) {
@@ -366,32 +423,44 @@
           var offerType = productData.offerType || 'addon_upsell';
           var discountPct = parseFloat(btn.getAttribute('data-discount-percent') || '0');
           var allDiscountProductIds = [productId];
+          var cartDataD = null;
+          var currentGoalD = getCurrentGoal();
+          await ensureCartGoalAttribute(currentGoalD);
           if (offerType === 'volume_discount') {
-            var cartResD = await fetch('/cart.js'); var cartDataD = await cartResD.json();
+            var cartResD = await fetch('/cart.js'); cartDataD = await cartResD.json();
             var totalQty = getCartTotalQuantity(cartDataD) + 1; // drawer adds exactly one
-            discountPct = getVolumeDiscountPercent(productData, totalQty);
+            discountPct = getVolumeDiscountPercent(productData, isImmediateDiscountGoal(currentGoalD) ? Math.max(totalQty, getMinVolumeQuantity(productData) || totalQty) : totalQty);
             var minQtyDrawer = getMinVolumeQuantity(productData);
-            if (minQtyDrawer && totalQty < minQtyDrawer) discountPct = 0;
+            if (!isImmediateDiscountGoal(currentGoalD) && minQtyDrawer && totalQty < minQtyDrawer) discountPct = 0;
             allDiscountProductIds = Array.from(new Set(getCartProductIdList(cartDataD).concat([productId])));
           } else if (offerType === 'bundle') {
             discountPct = 0;
           }
+          discountPct = normalizeImmediateDiscount(offerType, productData, discountPct, currentGoalD);
+          var gateResultD = await applyGoalDiscountGate(currentGoalD, discountPct, cartDataD, 1);
+          discountPct = gateResultD.discount;
+          if (!cartDataD && gateResultD.cartData) cartDataD = gateResultD.cartData;
+          var discountTargetsD = await buildDiscountTargets(allDiscountProductIds, cartDataD, currentGoalD);
+          var offerPropsD = getOfferProperties(offerType, discountPct, currentGoalD);
           btn.textContent = '...'; btn.disabled = true;
           try {
-            var discountCode = discountPct > 0 ? await createDiscountCode(allDiscountProductIds, discountPct) : null;
-            var cartPayload = { id: varId, quantity: 1 };
-            if (discountPct > 0) cartPayload.properties = { 'Offer': (offerType === 'volume_discount' ? 'Volume ' : 'AI ') + Math.round(discountPct) + '% off' };
+            var discountCode = shouldUseFunctionDiscount(currentGoalD) ? null : (discountPct > 0 ? await createDiscountCode(discountTargetsD, discountPct) : null);
+            var cartPayload = { id: varId, quantity: 1, ...offerPropsD };
             await fetch('/cart/add.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cartPayload) });
             if (discountCode) {
-              try { await fetch(SHOPIFY_ROOT + 'cart/update.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ discount: discountCode }) }); window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode; sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ productId: productId, minQty: getMinVolumeQuantity(productData) || 1, code: discountCode })); } catch (_) {}
+              try { await fetch(SHOPIFY_ROOT + 'discount/' + encodeURIComponent(discountCode)); window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode; sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ productId: productId, minQty: getMinVolumeQuantity(productData) || 1, code: discountCode })); } catch (_) {}
             }
             btn.textContent = '✓'; btn.style.background = '#333';
             // Remove this product from future "You may also like" suggestions
             secondaryAllProducts = secondaryAllProducts.filter(function (p) { return String(p.id) !== String(productId); });
             // Refresh cart drawer HTML so the new item appears immediately
             try {
+              var cartRes = await fetch(SHOPIFY_ROOT + 'cart.js');
+              var cartData = await cartRes.json();
               var sectionsRes = await fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble,main-cart-items');
               var sections = await sectionsRes.json();
+              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cartData, source: 'ai-upsell' } }));
+              updateCartCountBubble(cartData.item_count);
               var drawerEl = document.querySelector('cart-drawer');
               if (drawerEl && sections['cart-drawer']) {
                 var tmp = document.createElement('div');
@@ -412,7 +481,7 @@
               }
               if (sections['cart-icon-bubble']) {
                 var iconEl = document.getElementById('cart-icon-bubble');
-                if (iconEl) { var tmp2 = document.createElement('div'); tmp2.innerHTML = sections['cart-icon-bubble']; var newIcon = tmp2.querySelector('#cart-icon-bubble'); if (newIcon) iconEl.replaceWith(newIcon); }
+                if (iconEl) { var tmp2 = document.createElement('div'); tmp2.innerHTML = sections['cart-icon-bubble']; var newIcon = tmp2.querySelector('#cart-icon-bubble'); if (newIcon) { iconEl.replaceWith(newIcon); updateCartCountBubble(cartData.item_count); } }
               }
             } catch (_) {
               // Section rendering failed — fall back to event-based refresh
@@ -575,6 +644,59 @@
       return cartData.items.map(function (item) { return String(item.product_id); });
     }
 
+    async function fetchCartSafe() {
+      try {
+        var res = await fetch('/cart.js');
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (_) { return null; }
+    }
+
+    function collectUpsellProductIds(cartData) {
+      if (!cartData || !Array.isArray(cartData.items)) return [];
+      var ids = [];
+      cartData.items.forEach(function (item) {
+        if (item && item.properties && item.properties.Offer) {
+          ids.push(String(item.product_id));
+        }
+      });
+      return ids;
+    }
+
+    function collectAllCartProductIds(cartData) {
+      if (!cartData || !Array.isArray(cartData.items)) return [];
+      return cartData.items.map(function (item) { return String(item.product_id); });
+    }
+
+    async function buildDiscountTargets(allDiscountProductIds, cartData, goal) {
+      // For buy-2 goals we must not re-apply discount to the first item, so keep only the new targets.
+      if (isBuy2Goal(goal)) return Array.from(new Set(allDiscountProductIds.map(String)));
+      var data = cartData || await fetchCartSafe();
+      var baseIds = isImmediateDiscountGoal(goal)
+        ? collectAllCartProductIds(data) // include every cart item so later upsells also stay covered
+        : collectUpsellProductIds(data);
+      return Array.from(new Set(baseIds.concat(allDiscountProductIds.map(String))));
+    }
+
+    async function applyGoalDiscountGate(goal, effectiveDiscount, cartData, quantityToAdd) {
+      if (!isBuy2Goal(goal)) return { discount: effectiveDiscount, cartData: cartData };
+      var data = cartData || await fetchCartSafe();
+      var totalAfterAdd = getCartTotalQuantity(data) + (quantityToAdd || 0);
+      if (totalAfterAdd < 2) return { discount: 0, cartData: data };
+      return { discount: effectiveDiscount, cartData: data };
+    }
+
+    function getOfferProperties(offerType, effectiveDiscount, goal) {
+      if (!effectiveDiscount || Number(effectiveDiscount) <= 0) return {};
+      var formattedDiscount = formatDiscountPercent(effectiveDiscount);
+      if (offerType === 'volume_discount') return { properties: { 'Offer': 'Volume ' + formattedDiscount + '% off' } };
+      if (isBuy2Goal(goal) || isImmediateDiscountGoal(goal)) {
+        var prefix = offerType === 'bundle' ? 'Bundle' : 'Offer';
+        return { properties: { 'Offer': prefix + ' ' + formattedDiscount + '% off' } };
+      }
+      return {};
+    }
+
     async function createDiscountCode(productIds, discountPercent) {
       if (!productIds || productIds.length === 0 || !discountPercent || Number(discountPercent) <= 0) return null;
       try {
@@ -700,16 +822,34 @@
     }
 
     function updateCartCountBubble(count) {
+      var n = Number(count) || 0;
       try {
+        // Dawn / Online Store 2.0 default bubble
         document.querySelectorAll('#cart-icon-bubble').forEach(function (target) {
           var bubble = target.querySelector('.cart-count-bubble');
-          if (!bubble) { bubble = document.createElement('div'); bubble.className = 'cart-count-bubble'; var vis = document.createElement('span'); vis.setAttribute('aria-hidden', 'true'); var hidden = document.createElement('span'); hidden.className = 'visually-hidden'; bubble.appendChild(vis); bubble.appendChild(hidden); target.appendChild(bubble); }
+          if (!bubble) {
+            bubble = document.createElement('div');
+            bubble.className = 'cart-count-bubble';
+            var vis = document.createElement('span'); vis.setAttribute('aria-hidden', 'true');
+            var hidden = document.createElement('span'); hidden.className = 'visually-hidden';
+            bubble.appendChild(vis); bubble.appendChild(hidden);
+            target.appendChild(bubble);
+          }
           var visEl = bubble.querySelector('[aria-hidden]') || bubble.querySelector('.cart-count-bubble__count');
           var hiddenEl = bubble.querySelector('.visually-hidden');
           if (!hiddenEl) { hiddenEl = document.createElement('span'); hiddenEl.className = 'visually-hidden'; bubble.appendChild(hiddenEl); }
-          if (visEl) visEl.textContent = String(count);
-          hiddenEl.textContent = count + ' ' + (count === 1 ? 'item' : 'items');
-          bubble.hidden = count <= 0;
+          if (visEl) visEl.textContent = String(n);
+          hiddenEl.textContent = n + ' ' + (n === 1 ? 'item' : 'items');
+          bubble.hidden = n <= 0;
+        });
+
+        // Fallbacks for themes that don't use #cart-icon-bubble
+        document.querySelectorAll('.cart-count-bubble__count, .cart-count-bubble span[aria-hidden], [data-cart-count], [data-cart-quantity]').forEach(function (el) {
+          if (el.dataset) {
+            if (el.hasAttribute('data-cart-count')) el.setAttribute('data-cart-count', String(n));
+            if (el.hasAttribute('data-cart-quantity')) el.setAttribute('data-cart-quantity', String(n));
+          }
+          if (!el.classList.contains('visually-hidden')) el.textContent = String(n);
         });
       } catch (_) {}
     }
@@ -738,6 +878,7 @@
         if (!freshRes.ok) return null;
         data = await freshRes.json();
       }
+      setDecisionMeta(data.decision);
       console.log('[AI Upsell] API data: success=' + data.success + ' count=' + (data.recommendations ? data.recommendations.length : 0));
       if (!data.success || !data.recommendations || data.recommendations.length === 0) {
         console.warn('[AI Upsell] No recommendations in response');
@@ -770,6 +911,7 @@
       var response = await fetchPromise;
       if (!response.ok) return null;
       var data = await response.json();
+      setDecisionMeta(data.decision);
       if (!data.success || !data.recommendations || data.recommendations.length === 0) return null;
       return data.recommendations.slice(0, maxProducts);
     }
@@ -779,7 +921,7 @@
       if (!response.ok) throw new Error('Failed to add to cart');
       if (discountCode) {
         try {
-          await fetch(SHOPIFY_ROOT + 'cart/update.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ discount: discountCode }) });
+          await fetch(SHOPIFY_ROOT + 'discount/' + encodeURIComponent(discountCode));
           window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode;
         } catch (_) {}
       }
@@ -840,24 +982,33 @@
             var sellingPlanId = normalizeSellingPlanId((productCard.dataset && productCard.dataset.sellingPlanId) || productData.sellingPlanIdNumeric || productData.sellingPlanId);
             var effectiveDiscount;
             var allDiscountProductIds = [upsellProductId];
+            var cartDataVD1 = null;
+            var currentGoalSecondary = getCurrentGoal();
+            await ensureCartGoalAttribute(currentGoalSecondary);
             if (offerType === 'volume_discount') {
               var cartResVD1 = await fetch('/cart.js');
-              var cartDataVD1 = await cartResVD1.json();
+              cartDataVD1 = await cartResVD1.json();
               var totalCartQty1 = getCartTotalQuantity(cartDataVD1);
               var totalQtySecondary = totalCartQty1 + quantity;
-              effectiveDiscount = getVolumeDiscountPercent(productData, totalQtySecondary);
+              effectiveDiscount = getVolumeDiscountPercent(productData, isImmediateDiscountGoal(currentGoalSecondary) ? Math.max(totalQtySecondary, getMinVolumeQuantity(productData) || totalQtySecondary) : totalQtySecondary);
               var minQtySecondary = getMinVolumeQuantity(productData);
-              if (minQtySecondary && totalQtySecondary < minQtySecondary) effectiveDiscount = 0;
+              if (!isImmediateDiscountGoal(currentGoalSecondary) && minQtySecondary && totalQtySecondary < minQtySecondary) effectiveDiscount = 0;
               allDiscountProductIds = Array.from(new Set(getCartProductIdList(cartDataVD1).concat([upsellProductId])));
             } else if (offerType === 'bundle' && !sourceVariantId) {
               effectiveDiscount = 0;
             } else { effectiveDiscount = parseFloat(productData.discountPercent) || 0; }
+            effectiveDiscount = normalizeImmediateDiscount(offerType, productData, effectiveDiscount, currentGoalSecondary);
+            var gateResultSecondary = await applyGoalDiscountGate(currentGoalSecondary, effectiveDiscount, cartDataVD1, quantity + (sourceVariantId ? 1 : 0));
+            effectiveDiscount = gateResultSecondary.discount;
+            if (!cartDataVD1 && gateResultSecondary.cartData) cartDataVD1 = gateResultSecondary.cartData;
+            var discountTargetsSecondary = await buildDiscountTargets(allDiscountProductIds, cartDataVD1, currentGoalSecondary);
+            var offerPropsSecondary = getOfferProperties(offerType, effectiveDiscount, currentGoalSecondary);
           try {
             button.disabled = true; button.textContent = 'Adding...';
-            var discountCode = effectiveDiscount > 0 ? await createDiscountCode(sourceVariantId ? [sourceProductId].concat(allDiscountProductIds) : allDiscountProductIds, effectiveDiscount) : null;
+            var discountTargetProducts = sourceVariantId ? [sourceProductId].concat(discountTargetsSecondary) : discountTargetsSecondary;
+            var discountCode = shouldUseFunctionDiscount(currentGoalSecondary) ? null : (effectiveDiscount > 0 ? await createDiscountCode(discountTargetProducts, effectiveDiscount) : null);
             window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
-            var bundleProps = effectiveDiscount > 0 ? { properties: { 'Offer': (offerType === 'volume_discount' ? 'Volume ' : 'Bundle ') + Math.round(effectiveDiscount) + '% off' } } : {};
-            var cartPayload = sourceVariantId ? { items: [{ id: sourceVariantId, quantity: 1, ...bundleProps }, { id: variantId, quantity: quantity, ...bundleProps }] } : { id: variantId, quantity: quantity, ...bundleProps };
+            var cartPayload = sourceVariantId ? { items: [{ id: sourceVariantId, quantity: 1, ...offerPropsSecondary }, { id: variantId, quantity: quantity, ...offerPropsSecondary }] } : { id: variantId, quantity: quantity, ...offerPropsSecondary };
             if (sellingPlanId && offerType === 'subscription_upgrade' && !sourceVariantId) cartPayload.selling_plan = sellingPlanId;
             await addToCartAndRefresh(variantId, quantity, cartPayload, discountCode);
             if (offerType === 'volume_discount' && effectiveDiscount > 0) {
@@ -931,23 +1082,32 @@
             var sellingPlanId = normalizeSellingPlanId((productCard.dataset && productCard.dataset.sellingPlanId) || productData.sellingPlanIdNumeric || productData.sellingPlanId);
             var effectiveDiscount;
             var allDiscountProductIds = [upsellProductId];
+            var cartData = null;
+            var currentGoalPdp = getCurrentGoal();
+            await ensureCartGoalAttribute(currentGoalPdp);
             if (offerType === 'volume_discount') {
-              var cartRes = await fetch('/cart.js'); var cartData = await cartRes.json();
+              var cartRes = await fetch('/cart.js'); cartData = await cartRes.json();
               var totalCartQty = getCartTotalQuantity(cartData);
               var totalQty = totalCartQty + quantity;
-              effectiveDiscount = getVolumeDiscountPercent(productData, totalQty);
+              effectiveDiscount = getVolumeDiscountPercent(productData, isImmediateDiscountGoal(currentGoalPdp) ? Math.max(totalQty, getMinVolumeQuantity(productData) || totalQty) : totalQty);
               var minQty = getMinVolumeQuantity(productData);
-              if (minQty && totalQty < minQty) effectiveDiscount = 0;
+              if (!isImmediateDiscountGoal(currentGoalPdp) && minQty && totalQty < minQty) effectiveDiscount = 0;
               allDiscountProductIds = Array.from(new Set(getCartProductIdList(cartData).concat([upsellProductId])));
             } else if (offerType === 'bundle' && !sourceVariantId) {
               effectiveDiscount = 0;
             } else { effectiveDiscount = parseFloat(discountPercent) || parseFloat(productData.discountPercent) || 0; }
+            effectiveDiscount = normalizeImmediateDiscount(offerType, productData, effectiveDiscount, currentGoalPdp);
+            var gateResultPdp = await applyGoalDiscountGate(currentGoalPdp, effectiveDiscount, cartData, quantity + (sourceVariantId ? 1 : 0));
+            effectiveDiscount = gateResultPdp.discount;
+            if (!cartData && gateResultPdp.cartData) cartData = gateResultPdp.cartData;
+            var discountTargetsPdp = await buildDiscountTargets(allDiscountProductIds, cartData, currentGoalPdp);
+            var offerPropsPdp = getOfferProperties(offerType, effectiveDiscount, currentGoalPdp);
             try {
               button.disabled = true; button.textContent = 'Adding...';
-              var discountCode = effectiveDiscount > 0 ? await createDiscountCode(sourceVariantId ? [sourceProductId].concat(allDiscountProductIds) : allDiscountProductIds, effectiveDiscount) : null;
+              var discountTargetProducts = sourceVariantId ? [sourceProductId].concat(discountTargetsPdp) : discountTargetsPdp;
+              var discountCode = shouldUseFunctionDiscount(currentGoalPdp) ? null : (effectiveDiscount > 0 ? await createDiscountCode(discountTargetProducts, effectiveDiscount) : null);
               window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
-              var bundleProps = effectiveDiscount > 0 ? { properties: { 'Offer': (offerType === 'volume_discount' ? 'Volume ' : 'Bundle ') + Math.round(effectiveDiscount) + '% off' } } : {};
-              var cartPayload = sourceVariantId ? { items: [{ id: sourceVariantId, quantity: 1, ...bundleProps }, { id: variantId, quantity: quantity, ...bundleProps }] } : { id: variantId, quantity: quantity, ...bundleProps };
+              var cartPayload = sourceVariantId ? { items: [{ id: sourceVariantId, quantity: 1, ...offerPropsPdp }, { id: variantId, quantity: quantity, ...offerPropsPdp }] } : { id: variantId, quantity: quantity, ...offerPropsPdp };
               if (sellingPlanId && offerType === 'subscription_upgrade' && !sourceVariantId) cartPayload.selling_plan = sellingPlanId;
               await addToCartAndRefresh(variantId, quantity, cartPayload, discountCode);
               fetch('/apps/ai-upsell/analytics/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventType: 'cart_add', shopId: _C.shopDomain, sessionId: window.__AI_UPSELL_USER_ID__ || null, userId: window.__AI_UPSELL_USER_ID__ || null, sourceProductId: PRODUCT_ID, sourceProductName: _C.productTitle || '', upsellProductId: upsellProductId, upsellProductName: productTitle, variantId: variantId, recommendationType: recommendationType, confidence: parseFloat(confidence), quantity: quantity, metadata: { location: 'product_detail_page', offerType: offerType, discountPercent: effectiveDiscount } }) }).catch(function () {});
@@ -1002,6 +1162,7 @@
           button.addEventListener('click', async function (e) {
             e.preventDefault(); e.stopPropagation();
             var variantId = button.getAttribute('data-variant-id');
+            var sourceVariantId = button.getAttribute('data-source-variant-id');
             var upsellProductId = button.getAttribute('data-product-id');
             var recommendationType = button.getAttribute('data-recommendation-type');
             var confidence = button.getAttribute('data-confidence');
@@ -1015,22 +1176,31 @@
             var sellingPlanId = normalizeSellingPlanId((productCard.dataset && productCard.dataset.sellingPlanId) || productData.sellingPlanIdNumeric || productData.sellingPlanId);
             var effectiveDiscount;
             var allDiscountProductIds = [upsellProductId];
+            var cartData2 = null;
+            var currentGoalCartPage = getCurrentGoal();
+            await ensureCartGoalAttribute(currentGoalCartPage);
             if (offerType === 'volume_discount') {
-              var cartRes2 = await fetch('/cart.js'); var cartData2 = await cartRes2.json();
+              var cartRes2 = await fetch('/cart.js'); cartData2 = await cartRes2.json();
               var totalCartQty2 = getCartTotalQuantity(cartData2);
               var totalQty2 = totalCartQty2 + quantity;
-              effectiveDiscount = getVolumeDiscountPercent(productData, totalQty2);
+              effectiveDiscount = getVolumeDiscountPercent(productData, isImmediateDiscountGoal(currentGoalCartPage) ? Math.max(totalQty2, getMinVolumeQuantity(productData) || totalQty2) : totalQty2);
               var minQty2 = getMinVolumeQuantity(productData);
-              if (minQty2 && totalQty2 < minQty2) effectiveDiscount = 0;
+              if (!isImmediateDiscountGoal(currentGoalCartPage) && minQty2 && totalQty2 < minQty2) effectiveDiscount = 0;
               allDiscountProductIds = Array.from(new Set(getCartProductIdList(cartData2).concat([upsellProductId])));
             } else if (offerType === 'bundle' && !sourceVariantId) {
               effectiveDiscount = 0;
             } else { effectiveDiscount = parseFloat(productData.discountPercent) || 0; }
+            effectiveDiscount = normalizeImmediateDiscount(offerType, productData, effectiveDiscount, currentGoalCartPage);
+            var gateResultCartPage = await applyGoalDiscountGate(currentGoalCartPage, effectiveDiscount, cartData2, quantity + (sourceVariantId ? 1 : 0));
+            effectiveDiscount = gateResultCartPage.discount;
+            if (!cartData2 && gateResultCartPage.cartData) cartData2 = gateResultCartPage.cartData;
+            var discountTargetsCartPage = await buildDiscountTargets(allDiscountProductIds, cartData2, currentGoalCartPage);
+            var offerPropsCartPage = getOfferProperties(offerType, effectiveDiscount, currentGoalCartPage);
             try {
               button.disabled = true; button.textContent = 'Adding...';
-              var discountCode = effectiveDiscount > 0 ? await createDiscountCode(allDiscountProductIds, effectiveDiscount) : null;
+              var discountCode = shouldUseFunctionDiscount(currentGoalCartPage) ? null : (effectiveDiscount > 0 ? await createDiscountCode(discountTargetsCartPage, effectiveDiscount) : null);
               window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
-              var cartPayload = { id: variantId, quantity: quantity };
+              var cartPayload = { id: variantId, quantity: quantity, ...offerPropsCartPage };
               if (sellingPlanId && offerType === 'subscription_upgrade') cartPayload.selling_plan = sellingPlanId;
               await addToCartAndRefresh(variantId, quantity, cartPayload, discountCode);
               fetch(SHOPIFY_ROOT + 'cart.js').then(function (r) { return r.json(); }).then(function (cart) {
@@ -1073,6 +1243,7 @@
         var response = await fetchPromise;
         if (!response.ok) throw new Error('Failed');
         var data = await response.json();
+        setDecisionMeta(data.decision);
         var products = (data.success && data.recommendations && data.recommendations.length > 0) ? uniqueSecondaryById(data.recommendations) : [];
         products = await filterSecondaryAgainstCart(products, cartOverride);
 
