@@ -6,14 +6,44 @@ import { authenticate } from "../shopify.server";
 async function ensureScriptTag(admin) {
   if (!admin?.rest) return; // REST client not available
   const scriptSrc = `${process.env.SHOPIFY_APP_URL}/scripts/order-status-tracking.js`;
+  console.log('[ScriptTag] Checking registration for:', scriptSrc);
   try {
-    const existing = await admin.rest.get({ path: 'script_tags', query: { src: scriptSrc } });
-    if (existing?.body?.script_tags?.length > 0) return;
-    await admin.rest.post({
-      path: 'script_tags',
-      data: { script_tag: { event: 'onload', src: scriptSrc, display_scope: 'order_status' } }
-    });
-    console.log('[ScriptTag] Registered order-status tracking script');
+    // Check existing via GraphQL
+    const checkRes = await admin.graphql(`
+      query {
+        scriptTags(first: 10) {
+          edges { node { id src displayScope } }
+        }
+      }
+    `);
+    const checkData = await checkRes.json();
+    const tags = checkData?.data?.scriptTags?.edges || [];
+    const alreadyExists = tags.some(e => e.node.src === scriptSrc);
+
+    if (alreadyExists) {
+      console.log('[ScriptTag] Already registered');
+      return;
+    }
+
+    // Create via GraphQL
+    const createRes = await admin.graphql(`
+      mutation {
+        scriptTagCreate(input: {
+          src: "${scriptSrc}",
+          displayScope: ORDER_STATUS
+        }) {
+          scriptTag { id src }
+          userErrors { field message }
+        }
+      }
+    `);
+    const createData = await createRes.json();
+    const errors = createData?.data?.scriptTagCreate?.userErrors || [];
+    if (errors.length > 0) {
+      console.error('[ScriptTag] Create errors:', JSON.stringify(errors));
+    } else {
+      console.log('[ScriptTag] Registered order-status tracking script:', createData?.data?.scriptTagCreate?.scriptTag?.id);
+    }
   } catch (err) {
     console.error('[ScriptTag] Registration error:', err.message);
   }
