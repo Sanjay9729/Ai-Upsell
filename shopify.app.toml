@@ -5,71 +5,47 @@ name = "AI Upsell"
 application_url = "https://ai-upsell.onrender.com/"
 embedded = true
 
-# ---------------------------
-# Build
-# ---------------------------
 [build]
 automatically_update_urls_on_dev = true
 
-# ---------------------------
-# Webhooks
-# ---------------------------
 [webhooks]
 api_version = "2026-01"
 
-# App lifecycle
-[[webhooks.subscriptions]]
-topics = ["app/uninstalled"]
-uri = "/webhooks/app/uninstalled"
+  [[webhooks.subscriptions]]
+  topics = [ "inventory_levels/update" ]
+  uri = "/webhooks/inventory_levels/update"
 
-[[webhooks.subscriptions]]
-topics = ["app/scopes_update"]
-uri = "/webhooks/app/scopes_update"
+  [[webhooks.subscriptions]]
+  topics = [ "products/update" ]
+  uri = "/webhooks/products/update"
 
-# Product sync webhooks
-[[webhooks.subscriptions]]
-topics = ["products/create"]
-uri = "/webhooks/products/create"
+  [[webhooks.subscriptions]]
+  topics = [ "products/delete" ]
+  uri = "/webhooks/products/delete"
 
-[[webhooks.subscriptions]]
-topics = ["products/update"]
-uri = "/webhooks/products/update"
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
 
-[[webhooks.subscriptions]]
-topics = ["products/delete"]
-uri = "/webhooks/products/delete"
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/compliance"
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 
-[[webhooks.subscriptions]]
-topics = ["inventory_levels/update"]
-uri = "/webhooks/inventory_levels/update"
+  [[webhooks.subscriptions]]
+  topics = [ "products/create" ]
+  uri = "/webhooks/products/create"
 
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
 
-# ---------------------------
-# Mandatory Compliance Webhooks (REQUIRED)
-# ---------------------------
-[[webhooks.subscriptions]]
-compliance_topics = [
-  "customers/data_request",
-  "customers/redact",
-  "shop/redact"
-]
-uri = "/webhooks/compliance"
-
-# ---------------------------
-# Access scopes
-# ---------------------------
 [access_scopes]
-scopes = "write_products,read_products,read_inventory,write_discounts,read_orders,write_script_tags"
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_inventory,read_orders,read_products,write_discounts,write_products"
 
-# ---------------------------
-# Auth
-# ---------------------------
 [auth]
-redirect_urls = ["https://ai-upsell.onrender.com/auth/callback"]
+redirect_urls = [ "https://ai-upsell.onrender.com/auth/callback" ]
 
-# ---------------------------
-# App Proxy
-# ---------------------------
 [app_proxy]
 url = "https://ai-upsell.onrender.com/api/proxy"
 subpath = "ai-upsell"
