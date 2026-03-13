@@ -720,6 +720,7 @@ async function startServer() {
         console.log('📊 All collections and indexes initialized successfully');
         startProductReconciliationJob();
         startOptimizationCron();
+        registerScriptTagsForAllShops();
       } catch (error) {
         console.error('❌ Mongo init failed (server is still running):', error);
       }
@@ -727,6 +728,79 @@ async function startServer() {
   } catch (error) {
     console.error('❌ Failed to start server:', error);
     process.exit(1);
+  }
+}
+
+// ─── ScriptTag Auto-Registration ─────────────────────────────────────────────
+/**
+ * Runs on every server startup. Reads all shops from shopify_sessions,
+ * and registers the order-status ScriptTag for each shop automatically.
+ * No merchant action required.
+ */
+async function registerScriptTagsForAllShops() {
+  try {
+    const { getDb } = await import('./backend/database/mongodb.js');
+    const db = await getDb();
+    const scriptSrc = `${process.env.SHOPIFY_APP_URL}/scripts/order-status-tracking.js`;
+
+    // Get all offline sessions (one per shop)
+    const sessions = await db.collection('shopify_sessions')
+      .find({ id: /^offline_/ })
+      .toArray();
+
+    if (sessions.length === 0) {
+      console.log('[ScriptTag] No sessions found, skipping registration');
+      return;
+    }
+
+    for (const session of sessions) {
+      const shop = session.shop;
+      const accessToken = session.accessToken;
+      if (!shop || !accessToken) continue;
+
+      try {
+        // Check if already registered
+        const checkRes = await fetch(
+          `https://${shop}/admin/api/2026-01/script_tags.json?src=${encodeURIComponent(scriptSrc)}`,
+          { headers: { 'X-Shopify-Access-Token': accessToken } }
+        );
+        const checkData = await checkRes.json();
+
+        if (checkData?.script_tags?.length > 0) {
+          console.log(`[ScriptTag] Already registered for ${shop}`);
+          continue;
+        }
+
+        // Register new ScriptTag
+        const createRes = await fetch(
+          `https://${shop}/admin/api/2026-01/script_tags.json`,
+          {
+            method: 'POST',
+            headers: {
+              'X-Shopify-Access-Token': accessToken,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              script_tag: {
+                event: 'onload',
+                src: scriptSrc,
+                display_scope: 'order_status',
+              }
+            })
+          }
+        );
+        const createData = await createRes.json();
+        if (createData?.script_tag?.id) {
+          console.log(`[ScriptTag] Registered for ${shop} — id: ${createData.script_tag.id}`);
+        } else {
+          console.error(`[ScriptTag] Failed for ${shop}:`, JSON.stringify(createData));
+        }
+      } catch (err) {
+        console.error(`[ScriptTag] Error for ${shop}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[ScriptTag] registerScriptTagsForAllShops error:', err.message);
   }
 }
 
