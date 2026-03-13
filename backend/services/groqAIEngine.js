@@ -128,7 +128,8 @@ export class GroqAIEngine {
         const filtered = this.applyGuardrailsToRecommendations(
           cached,
           guardrails,
-          new Set([String(currentProductId)])
+          new Set([String(currentProductId)]),
+          { goal: config?.goal }
         );
         const capped = filtered.slice(0, effectiveLimit);
         capped._sourceProduct = cached._sourceProduct;
@@ -153,7 +154,8 @@ export class GroqAIEngine {
       const otherProducts = this.filterProductsByGuardrails(
         allProducts.filter(p => String(p.productId) !== String(currentProductId)),
         guardrails,
-        excludedIds
+        excludedIds,
+        { goal: config?.goal }
       );
 
       if (otherProducts.length === 0) {
@@ -212,7 +214,8 @@ export class GroqAIEngine {
       const filtered = this.applyGuardrailsToRecommendations(
         boosted,
         guardrails,
-        excludedIds
+        excludedIds,
+        { goal: config?.goal }
       );
       const filled = this.fillToLimit(filtered, otherProducts, effectiveLimit);
 
@@ -237,7 +240,8 @@ export class GroqAIEngine {
       const filtered = this.applyGuardrailsToRecommendations(
         fallback,
         guardrails,
-        new Set([String(currentProductId)])
+        new Set([String(currentProductId)]),
+        { goal: config?.goal }
       );
       return this.finalizeSessionLimit(filtered, effectiveLimit, userId, shopId, contextKey);
     }
@@ -264,7 +268,9 @@ export class GroqAIEngine {
       if (cached) {
         console.log(`⚡ Cache hit for cart [${sortedIds}] userId=${userId || 'anon'}`);
         const excludedIds = new Set(cartProductIds.map(String));
-        const filtered = this.applyGuardrailsToRecommendations(cached, guardrails, excludedIds);
+        const filtered = this.applyGuardrailsToRecommendations(cached, guardrails, excludedIds, {
+          goal: config?.goal
+        });
         const capped = filtered.slice(0, effectiveLimit);
         capped._cartProducts = cached._cartProducts;
         return this.finalizeSessionLimit(capped, effectiveLimit, userId, shopId, contextKey);
@@ -288,7 +294,8 @@ export class GroqAIEngine {
       const otherProducts = this.filterProductsByGuardrails(
         allProducts.filter(p => !cartProductIdSet.has(String(p.productId))),
         guardrails,
-        cartProductIdSet
+        cartProductIdSet,
+        { goal: config?.goal }
       );
 
       // Enrich cart history with product titles, exclude products already in current cart
@@ -349,7 +356,8 @@ export class GroqAIEngine {
       const filtered = this.applyGuardrailsToRecommendations(
         boosted,
         guardrails,
-        cartProductIdSet
+        cartProductIdSet,
+        { goal: config?.goal }
       );
       const filled = this.fillToLimit(filtered, otherProducts, effectiveLimit);
 
@@ -375,7 +383,8 @@ export class GroqAIEngine {
       const filtered = this.applyGuardrailsToRecommendations(
         fallback,
         guardrails,
-        new Set(cartProductIds.map(String))
+        new Set(cartProductIds.map(String)),
+        { goal: config?.goal }
       );
       return this.finalizeSessionLimit(filtered, effectiveLimit, userId, shopId, contextKey);
     }
@@ -1071,14 +1080,14 @@ MERCHANT STRATEGY CONTEXT (use as a soft preference, never override relevance or
     return capped;
   }
 
-  applyGuardrailsToRecommendations(recommendations, guardrails, excludeIds = new Set()) {
+  applyGuardrailsToRecommendations(recommendations, guardrails, excludeIds = new Set(), options = {}) {
     const safe = Array.isArray(recommendations) ? recommendations : [];
-    return this.filterProductsByGuardrails(safe, guardrails, excludeIds);
+    return this.filterProductsByGuardrails(safe, guardrails, excludeIds, options);
   }
 
-  filterProductsByGuardrails(products, guardrails, excludeIds = new Set()) {
+  filterProductsByGuardrails(products, guardrails, excludeIds = new Set(), options = {}) {
     const excluded = this.buildExcludeSet(guardrails, excludeIds);
-    return (products || []).filter(product => this.isEligibleProduct(product, guardrails, excluded));
+    return (products || []).filter(product => this.isEligibleProduct(product, guardrails, excluded, options));
   }
 
   fillToLimit(currentList, candidateProducts, limit) {
@@ -1130,7 +1139,7 @@ MERCHANT STRATEGY CONTEXT (use as a soft preference, never override relevance or
     return { ids, handles, collectionIds, collectionHandles };
   }
 
-  isEligibleProduct(product, guardrails, excludedSet) {
+  isEligibleProduct(product, guardrails, excludedSet, options = {}) {
     if (!product) return false;
     const id = String(product.productId);
     if (excludedSet?.ids && excludedSet.ids.has(id)) return false;
@@ -1161,7 +1170,8 @@ MERCHANT STRATEGY CONTEXT (use as a soft preference, never override relevance or
       return false;
     }
 
-    if (guardrails?.subscriptionProtection && this.isSubscriptionProduct(product)) {
+    // Subscription Adoption should still be able to surface subscription offers.
+    if (guardrails?.subscriptionProtection && this.isSubscriptionProduct(product) && options?.goal !== 'subscription_adoption') {
       return false;
     }
 

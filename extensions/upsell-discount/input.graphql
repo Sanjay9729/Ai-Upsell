@@ -1,0 +1,31 @@
+query Input {
+  cart {
+    attribute(key: "ai_goal") {
+      key
+      value
+    }
+    lines {
+      id
+      quantity
+      attribute(key: "offer") {
+        key
+        value
+      }
+      cost {
+        amountPerQuantity {
+          amount
+          currencyCode
+        }
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          product {
+            id
+          }
+        }
+      }
+    }
+  }
+}

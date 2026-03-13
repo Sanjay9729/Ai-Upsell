@@ -1,6 +1,27 @@
 import { json } from "@remix-run/node";
 import { decideProductOffers } from "../../backend/services/decisionEngine.js";
 
+function getOfferTypeExtras(offerType, discountPercent) {
+  if (offerType === 'bundle') {
+    return { tagline: 'Bundle & Save' };
+  }
+  if (offerType === 'volume_discount') {
+    const t1 = Math.round((discountPercent || 0) * 0.6);
+    const t2 = discountPercent || 0;
+    return {
+      tagline: 'Buy More, Save More',
+      tiers: [
+        { quantity: 2, discountPercent: t1, label: '2+ items' },
+        { quantity: 3, discountPercent: t2, label: '3+ items' },
+      ],
+    };
+  }
+  if (offerType === 'subscription_upgrade') {
+    return { tagline: 'Subscribe & Save', interval: 'monthly' };
+  }
+  return {};
+}
+
 /**
  * API endpoint to get AI-powered upsell recommendations
  * GET /api/upsell/:productId?shop=shop-domain.myshopify.com
@@ -36,6 +57,7 @@ export const loader = async ({ params, request }) => {
     const formattedRecommendations = recommendations.map(product => {
       const offerType = product.offerType || "addon_upsell";
       const baseDiscountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? null;
+      const offerTypeExtras = getOfferTypeExtras(offerType, baseDiscountPercent);
       const discountPercent = (offerType === 'volume_discount' || offerType === 'subscription_upgrade') ? 0 : baseDiscountPercent;
       return ({
       id: product.productId,
@@ -54,7 +76,8 @@ export const loader = async ({ params, request }) => {
       decisionReason: product.decisionReason ?? null,
       url: `https://${shop}/products/${product.handle}`,
       availableForSale: product.status?.toUpperCase() === 'ACTIVE',
-      variantId: product.variants?.[0]?.id || null
+      variantId: product.variants?.[0]?.id || null,
+      ...offerTypeExtras
     })});
 
     console.log('📊 Recommendations (before inventory enrichment):', formattedRecommendations.map(r => ({

@@ -54,6 +54,7 @@ export const collections = {
    optimizationLogs: 'optimization_logs',
    decisionLogs: 'decision_logs',
    // Purchase & AOV tracking — Pillar 5
+   orders: 'orders',
    purchaseEvents: 'purchase_events',
    aovImpact: 'aov_impact',
    // Learning & Optimization Loop scheduler — Pillar 5
@@ -112,6 +113,11 @@ export async function initializeCollections() {
     { unique: true }
   );
   await database.collection(collections.merchantIntelligence).createIndex({ shopId: 1 }, { unique: true });
+
+  // Orders — Pillar 5 AOV tracking
+  await database.collection(collections.orders).createIndex({ shopId: 1, createdAt: -1 });
+  await database.collection(collections.orders).createIndex({ shopId: 1, orderId: 1 }, { unique: true });
+  await database.collection(collections.orders).createIndex({ shopId: 1, hasUpsell: 1 });
 
   // Purchase events — Pillar 5
   await database.collection(collections.purchaseEvents).createIndex({ shopId: 1, timestamp: -1 });

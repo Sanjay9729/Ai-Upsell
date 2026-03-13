@@ -9,6 +9,7 @@ import { getAllProducts, syncProductsToMongoDB } from './backend/database/collec
 import { connectToMongoDB } from './backend/database/connection.js';
 import { initializeCollections } from './backend/database/mongodb.js';
 import analyticsRouter from './backend/routes/analytics.js';
+import cronRouter from './backend/routes/cron.js';
 import { processPurchaseEvent } from './backend/services/orderProcessingService.js';
 import { startProductReconciliationJob } from './backend/jobs/productReconciliation.js';
 import { getMerchantConfig } from './backend/services/merchantConfig.js';
@@ -55,6 +56,7 @@ app.use(express.static('public'));
 // API Routes
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/proxy/analytics', analyticsRouter); // Handle proxy requests
+app.use('/api/cron', cronRouter); // Cron jobs for learning loop & optimization
 
 // Get all upsell events from MongoDB
 app.get('/api/upsell-events', async (req, res) => {
