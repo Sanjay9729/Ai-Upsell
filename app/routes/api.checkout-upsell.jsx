@@ -2,6 +2,27 @@ import { json } from "@remix-run/node";
 import { decideCartOffers } from "../../backend/services/decisionEngine.js";
 import { getSafetyMode } from "../../backend/services/safetyMode.js";
 
+function getOfferTypeExtras(offerType, discountPercent) {
+  if (offerType === 'bundle') {
+    return { tagline: 'Bundle & Save' };
+  }
+  if (offerType === 'volume_discount') {
+    const t1 = Math.round((discountPercent || 0) * 0.6);
+    const t2 = discountPercent || 0;
+    return {
+      tagline: 'Buy More, Save More',
+      tiers: [
+        { quantity: 2, discountPercent: t1, label: '2+ items' },
+        { quantity: 3, discountPercent: t2, label: '3+ items' },
+      ],
+    };
+  }
+  if (offerType === 'subscription_upgrade') {
+    return { tagline: 'Subscribe & Save', interval: 'monthly' };
+  }
+  return {};
+}
+
 /**
  * GET /api/checkout-upsell
  *
@@ -80,6 +101,7 @@ export const loader = async ({ request }) => {
       const price = String(product.aiData?.price || product.variants?.[0]?.price || "0");
       const offerType = product.offerType || "addon_upsell";
       const baseDiscountPercent = product.discountPercent ?? 0;
+      const offerTypeExtras = getOfferTypeExtras(offerType, baseDiscountPercent);
       const discountPercent = (offerType === 'volume_discount' || offerType === 'subscription_upgrade') ? 0 : baseDiscountPercent;
       const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
       const sellingPlanIdNumeric = product.sellingPlanIdNumeric || (sellingPlanId ? String(sellingPlanId).match(/\/(\d+)$/)?.[1] : null);
@@ -97,6 +119,7 @@ export const loader = async ({ request }) => {
         sellingPlanId,
         sellingPlanIdNumeric,
         type: product.recommendationType || "complementary",
+        ...offerTypeExtras,
       };
     });
 

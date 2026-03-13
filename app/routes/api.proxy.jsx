@@ -247,21 +247,24 @@ export const loader = async ({ request }) => {
         }
         console.log('📦 Inventory map:', inventoryMap);
 
-        // Merge inventory into recommendations
-        formattedRecommendations.forEach((rec, i) => {
-          const live = inventoryMap[String(rec.id)] || {};
-          if (live.availableForSale !== undefined) {
-            formattedRecommendations[i] = {
-              ...rec,
-              availableForSale: live.availableForSale,
-              inventoryQuantity: live.inventoryQuantity,
-              inventoryPolicy: live.inventoryPolicy,
-              variantId: live.variantId || rec.variantId,
-              compareAtPrice: live.compareAtPrice || rec.compareAtPrice,
-              variants: live.variants || []
-            };
-          }
-        });
+        // Merge inventory & pricing into recommendations
+         formattedRecommendations.forEach((rec, i) => {
+           const live = inventoryMap[String(rec.id)] || {};
+           if (live.availableForSale !== undefined) {
+             // Get live price from variants if available
+             const livePrice = live.variants && live.variants[0] ? String(live.variants[0].price) : rec.price;
+             formattedRecommendations[i] = {
+               ...rec,
+               availableForSale: live.availableForSale,
+               inventoryQuantity: live.inventoryQuantity,
+               inventoryPolicy: live.inventoryPolicy,
+               variantId: live.variantId || rec.variantId,
+               price: livePrice,
+               compareAtPrice: (live.variants && live.variants[0]?.compareAtPrice) || live.compareAtPrice || rec.compareAtPrice,
+               variants: live.variants || []
+             };
+           }
+         });
       }
     } catch (invError) {
       console.error('⚠️ Inventory enrichment failed:', invError.message);

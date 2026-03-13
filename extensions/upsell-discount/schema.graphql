@@ -1,0 +1,52 @@
+schema {
+  query: Query
+}
+
+# Minimal schema to satisfy code generation for the upsell discount function.
+# It mirrors the fields queried in input.graphql and is intentionally slim to
+# avoid external network fetches during local builds.
+type Query {
+  cart: Cart
+}
+
+type Cart {
+  attribute(key: String!): Attribute
+  lines: [CartLine!]!
+}
+
+type Attribute {
+  key: String
+  value: String
+}
+
+type CartLine {
+  id: ID!
+  quantity: Int!
+  attribute(key: String!): Attribute
+  cost: CartLineCost
+  merchandise: Merchandise
+}
+
+type CartLineCost {
+  amountPerQuantity: Money!
+}
+
+type Money {
+  amount: Decimal!
+  currencyCode: String!
+}
+
+interface Merchandise {
+  id: ID!
+}
+
+type ProductVariant implements Merchandise {
+  id: ID!
+  product: Product!
+}
+
+type Product {
+  id: ID!
+}
+
+scalar Decimal

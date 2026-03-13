@@ -90,23 +90,14 @@ async function createDiscountCodeInShopify(
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days default
 
     const mutation = `
-      mutation CreateDiscount($input: DiscountCodeInput!) {
-        discountCodeCreate(input: $input) {
+      mutation CreateDiscount($basicCodeDiscount: DiscountCodeBasicInput!) {
+        discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
           codeDiscountNode {
             id
-            codeDiscount {
-              title
-              codes(first: 1) {
-                edges {
-                  node {
-                    code
-                  }
-                }
-              }
-            }
           }
           userErrors {
             field
+            code
             message
           }
         }
@@ -115,13 +106,15 @@ async function createDiscountCodeInShopify(
 
     // Apply discount to entire cart subtotal (not specific products)
     const variables = {
-      input: {
+      basicCodeDiscount: {
+        title: `AI Upsell ${code}`,
         code,
         combinesWith: {
           productDiscounts: true,
           shippingDiscounts: false,
           orderDiscounts: true
         },
+        appliesOncePerCustomer: false,
         usageLimit: 1000,
         startsAt: new Date().toISOString(),
         endsAt,
@@ -130,10 +123,9 @@ async function createDiscountCodeInShopify(
             percentage: percent / 100
           },
           items: {
-            allItems: true
+            all: true
           }
         },
-        appliesOncePerCustomer: false,
         customerSelection: {
           all: true
         }
@@ -143,19 +135,23 @@ async function createDiscountCodeInShopify(
     const response = await adminGraphQL(mutation, { variables });
     const data = await response.json();
 
-    if (data.data?.discountCodeCreate?.userErrors?.length > 0) {
-      const errors = data.data.discountCodeCreate.userErrors;
+    if (Array.isArray(data.errors) && data.errors.length > 0) {
+      console.error('Shopify GraphQL top-level errors:', data.errors);
+      return { success: false, error: data.errors[0]?.message || 'Unknown GraphQL error' };
+    }
+
+    if (data.data?.discountCodeBasicCreate?.userErrors?.length > 0) {
+      const errors = data.data.discountCodeBasicCreate.userErrors;
       console.error('Shopify errors:', errors);
       return { success: false, error: errors[0]?.message || 'Unknown error' };
     }
 
-    const discountId = data.data?.discountCodeCreate?.codeDiscountNode?.id;
-    const createdCode = data.data?.discountCodeCreate?.codeDiscountNode?.codeDiscount?.codes?.edges?.[0]?.node?.code;
+    const discountId = data.data?.discountCodeBasicCreate?.codeDiscountNode?.id;
 
-    if (discountId && createdCode) {
+    if (discountId) {
       return {
         success: true,
-        code: createdCode || code,
+        code,
         discountId
       };
     }

@@ -1,0 +1,12 @@
+api_version = "2026-01"
+
+[[extensions]]
+name = "Upsell Discount"
+handle = "upsell-discount"
+uid = "5eb83118-9d94-09e4-9b02-94835b97cd30016fb812"
+type = "function"
+
+[[extensions.targeting]]
+target = "purchase.product-discount.run"
+input_query = "input.graphql"
+export = "run"

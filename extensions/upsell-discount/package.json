@@ -1,0 +1,22 @@
+{
+  "name": "upsell-discount",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "shopify app function build",
+    "test": "shopify app function test"
+  },
+  "devDependencies": {
+    "@shopify/shopify_function": "^1.0.0"
+  },
+  "codegen": {
+    "schema": "./schema.graphql",
+    "documents": "./input.graphql",
+    "generates": {
+      "./generated/graphql.ts": {
+        "plugins": ["typescript", "typescript-operations"]
+      }
+    }
+  }
+}
