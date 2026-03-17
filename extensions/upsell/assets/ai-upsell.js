@@ -473,10 +473,18 @@
 
     async function applyDiscountCodeToCart(discountCode, redirectPath) {
       if (!discountCode) return false;
+      
+      // First, clear ALL existing discounts (both AI and others) before applying new code
+      try {
+        await fetch(SHOPIFY_ROOT + 'cart/update.js', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ discount: '' })
+        });
+      } catch (_) {}
+
       var redirectUrl = buildDiscountRedirectUrl(discountCode, redirectPath || 'cart');
       if (!redirectUrl) return false;
-
-      await clearExistingAiDiscounts();
 
       try {
         var redirectRes = await fetch(redirectUrl, {
@@ -540,13 +548,10 @@
       var pct = parseFloat(discountPercent);
       if (!isFinite(base) || base <= 0) return { price: price, compareAt: compareAtPrice, applied: false };
       if (!isFinite(pct) || pct <= 0) return { price: price, compareAt: compareAtPrice, applied: false };
-      // Use compareAtPrice as the true original price when it's higher than the current selling price.
-      // Formula: final_price = original_price * (1 - discount / 100)
-      // e.g. 43.99 * (1 - 0.375) = 27.49
-      var existingCompare = parseFloat(compareAtPrice);
-      var originalBase = (isFinite(existingCompare) && existingCompare > base) ? existingCompare : base;
-      var compareAt = originalBase.toFixed(2);
-      var discounted = Math.max(0, originalBase * (1 - pct / 100));
+      // Always treat the current selling price as the base for discounts.
+      // This ensures the displayed discount reflects what will actually be applied in checkout.
+      var compareAt = base.toFixed(2);
+      var discounted = Math.max(0, base * (1 - pct / 100));
       return { price: discounted.toFixed(2), compareAt: compareAt, applied: true };
     }
 
@@ -573,16 +578,21 @@
         var basePrice = parseFloat(p.price || 0).toFixed(2);
         var compareAtParsed = parseFloat(p.compareAtPrice);
         var priceHtml;
-        if (priceInfo.applied) {
-          // AI discount applied — show original base price struck through, discounted price with badge
+        if (priceInfo.applied && priceInfo.compareAt !== priceInfo.price) {
+          // AI discount applied — show original base price struck through, discounted price with badge (only if different)
           priceHtml = '<div style="font-size:11px;color:#9ca3af;text-decoration:line-through;">$' + priceInfo.compareAt + '</div>' +
             '<div style="font-size:13px;color:#008060;font-weight:600;">$' + priceInfo.price +
             ' <span style="font-size:10px;background:#e5f6ed;color:#137c4b;border-radius:999px;padding:2px 6px;margin-left:6px;">-' + formatDiscountPercent(discountPct) + '%</span></div>';
-        } else if (isFinite(compareAtParsed) && compareAtParsed > parseFloat(p.price || 0)) {
-          // No AI discount but product has a Shopify compare-at price — show native strikethrough
+        } else if (priceInfo.applied) {
+          // AI discount applied but prices are the same — show single price with discount badge
+          priceHtml = '<div style="font-size:13px;color:#008060;font-weight:600;">$' + priceInfo.price +
+            ' <span style="font-size:10px;background:#e5f6ed;color:#137c4b;border-radius:999px;padding:2px 6px;margin-left:6px;">-' + formatDiscountPercent(discountPct) + '%</span></div>';
+        } else if (isFinite(compareAtParsed) && compareAtParsed > parseFloat(p.price || 0) && compareAtParsed.toFixed(2) !== basePrice) {
+          // No AI discount but product has a Shopify compare-at price — show native strikethrough (only if different from current price)
           priceHtml = '<div style="font-size:11px;color:#9ca3af;text-decoration:line-through;">$' + compareAtParsed.toFixed(2) + '</div>' +
             '<div style="font-size:13px;color:#008060;font-weight:600;">$' + basePrice + '</div>';
         } else {
+          // Show single price
           priceHtml = '<div style="font-size:13px;color:#008060;font-weight:600;">$' + basePrice + '</div>';
         }
         var tiersHtml = '';
@@ -700,29 +710,31 @@
     }
 
     function handleCartUpdated(event) {
-      var cartFromEvent = event && event.detail && event.detail.cart;
-      if (cartFromEvent && cartFromEvent.items) {
-        setTimeout(function () { updateLineItemDiscountedPrices(cartFromEvent); }, 80);
-      } else {
-        patchCartDrawerPricesFromAPI();
-      }
-      if (event && event.detail && event.detail.source === 'ai-upsell') {
-        var isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
-        if (isCart) {
-          setTimeout(function () { placeInCartPage(); refreshSecondaryFromCart(cartFromEvent); }, 150);
-        }
-        return;
-      }
-      var isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
-      setTimeout(function () {
-        maybeClearExpiredVolumeDiscount(cartFromEvent);
-        if (isCart) {
-          placeInCartPage();
-          refreshSecondaryFromCart(cartFromEvent);
-        }
-        loadDrawerUpsellsFromCart(cartFromEvent);
-      }, 150);
-    }
+       var cartFromEvent = event && event.detail && event.detail.cart;
+       console.log('[AI Upsell] 🛒 handleCartUpdated fired, source:', event && event.detail && event.detail.source);
+       if (cartFromEvent && cartFromEvent.items) {
+         setTimeout(function () { console.log('[AI Upsell] handleCartUpdated: calling updateLineItemDiscountedPrices'); updateLineItemDiscountedPrices(cartFromEvent); }, 80);
+       } else {
+         console.log('[AI Upsell] handleCartUpdated: calling patchCartDrawerPricesFromAPI');
+         patchCartDrawerPricesFromAPI();
+       }
+       if (event && event.detail && event.detail.source === 'ai-upsell') {
+         var isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
+         if (isCart) {
+           setTimeout(function () { placeInCartPage(); refreshSecondaryFromCart(cartFromEvent); }, 150);
+         }
+         return;
+       }
+       var isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
+       setTimeout(function () {
+         maybeClearExpiredVolumeDiscount(cartFromEvent);
+         if (isCart) {
+           placeInCartPage();
+           refreshSecondaryFromCart(cartFromEvent);
+         }
+         loadDrawerUpsellsFromCart(cartFromEvent);
+       }, 150);
+     }
 
     async function maybeClearExpiredVolumeDiscount(cartOverride) {
       try {
@@ -908,8 +920,8 @@
     function resolvePricingContext(productData, productCard) {
       var variant = resolveSelectedVariantData(productData, productCard);
       var currentPrice = parseFloat(variant && variant.price || productData && productData.price || '');
-      var compareAtPrice = parseFloat(variant && variant.compareAtPrice || productData && productData.compareAtPrice || '');
-      var originalBase = isFinite(compareAtPrice) && compareAtPrice > currentPrice ? compareAtPrice : currentPrice;
+      // Always treat the current selling price as the base for discounts.
+      var originalBase = currentPrice;
       return {
         currentPrice: isFinite(currentPrice) && currentPrice > 0 ? currentPrice : NaN,
         originalBase: isFinite(originalBase) && originalBase > 0 ? originalBase : NaN
@@ -941,14 +953,14 @@
         ? formatDiscountPercent(Number(functionDiscountPercent))
         : formattedDiscount;
       if (offerType === 'volume_discount') {
-        var volumeProps = { 'Offer': 'Volume ' + formattedDiscount + '% off', 'offer': 'Volume ' + functionPct + '% off' };
+        var volumeProps = { 'Offer': 'Volume ' + formattedDiscount + '% off' };
         if (originalBasePrice) volumeProps['_ai_original_price'] = String(originalBasePrice);
         return { properties: volumeProps };
       }
       // Always store the discount % in the Offer property so updateLineItemDiscountedPrices
       // can read it back and patch the cart drawer price regardless of AI goal type.
       var prefix = offerType === 'bundle' ? 'Bundle' : 'Offer';
-      var props = { 'Offer': prefix + ' ' + formattedDiscount + '% off', 'offer': prefix + ' ' + functionPct + '% off' };
+      var props = { 'Offer': prefix + ' ' + formattedDiscount + '% off' };
       if (originalBasePrice) props['_ai_original_price'] = String(originalBasePrice);
       return { properties: props };
     }
@@ -1074,7 +1086,7 @@
       var variantHtml = hasV ? '<div class="ai-variant-wrapper"><select class="ai-variant-select">' + product.variants.map(function (v) { var vInfo = applyAiDiscount(v.price, v.compareAtPrice || '', discountPct); return '<option value="' + v.id + '" data-price="' + vInfo.price + '" data-compare="' + (vInfo.compareAt || '') + '"' + (!v.available ? ' disabled' : '') + (v.id === (first && first.id) ? ' selected' : '') + '>' + v.title + (!v.available ? ' - Sold out' : '') + '</option>'; }).join('') + '</select></div>' : '';
       var subscriptionMetaHtml = offerType === 'subscription_upgrade' ? getSubscriptionMetaHTML(product) : '';
       var primaryActionLabel = product.availableForSale ? (offerType === 'subscription_upgrade' ? 'Start Subscription' : 'Add to Cart') : 'Out of Stock';
-      return '<div class="' + cardClass + '" data-product-id="' + product.id + '" data-offer-type="' + offerType + '"' + volumeTiersAttr + ' data-selling-plan-id="' + (product.sellingPlanIdNumeric || product.sellingPlanId || '') + '" data-inventory-quantity="' + (product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999) + '" data-inventory-policy="' + (product.inventoryPolicy || 'continue') + '">' + getOfferTypeBadge(product) + '<a href="' + product.url + '" class="ai-upsell-link"><div class="ai-upsell-image-wrapper">' + (product.image ? '<img src="' + product.image + '" alt="' + product.title + '" class="ai-upsell-image" loading="lazy" />' : '') + '</div><div class="ai-upsell-info"><h3 class="ai-upsell-product-title">' + product.title + '</h3><p class="ai-upsell-price-block">' + (dc && parseFloat(dc) > parseFloat(dp) ? '<span class="ai-upsell-compare-price">$' + parseFloat(dc).toFixed(2) + '</span> ' : '') + '<span class="ai-upsell-price">$' + parseFloat(dp).toFixed(2) + '</span>' + discountLabel + '</p>' + subscriptionMetaHtml + '</div></a><div class="ai-upsell-actions">' + variantHtml + '<div class="ai-upsell-quantity"><span class="ai-qty-label">Quantity</span><div class="ai-qty-controls"><button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">\u2212</button><input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly /><button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button></div></div><button class="ai-add-to-cart-btn" data-variant-id="' + eVid + '" data-product-id="' + product.id + '" data-discount-percent="' + (discountPct || 0) + '" data-recommendation-type="' + product.type + '" data-confidence="' + product.confidence + '" ' + (!product.availableForSale ? 'disabled' : '') + '>' + primaryActionLabel + '</button></div></div>';
+      return '<div class="' + cardClass + '" data-product-id="' + product.id + '" data-offer-type="' + offerType + '"' + volumeTiersAttr + ' data-selling-plan-id="' + (product.sellingPlanIdNumeric || product.sellingPlanId || '') + '" data-inventory-quantity="' + (product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999) + '" data-inventory-policy="' + (product.inventoryPolicy || 'continue') + '">' + getOfferTypeBadge(product) + '<a href="' + product.url + '" class="ai-upsell-link"><div class="ai-upsell-image-wrapper">' + (product.image ? '<img src="' + product.image + '" alt="' + product.title + '" class="ai-upsell-image" loading="lazy" />' : '') + '</div><div class="ai-upsell-info"><h3 class="ai-upsell-product-title">' + product.title + '</h3><p class="ai-upsell-price-block">' + (dc && parseFloat(dc) > parseFloat(dp) && parseFloat(dc).toFixed(2) !== parseFloat(dp).toFixed(2) ? '<span class="ai-upsell-compare-price">$' + parseFloat(dc).toFixed(2) + '</span> ' : '') + '<span class="ai-upsell-price">$' + parseFloat(dp).toFixed(2) + '</span>' + discountLabel + '</p>' + subscriptionMetaHtml + '</div></a><div class="ai-upsell-actions">' + variantHtml + '<div class="ai-upsell-quantity"><span class="ai-qty-label">Quantity</span><div class="ai-qty-controls"><button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">\u2212</button><input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly /><button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button></div></div><button class="ai-add-to-cart-btn" data-variant-id="' + eVid + '" data-product-id="' + product.id + '" data-discount-percent="' + (discountPct || 0) + '" data-recommendation-type="' + product.type + '" data-confidence="' + product.confidence + '" ' + (!product.availableForSale ? 'disabled' : '') + '>' + primaryActionLabel + '</button></div></div>';
     }
 
     function updateUpsellPrice(card, qty) {
@@ -1314,11 +1326,28 @@
         '[data-cart-item-total]',
         '[data-cart-item-final-price]',
         '[data-cart-item-regular-price]'
-      ];
-      for (var i = 0; i < selectors.length; i++) {
-        var found = container.querySelector(selectors[i]);
-        if (found) return [found];
+      ].join(', ');
+
+      // Return all matching wrappers, deduplicated so nested matches don't cause double-patching.
+      var wrappers = Array.prototype.slice.call(container.querySelectorAll(selectors));
+      if (wrappers.length) {
+        // Remove any wrapper that is an ancestor or descendant of another wrapper
+        var deduped = wrappers.filter(function (w, i) {
+          for (var j = 0; j < wrappers.length; j++) {
+            if (i !== j && w.contains(wrappers[j])) return false; // w is ancestor of another, skip w (keep the inner one)
+          }
+          return true;
+        });
+        // Further deduplicate: if two wrappers are the same node, keep only the first
+        var seen = [];
+        deduped = deduped.filter(function (w) {
+          if (seen.indexOf(w) !== -1) return false;
+          seen.push(w);
+          return true;
+        });
+        return deduped.length ? deduped : [wrappers[0]];
       }
+
       var fallbackTotals = container.querySelector('.cart-item__totals, .line-item__totals, [data-cart-item-total], .cart-item__price-wrapper');
       if (fallbackTotals) return [fallbackTotals];
       return [];
@@ -1457,7 +1486,7 @@
     }
 
     function findCartLineContainer(root, item, index) {
-      if (!root || !root.querySelectorAll) return null;
+      if (!root || !root.querySelectorAll) { console.log('[AI Upsell] findCartLineContainer: no root'); return null; }
       var oneBased = index + 1;
       var selectors = [
         '[data-cart-item-key="' + item.key + '"]',
@@ -1469,51 +1498,77 @@
       ];
       for (var i = 0; i < selectors.length; i++) {
         var found = root.querySelector(selectors[i]);
-        if (found) return found;
+        if (found) { console.log('[AI Upsell] findCartLineContainer: Found via selector', selectors[i]); return found; }
       }
+      console.log('[AI Upsell] findCartLineContainer: Trying fallback selectors');
       var rows = root.querySelectorAll(
         'cart-drawer-items .cart-item, cart-items .cart-item, [id^="CartItem-"], ' +
         '.drawer-cart-item, .cart-drawer-item, [data-cart-item], [data-line-item]'
       );
+      console.log('[AI Upsell] findCartLineContainer: Found', rows.length, 'rows, returning index', index);
       return rows[index] || null;
     }
 
-    function patchLineItemPriceDisplay(container, discountedCents, cart, docLike, originalLineCents) {
-      if (!container) return false;
+    function patchLineItemPriceDisplay(container, discountedCents, cart, docLike, originalLineCents, originalUnitCents) {
+      if (!container) { console.log('[AI Upsell] patchLineItemPriceDisplay: no container'); return false; }
       var wrappers = getCartLineWrappers(container);
-      if (!wrappers.length) return false;
+      console.log('[AI Upsell] patchLineItemPriceDisplay: Found', wrappers.length, 'wrappers');
+      if (!wrappers.length) { console.log('[AI Upsell] patchLineItemPriceDisplay: No wrappers found, discounted:', discountedCents); return false; }
       var createNodeWith = docLike && docLike.createElement ? docLike : document;
       var patched = false;
+      var hasCorrectPatch = false;
       wrappers.forEach(function (wrapper) {
         if (!wrapper) return;
+        // Check if patch already exists and is correct
+        var existingPatch = wrapper.querySelector('[data-ai-discounted-node="true"]');
+        if (existingPatch && existingPatch.textContent) {
+          var expectedPrice = formatMoneyFromReference(discountedCents, wrapper.textContent, cart);
+          if (existingPatch.textContent === expectedPrice) {
+            console.log('[AI Upsell] patchLineItemPriceDisplay: Patch already correct, skipping');
+            hasCorrectPatch = true;
+            return; // Already patched correctly, skip
+          }
+        }
         if (wrapper.setAttribute) wrapper.setAttribute('data-ai-price-patched', 'true');
         Array.prototype.slice.call(wrapper.querySelectorAll('[data-ai-discounted-node="true"]')).forEach(function (node) {
           node.remove();
         });
         var priceNodes = getCartPriceNodes(wrapper);
+        console.log('[AI Upsell] patchLineItemPriceDisplay: Found', priceNodes.length, 'price nodes');
         var referenceText = (priceNodes[0] && priceNodes[0].textContent) || wrapper.textContent || '';
-        if (!/\d/.test(referenceText)) return;
+        if (!/\d/.test(referenceText)) { console.log('[AI Upsell] patchLineItemPriceDisplay: No digits in reference text'); return; }
         wrapper.style.display = 'flex';
         wrapper.style.flexDirection = 'column';
         wrapper.style.alignItems = 'flex-end';
         wrapper.style.gap = '2px';
-        priceNodes.forEach(function (el) {
-          if (originalLineCents && originalLineCents > 0) {
-            el.textContent = formatMoneyFromReference(originalLineCents, referenceText, cart);
+        // Only keep the first price node visible with strikethrough, hide the rest
+        priceNodes.forEach(function (el, idx) {
+          if (idx === 0) {
+            // First price node: apply strikethrough styling
+            // Use originalUnitCents for checkout pages (single unit price), fall back to line total for cart pages
+            var priceToShow = originalUnitCents && originalUnitCents > 0 ? originalUnitCents : originalLineCents;
+            if (priceToShow && priceToShow > 0) {
+              el.textContent = formatMoneyFromReference(priceToShow, referenceText, cart);
+            }
+            el.style.textDecoration = 'line-through';
+            el.style.color = '#9ca3af';
+            el.style.fontWeight = '400';
+            el.style.whiteSpace = 'nowrap';
+          } else {
+            // Hide duplicate price nodes
+            el.style.display = 'none';
+            el.setAttribute('data-ai-hidden-duplicate-price', 'true');
           }
-          el.style.textDecoration = 'line-through';
-          el.style.color = '#9ca3af';
-          el.style.fontWeight = '400';
-          el.style.whiteSpace = 'nowrap';
         });
         var discountEl = createNodeWith.createElement('div');
         discountEl.setAttribute('data-ai-discounted-node', 'true');
         discountEl.style.cssText = 'font-weight:700;color:#008060;font-size:inherit;white-space:nowrap;line-height:1.2;';
         discountEl.textContent = formatMoneyFromReference(discountedCents, referenceText, cart);
+        console.log('[AI Upsell] patchLineItemPriceDisplay: Setting discounted price to', discountEl.textContent);
         wrapper.insertBefore(discountEl, wrapper.firstChild);
         patched = true;
       });
-      return patched;
+      return patched || hasCorrectPatch;
     }
 
     function patchVisibleCartPricesFromDOM(root) {
@@ -1548,7 +1603,7 @@
 
         if (pct > 0 && baseLineCents > 0) {
           var discountedLineCents = Math.round(baseLineCents * (1 - pct / 100));
-          if (patchLineItemPriceDisplay(row, discountedLineCents, null, document, baseLineCents)) anyPatched = true;
+          if (patchLineItemPriceDisplay(row, discountedLineCents, null, document, baseLineCents, null)) anyPatched = true;
           subtotalCents += discountedLineCents;
         } else {
           subtotalCents += baseLineCents;
@@ -1576,32 +1631,36 @@
     }
 
     function updateLineItemDiscountedPrices(cart) {
-      if (!cart || !Array.isArray(cart.items)) return false;
+      if (!cart || !Array.isArray(cart.items)) { console.log('[AI Upsell] ❌ updateLineItemDiscountedPrices: no cart or items'); return false; }
       suppressCartPatchObservers(400);
-      console.log('[AI Upsell] updateLineItemDiscountedPrices called with', cart.items.length, 'items');
+      console.log('[AI Upsell] 📊 updateLineItemDiscountedPrices called with', cart.items.length, 'items');
       var anyPatched = false;
       cart.items.forEach(function (item, index) {
         // Read discount % from the Offer line-item property
         var discountPct = 0;
         if (item.properties && typeof item.properties === 'object') {
           var offerText = item.properties['Offer'] || '';
-          console.log('[AI Upsell] Item', index, '- Offer property:', offerText);
+          console.log('[AI Upsell] Item', index, 'title:', item.title, '- Offer property:', offerText);
           var discountMatch = offerText.match(/(\d+(?:\.\d+)?)\s*%/);
           if (discountMatch) discountPct = parseFloat(discountMatch[1]);
         }
-        if (discountPct <= 0) return;
+        console.log('[AI Upsell] Item', index, '- Discount %:', discountPct);
+        if (discountPct <= 0) { console.log('[AI Upsell] Item', index, '- No discount, skipping'); return; }
 
-        // Use compare_at_price as the original base when it is higher — identical to
-        // the formula used on the upsell card: final = original * (1 - pct/100)
+        // Always treat the current selling price as the base for discounts (ignore compare_at_price).
         var storedOriginalCents = getStoredOriginalPriceCents(item.properties);
         var unitCents = storedOriginalCents || item.original_price || item.price;
         var compareAtCents = item.compare_at_price || 0;
-        var baseUnitCents = (compareAtCents > unitCents) ? compareAtCents : unitCents;
+        var baseUnitCents = unitCents;
         var quantity = item.quantity || 1;
         var originalLineCents = baseUnitCents * quantity;
+        var originalUnitCents = baseUnitCents;
         var discountedLineCents = Math.round(baseUnitCents * (1 - discountPct / 100)) * quantity;
+        console.log('[AI Upsell] Item', index, '- storedOriginal:', storedOriginalCents, 'unitCents:', unitCents, 'compareAt:', compareAtCents, 'base:', baseUnitCents, 'qty:', quantity, 'discountedLine:', discountedLineCents);
         var container = findCartLineContainer(document, item, index);
-        if (patchLineItemPriceDisplay(container, discountedLineCents, cart, document, originalLineCents)) anyPatched = true;
+        console.log('[AI Upsell] Item', index, '- container found:', !!container);
+        if (container) console.log('[AI Upsell] Item', index, '- container HTML:', container.outerHTML.substring(0, 200));
+        if (patchLineItemPriceDisplay(container, discountedLineCents, cart, document, originalLineCents, originalUnitCents)) { console.log('[AI Upsell] Item', index, '- ✅ patched'); anyPatched = true; } else { console.log('[AI Upsell] Item', index, '- ❌ patch failed'); }
         var detailCandidates = [
           item.original_price,
           item.price,
@@ -1629,8 +1688,8 @@
           anyAiDiscount = true;
           var storedOriginalCents2 = getStoredOriginalPriceCents(it.properties);
           var uC = storedOriginalCents2 || it.original_price || it.price;
-          var cC = it.compare_at_price || 0;
-          var bC = (cC > uC) ? cC : uC;
+          // Always use the current selling price as the base for discounts.
+          var bC = uC;
           newSubtotalCents += Math.round(bC * (1 - pct / 100)) * (it.quantity || 1);
         } else {
           newSubtotalCents += (it.final_line_price || it.original_line_price || it.price * (it.quantity || 1));
@@ -1655,8 +1714,16 @@
       }
       hideInternalOfferNodes(document);
       hideAiDiscountApplicationNodes(document);
-      if (!anyPatched) return patchVisibleCartPricesFromDOM(document);
-      return true;
+
+      // If we didn't patch via the API-derived cart data, fall back to detecting
+      // discounts directly in the DOM.
+      if (!anyPatched) anyPatched = patchVisibleCartPricesFromDOM(document);
+
+      // If we applied any patches and we have cart data, start a persistent watcher
+      // to reapply them in case the theme re-renders the cart layout later.
+      if (anyPatched && cart && Array.isArray(cart.items)) startPersistentPatchWatcher(cart);
+
+      return anyPatched;
     }
 
     // ── Pre-process sections HTML before DOM insertion ─────────────────────────
@@ -1680,13 +1747,14 @@
 
           var storedOriginalCents3 = getStoredOriginalPriceCents(item.properties);
           var unitCents = storedOriginalCents3 || item.original_price || item.price;
-          var cmpCents  = item.compare_at_price || 0;
-          var baseCents = (cmpCents > unitCents) ? cmpCents : unitCents;
+          // Use the current selling price as the base price for display calculations.
+          var baseCents = unitCents;
           var qty = item.quantity || 1;
           var originalLineCents = baseCents * qty;
+          var originalUnitCents = baseCents;
           var discLineCents = Math.round(baseCents * (1 - discountPct / 100)) * qty;
           var itemEl = findCartLineContainer(doc, item, index);
-          if (patchLineItemPriceDisplay(itemEl, discLineCents, cart, doc, originalLineCents)) modified = true;
+          if (patchLineItemPriceDisplay(itemEl, discLineCents, cart, doc, originalLineCents, originalUnitCents)) modified = true;
           var detailCandidates = [
             item.original_price,
             item.price,
@@ -1710,8 +1778,8 @@
           if (pct > 0) {
             var storedOriginalCents4 = getStoredOriginalPriceCents(it.properties);
             var u = storedOriginalCents4 || it.original_price || it.price;
-            var c = it.compare_at_price || 0;
-            var b = (c > u) ? c : u;
+            // Always use the current selling price as the base for discounts.
+            var b = u;
             newSubtotalCents += Math.round(b * (1 - pct / 100)) * (it.quantity || 1);
           } else {
             newSubtotalCents += (it.final_line_price || it.original_line_price || it.price * (it.quantity || 1));
@@ -1740,6 +1808,8 @@
     // Debounced helper: fetch /cart.js then patch all prices + subtotal in the drawer.
     // Used when we need to patch without already holding cart data (drawer open, etc.).
     var _patchDebounceTimer = null;
+    var _patchPersistentTimer = null;
+    
     function patchCartDrawerPricesFromAPI() {
       if (__AI_UPSELL_PATCH_IN_FLIGHT__ || isCartPatchSuppressed()) return;
       __AI_UPSELL_PATCH_IN_FLIGHT__ = true;
@@ -1759,27 +1829,68 @@
           });
       }, 120);
     }
+    
+    // Persistent patch watcher - reapplies patches if they get removed by theme
+    var _patchWatcherInFlight = false;
+    var _patchWatcherConsecutiveSuccess = 0;
+    function startPersistentPatchWatcher(cart) {
+      console.log('[AI Upsell] ⏰ Starting persistent patch watcher');
+      if (_patchPersistentTimer) clearInterval(_patchPersistentTimer);
+      var checksWithoutPatches = 0;
+      _patchWatcherConsecutiveSuccess = 0;
+      _patchPersistentTimer = setInterval(function () {
+        if (_patchWatcherInFlight) return; // Prevent re-entry
+        var hasAiPatch = document.querySelector('[data-ai-discounted-node="true"]');
+        if (!hasAiPatch) {
+          checksWithoutPatches++;
+          _patchWatcherConsecutiveSuccess = 0;
+          if (checksWithoutPatches < 5) {
+            console.log('[AI Upsell] ⚠️  AI patch missing! Reapplying... (check', checksWithoutPatches, ')');
+            if (cart) {
+              _patchWatcherInFlight = true;
+              updateLineItemDiscountedPrices(cart);
+              setTimeout(function () { _patchWatcherInFlight = false; }, 600);
+            }
+          } else {
+            console.log('[AI Upsell] ⏰ Stopping persistent watcher - no patches detected after 5 checks');
+            clearInterval(_patchPersistentTimer);
+          }
+        } else {
+          checksWithoutPatches = 0;
+          _patchWatcherConsecutiveSuccess++;
+          if (_patchWatcherConsecutiveSuccess >= 2) {
+            console.log('[AI Upsell] ⏰ Patch confirmed stable - stopping persistent watcher');
+            clearInterval(_patchPersistentTimer);
+          }
+        }
+      }, 500);
+    }
 
     function refreshCartUI(upsellProductId) {
+      console.log('[AI Upsell] 🔄 refreshCartUI called with product:', upsellProductId);
       // Add extra delay to ensure discount is fully processed by Shopify
       setTimeout(function() {
         var cacheParam = '&_t=' + Date.now();
         fetch(SHOPIFY_ROOT + 'cart.js').then(function (r) { return r.json(); }).then(function (cart) {
-          console.log('[AI Upsell] Cart state after discount:', { itemCount: cart.item_count, discountCode: cart.discount_code });
+          console.log('[AI Upsell] 📦 Cart state after discount:', { itemCount: cart.item_count, discountCode: cart.discount_code, items: cart.items.length });
+          cart.items.forEach(function (it, idx) { console.log('[AI Upsell] - Item', idx, ':', it.title, 'Offer:', (it.properties && it.properties['Offer']) || 'none'); });
           document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
           updateCartCountBubble(cart.item_count);
           // Fetch sections with cache busting to ensure fresh render
           fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble,main-cart-items,main-cart-footer' + cacheParam).then(function (r) { return r.json(); }).then(function (sections) {
+            console.log('[AI Upsell] 📄 Got sections:', Object.keys(sections));
             // Pre-process HTML to bake discounted prices in BEFORE DOM insertion.
             // This prevents the theme's own cart:updated handler from overwriting patches.
             if (sections['cart-drawer']) { var el = document.querySelector('cart-drawer'); if (el) { var f = document.createElement('div'); f.innerHTML = patchCartSectionHtml(sections['cart-drawer'], cart); var n = f.querySelector('cart-drawer'); if (n) el.replaceWith(n); } }
             if (sections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = sections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
-            if (sections['main-cart-items']) { var el3 = document.querySelector('cart-items'); if (el3) { var f3 = document.createElement('div'); f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart); var n3 = f3.querySelector('cart-items'); if (n3) el3.replaceWith(n3); } }
+            if (sections['main-cart-items']) { console.log('[AI Upsell] 🔍 Looking for cart-items element'); var el3 = document.querySelector('cart-items'); console.log('[AI Upsell] cart-items found:', !!el3); if (el3) { var f3 = document.createElement('div'); f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart); var n3 = f3.querySelector('cart-items'); if (n3) el3.replaceWith(n3); } else { console.log('[AI Upsell] No cart-items found, calling updateLineItemDiscountedPrices directly'); updateLineItemDiscountedPrices(cart); } }
             if (sections['main-cart-footer']) { var el4 = document.getElementById('main-cart-footer') || document.querySelector('cart-footer, .cart__footer'); if (el4) { var f4 = document.createElement('div'); f4.innerHTML = patchCartSectionHtml(sections['main-cart-footer'], cart); var n4 = f4.querySelector('#main-cart-footer, cart-footer, .cart__footer'); if (n4) el4.replaceWith(n4); } }
+            // Always ensure cart prices are patched after section updates
+            setTimeout(function () { console.log('[AI Upsell] ⏱️ Calling updateLineItemDiscountedPrices with delay'); updateLineItemDiscountedPrices(cart); startPersistentPatchWatcher(cart); }, 100);
             placeInCartPage();
             refreshSecondaryFromCart(cart);
             loadDrawerUpsellsFromCart(cart);
-          });
+            });
         });
       }, 500);
     }
