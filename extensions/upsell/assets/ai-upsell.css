@@ -198,6 +198,29 @@
 .ai-bundle-compare { font-size: 14px; color: #999; text-decoration: line-through; }
 .ai-bundle-price { font-size: 20px; font-weight: 700; color: #111; }
 .ai-bundle-savings { font-size: 12px; color: #16a34a; font-weight: 600; margin: 0 0 8px; }
+.ai-multi-bundle-card { width: 100%; }
+.ai-mbc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px 12px 8px; }
+@media (max-width: 600px) { .ai-mbc-grid { grid-template-columns: repeat(2, 1fr); } }
+.ai-mbc-item { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.ai-mbc-img-link { display: block; width: 100%; }
+.ai-mbc-img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #f5f5f5; display: block; }
+.ai-mbc-img-placeholder { width: 100%; aspect-ratio: 1; background: #f0f0f0; border-radius: 8px; }
+.ai-mbc-title { font-size: 12px; font-weight: 500; color: #333; margin: 8px 0 4px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; width: 100%; }
+.ai-mbc-price-row { margin: 0 0 8px; font-size: 13px; }
+.ai-mbc-compare { color: #999; text-decoration: line-through; font-size: 11px; margin-right: 3px; }
+.ai-mbc-price { font-weight: 700; color: #111; }
+.ai-mbc-pill { background: #dcfce7; color: #16a34a; font-size: 10px; font-weight: 600; border-radius: 4px; padding: 1px 5px; margin-left: 3px; }
+.ai-mbc-qty { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: auto; }
+.ai-mbc-qty-btn { width: 24px; height: 24px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0; }
+.ai-mbc-qty-btn:hover { background: #f3f4f6; }
+.ai-mbc-qty-val { font-size: 13px; font-weight: 600; min-width: 18px; text-align: center; }
+.ai-mbc-total-row { padding: 10px 16px 6px; text-align: center; border-top: 1px solid #f0f0f0; margin-top: 8px; font-size: 14px; }
+.ai-mbc-total-label { color: #555; }
+.ai-mbc-total-original { color: #999; text-decoration: line-through; margin: 0 4px; }
+.ai-mbc-total-discounted { font-weight: 700; color: #111; font-size: 15px; }
+.ai-multi-bundle-btn { display: block; width: 100%; padding: 14px; background: #16a34a; color: #fff; border: none; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer; letter-spacing: 0.02em; transition: background 0.15s; }
+.ai-multi-bundle-btn:hover { background: #15803d; }
+.ai-multi-bundle-btn:disabled { opacity: 0.7; cursor: not-allowed; }
 
 .ai-upsell-reason {
   font-size: var(--ai-reason-size, 13px);

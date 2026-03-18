@@ -146,6 +146,15 @@
   }
   resolveUserId();
 
+  // ── Early prefetch — start API call before DOM is ready to reduce latency ──
+  if (!_C.isCartPage && _C.productId && !window.__AI_UPSELL_PREFETCH__) {
+    var _prefetchUid = window.__AI_UPSELL_USER_ID__ || '';
+    window.__AI_UPSELL_PREFETCH__ = fetch(
+      '/apps/ai-upsell?id=gid://shopify/Product/' + _C.productId +
+      (_prefetchUid ? '&userId=' + encodeURIComponent(_prefetchUid) : '')
+    );
+  }
+
   // ── Product page time tracker ──────────────────────────────────────────────
   if (!_C.isCartPage && _C.productId && !window.__AI_TIME_TRACKER__) {
     window.__AI_TIME_TRACKER__ = true;
@@ -1064,6 +1073,187 @@
       return '<div class="ai-upsell-card ai-bundle-card" data-product-id="' + product.id + '" data-inventory-quantity="' + (product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999) + '" data-inventory-policy="' + (product.inventoryPolicy || 'continue') + '"><div class="ai-offer-type-badge ai-offer-type-bundle">Bundle &amp; Save</div><div class="ai-bundle-products"><div class="ai-bundle-item"><a href="' + (src ? src.url : '#') + '" class="ai-bundle-img-link">' + srcImg + '</a><p class="ai-bundle-item-title">' + (src ? src.title : 'Current Product') + '</p></div><div class="ai-bundle-plus">+</div><div class="ai-bundle-item"><a href="' + product.url + '" class="ai-bundle-img-link">' + upsellImg + '</a><p class="ai-bundle-item-title">' + product.title + '</p></div></div><div class="ai-bundle-pricing"><p class="ai-bundle-total-label">Bundle Price</p><p class="ai-bundle-price-row">' + comparePriceHtml + '<span class="ai-bundle-price">$' + bundleDiscountedTotal.toFixed(2) + '</span></p>' + savingsHtml + '</div><div class="ai-upsell-actions"><button class="ai-add-to-cart-btn" data-variant-id="' + upsellVid + '" data-product-id="' + product.id + '" data-source-variant-id="' + (src && src.variantId ? src.variantId : '') + '" data-source-product-id="' + (src && src.id ? src.id : '') + '" data-discount-percent="' + discountPct + '" data-recommendation-type="' + (product.type || 'bundle') + '" data-confidence="' + product.confidence + '"' + (!product.availableForSale ? ' disabled' : '') + '>' + (product.availableForSale ? 'Add to Cart' : 'Out of Stock') + '</button></div></div>';
     }
 
+    function buildMultiBundleCardHTML(sourceProduct, bundleProducts) {
+      var src = sourceProduct || null;
+      var capped = bundleProducts.slice(0, 4);
+      // Total count includes source product (added to cart silently)
+      var totalCount = capped.length + (src ? 1 : 0);
+      var srcPrice = src ? (parseFloat(src.price) || 0) : 0;
+      var originalTotal = srcPrice;
+      var discountedTotal = srcPrice; // source product: no discount
+      var maxDiscountPct = 0;
+      capped.forEach(function(p) {
+        var price = parseFloat(p.price) || 0;
+        var dp = parseFloat(p.discountPercent) || 0;
+        if (dp > maxDiscountPct) maxDiscountPct = dp;
+        originalTotal += price;
+        discountedTotal += dp > 0 ? price * (1 - dp / 100) : price;
+      });
+      var savings = originalTotal - discountedTotal;
+      // Only show upsell products in grid — source product is already on the page
+      var itemsHtml = '';
+      capped.forEach(function(p) {
+        var price = parseFloat(p.price) || 0;
+        var imgHtml = p.image ? '<img src="' + p.image + '" alt="" class="ai-mbc-img" />' : '<div class="ai-mbc-img-placeholder"></div>';
+        var vid = p.variantId || p.id;
+        if (typeof vid === 'string' && vid.includes('/')) vid = vid.split('/').pop();
+        itemsHtml += '<div class="ai-mbc-item" data-vid="' + (vid || '') + '">'
+          + '<a href="' + (p.url || '#') + '" class="ai-mbc-img-link">' + imgHtml + '</a>'
+          + '<p class="ai-mbc-title">' + (p.title || '') + '</p>'
+          + '<p class="ai-mbc-price-row"><span class="ai-mbc-price">$' + price.toFixed(2) + '</span></p>'
+          + '<div class="ai-mbc-qty"><button class="ai-mbc-qty-btn ai-mbc-minus">\u2212</button><span class="ai-mbc-qty-val">1</span><button class="ai-mbc-qty-btn ai-mbc-plus">+</button></div>'
+          + '</div>';
+      });
+      var variantIds = capped.map(function(p) {
+        var vid = p.variantId || p.id;
+        if (typeof vid === 'string' && vid.includes('/')) vid = vid.split('/').pop();
+        return vid;
+      }).filter(Boolean);
+      var srcVariantId = src && src.variantId ? src.variantId : '';
+      var buttonText = 'Add ' + totalCount + ' Items';
+      var totalPriceHtml = savings > 0
+        ? '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-original">$' + originalTotal.toFixed(2) + '</span> <span class="ai-mbc-total-discounted">$' + discountedTotal.toFixed(2) + '</span>'
+        : '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-discounted">$' + discountedTotal.toFixed(2) + '</span>';
+      return '<div class="ai-upsell-card ai-bundle-card ai-multi-bundle-card" data-source-price="' + srcPrice.toFixed(2) + '">'
+        + '<div class="ai-offer-type-badge ai-offer-type-bundle">Bundle &amp; Save</div>'
+        + '<div class="ai-mbc-grid">' + itemsHtml + '</div>'
+        + '<div class="ai-mbc-total-row">' + totalPriceHtml + '</div>'
+        + '<div class="ai-upsell-actions"><button class="ai-multi-bundle-btn" data-variant-ids="' + variantIds.join(',') + '" data-source-variant-id="' + srcVariantId + '" data-discount-percent="' + maxDiscountPct + '">' + buttonText + '</button></div>'
+        + '</div>';
+    }
+
+    function attachMultiBundleListeners(contentEl) {
+      // Recalculate total price row when any quantity changes
+      function recalculateBundleTotal(card) {
+        var btn = card ? card.querySelector('.ai-multi-bundle-btn') : null;
+        if (!btn) return;
+        var discountPct = parseFloat(btn.getAttribute('data-discount-percent') || '0');
+        // Source product price (hidden from grid, always qty=1, no discount)
+        var srcPrice = parseFloat(card.getAttribute('data-source-price') || '0');
+        var srcVid = btn.getAttribute('data-source-variant-id') || '';
+        var itemEls = card.querySelectorAll('.ai-mbc-item');
+        var originalTotal = srcPrice;
+        var discountedTotal = srcPrice;
+        var totalQty = srcVid ? 1 : 0; // source product counts as 1 if present
+        itemEls.forEach(function(itemEl) {
+          var priceEl = itemEl.querySelector('.ai-mbc-price');
+          var qtyEl = itemEl.querySelector('.ai-mbc-qty-val');
+          var price = priceEl ? parseFloat(priceEl.textContent.replace(/[^0-9.]/g, '')) || 0 : 0;
+          var qty = qtyEl ? parseInt(qtyEl.textContent) || 1 : 1;
+          totalQty += qty;
+          originalTotal += price * qty;
+          discountedTotal += discountPct > 0 ? price * qty * (1 - discountPct / 100) : price * qty;
+        });
+        var savings = originalTotal - discountedTotal;
+        var totalRow = card.querySelector('.ai-mbc-total-row');
+        if (totalRow) {
+          totalRow.innerHTML = savings > 0.001
+            ? '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-original">$' + originalTotal.toFixed(2) + '</span> <span class="ai-mbc-total-discounted">$' + discountedTotal.toFixed(2) + '</span>'
+            : '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-discounted">$' + discountedTotal.toFixed(2) + '</span>';
+        }
+        btn.setAttribute('data-original-text', 'Add ' + totalQty + ' Items');
+        if (btn.textContent !== 'Adding...' && btn.textContent !== 'Added \u2713') {
+          btn.textContent = 'Add ' + totalQty + ' Items';
+        }
+      }
+
+      // Quantity +/- buttons inside each bundle item
+      contentEl.querySelectorAll('.ai-mbc-minus').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          var valEl = btn.parentElement.querySelector('.ai-mbc-qty-val');
+          var v = parseInt(valEl.textContent) || 1;
+          if (v > 1) { valEl.textContent = v - 1; recalculateBundleTotal(btn.closest('.ai-multi-bundle-card')); }
+        });
+      });
+      contentEl.querySelectorAll('.ai-mbc-plus').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          var valEl = btn.parentElement.querySelector('.ai-mbc-qty-val');
+          var v = parseInt(valEl.textContent) || 1;
+          if (v < 10) { valEl.textContent = v + 1; recalculateBundleTotal(btn.closest('.ai-multi-bundle-card')); }
+        });
+      });
+
+      contentEl.querySelectorAll('.ai-multi-bundle-btn').forEach(function(button) {
+        button.addEventListener('click', async function(e) {
+          e.preventDefault(); e.stopPropagation();
+          var variantIdsStr = button.getAttribute('data-variant-ids') || '';
+          var variantIds = variantIdsStr.split(',').filter(Boolean);
+          var srcVid = button.getAttribute('data-source-variant-id') || '';
+          var originalText = button.getAttribute('data-original-text') || button.textContent;
+          if (variantIds.length === 0) return;
+          // Read per-item quantities from the grid
+          var card = button.closest('.ai-multi-bundle-card');
+          var qtyEls = card ? card.querySelectorAll('.ai-mbc-item') : [];
+          var discountPct = parseFloat(button.getAttribute('data-discount-percent') || '0');
+          var offerProp = discountPct > 0 ? ('Bundle ' + discountPct + '% off') : 'Bundle';
+          var items = [];
+          if (srcVid) {
+            // Source product is NOT in grid — always qty 1
+            items.push({ id: parseInt(srcVid), quantity: 1, properties: { _source: 'ai-bundle' } });
+          }
+          variantIds.forEach(function(vid, i) {
+            var itemEl = qtyEls[i]; // grid now has only bundle items, index directly
+            var qty = itemEl ? parseInt(itemEl.querySelector('.ai-mbc-qty-val').textContent) || 1 : 1;
+            // Upsell bundle items: include Offer property so cart drawer/page shows discount
+            items.push({ id: parseInt(vid), quantity: qty, properties: { _source: 'ai-bundle', Offer: offerProp } });
+          });
+          button.disabled = true; button.textContent = 'Adding...';
+          try {
+            window.__AI_UPSELL_SKIP_NEXT_CART_ADD__ = true;
+            var resp = await fetch('/cart/add.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items }) });
+            if (!resp.ok) throw new Error('Failed to add bundle to cart');
+            button.textContent = 'Added \u2713'; button.style.background = '#008060';
+            // Open cart drawer immediately — don't wait for discount code creation
+            fetch(SHOPIFY_ROOT + 'cart.js').then(function(r) { return r.json(); }).then(function(cart) {
+              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart } }));
+              updateCartCountBubble(cart.item_count);
+              fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble').then(function(r) { return r.json(); }).then(function(sections) {
+                if (sections['cart-drawer']) { var el = document.querySelector('cart-drawer'); if (el) { var f = document.createElement('div'); f.innerHTML = patchCartSectionHtml(sections['cart-drawer'], cart); var n = f.querySelector('cart-drawer'); if (n) el.replaceWith(n); } }
+                if (sections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = sections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
+                setTimeout(function() {
+                  var cartIcon = document.querySelector('#cart-icon-bubble, summary[aria-controls="cart-drawer"]');
+                  if (cartIcon) cartIcon.click();
+                  handleCartUpdated();
+                }, 100);
+              });
+            });
+            // Create and apply Shopify discount code in background (for checkout)
+            // Does NOT block cart drawer from opening
+            if (discountPct > 0) {
+              (async function() {
+                try {
+                  var bundleOnlyVids = items
+                    .filter(function(it) { return it.properties && it.properties.Offer; })
+                    .map(function(it) { return String(it.id); });
+                  var shop = window.location.hostname.split('.')[0] || 'unknown';
+                  var discRes = await fetch('/apps/ai-upsell/discount?shop=' + encodeURIComponent(shop), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ variantIds: bundleOnlyVids, discountPercent: discountPct })
+                  });
+                  if (discRes.ok) {
+                    var discData = await discRes.json();
+                    if (discData.code) {
+                      window.__AI_UPSELL_DISCOUNT_CODE__ = discData.code;
+                      try { sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ code: discData.code })); } catch(_) {}
+                      await applyDiscountCodeToCart(discData.code, 'cart');
+                      console.log('[AI Upsell] ✅ Bundle discount code applied:', discData.code);
+                    }
+                  }
+                } catch(discErr) { console.warn('[AI Upsell] Bundle discount code error:', discErr); }
+              })();
+            }
+            setTimeout(function() { button.textContent = originalText; button.disabled = false; button.style.background = ''; }, 2000);
+          } catch(_) {
+            button.textContent = 'Failed'; button.style.background = '#d72c0d';
+            setTimeout(function() { button.textContent = originalText; button.disabled = false; button.style.background = ''; }, 2000);
+          }
+        });
+      });
+    }
+
     function buildCardHTML(product) {
       if (product.isCartBundle) return buildCartBundleCardHTML(product);
       if (product.offerType === 'bundle') return buildBundleCardHTML(product);
@@ -1905,13 +2095,28 @@
       secondaryWidget.style.display = 'block';
       if (loadingEl) loadingEl.style.display = 'block';
       if (contentEl) contentEl.innerHTML = '';
-      var html = '<div class="ai-upsell-header"><h2 class="ai-upsell-title">' + getWidgetHeading(products, 'Upsell Products') + '</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + MAX_PRODUCTS + '">';
-      products.forEach(function (p) { html += buildCardHTML(p); });
-      html += '</div>';
+      var secBundles = products.filter(function(p) { return p.offerType === 'bundle'; });
+      var secVolumes = products.filter(function(p) { return p.offerType === 'volume_discount'; });
+      var secOthers = products.filter(function(p) { return p.offerType !== 'bundle' && p.offerType !== 'volume_discount'; });
+      var html = '';
+      if (secBundles.length > 0) {
+        html += '<div class="ai-upsell-header"><h2 class="ai-upsell-title">Bundle &amp; Save</h2></div>' + buildMultiBundleCardHTML(window.__AI_SOURCE_PRODUCT__ || null, secBundles);
+      }
+      if (secVolumes.length > 0) {
+        html += '<div class="ai-upsell-header" style="margin-top:24px"><h2 class="ai-upsell-title">Buy More, Save More</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + secVolumes.length + '">';
+        secVolumes.forEach(function(p) { html += buildCardHTML(p); });
+        html += '</div>';
+      }
+      if (secOthers.length > 0) {
+        html += '<div class="ai-upsell-header" style="margin-top:24px"><h2 class="ai-upsell-title">' + getWidgetHeading(secOthers, 'Upsell Products') + '</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + secOthers.length + '">';
+        secOthers.forEach(function(p) { html += buildCardHTML(p); });
+        html += '</div>';
+      }
       contentEl.innerHTML = html;
       if (loadingEl) loadingEl.style.display = 'none';
       attachQtyListeners(contentEl);
       attachVariantListeners(contentEl);
+      attachMultiBundleListeners(contentEl);
       placeInCartDrawer();
       trackViewEvents(products, { location: 'cart_page_secondary', sourceProductId: secondarySourceProductId ? secondarySourceProductId.toString() : null, sourceProductName: 'Secondary Recommendation' });
 
@@ -2011,17 +2216,29 @@
         if (!products || products.length === 0) { clearLoadingFallback(widget); widget.__aiUpsellFetchInFlight = false; widget.style.display = 'none'; return; }
         var productMap = new Map(products.map(function (p) { return [String(p.id), p]; }));
         if (secondaryAllProducts.length === 0) secondaryAllProducts = products;
-        var html = '<div class="ai-upsell-header"><h2 class="ai-upsell-title">' + getWidgetHeading(products, 'Recommended for You', _C.heading) + '</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + MAX_PRODUCTS + '">';
-        products.forEach(function (p, idx) {
-          try { html += buildCardHTML(p); } catch (cardErr) { console.error('[AI Upsell] buildCardHTML error for product ' + idx + ':', cardErr); }
-        });
-        html += '</div>';
+        var bundles = products.filter(function(p) { return p.offerType === 'bundle'; });
+        var volumes = products.filter(function(p) { return p.offerType === 'volume_discount'; });
+        var others = products.filter(function(p) { return p.offerType !== 'bundle' && p.offerType !== 'volume_discount'; });
+        var html = '';
+        if (bundles.length > 0) {
+          html += '<div class="ai-upsell-header"><h2 class="ai-upsell-title">Bundle &amp; Save</h2></div>' + buildMultiBundleCardHTML(window.__AI_SOURCE_PRODUCT__ || null, bundles);
+        }
+        if (volumes.length > 0) {
+          html += '<div class="ai-upsell-header" style="margin-top:24px"><h2 class="ai-upsell-title">Buy More, Save More</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + volumes.length + '">';
+          volumes.forEach(function(p, idx) { try { html += buildCardHTML(p); } catch(e) { console.error('[AI Upsell] buildCardHTML error:', e); } });
+          html += '</div>';
+        }
+        if (others.length > 0) {
+          html += '<div class="ai-upsell-header" style="margin-top:24px"><h2 class="ai-upsell-title">' + getWidgetHeading(others, 'Recommended for You', _C.heading) + '</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + others.length + '">';
+          others.forEach(function(p, idx) { try { html += buildCardHTML(p); } catch(e) { console.error('[AI Upsell] buildCardHTML error:', e); } });
+          html += '</div>';
+        }
         console.log('[AI Upsell] HTML built, length=' + html.length + ', rendering now...');
         clearLoadingFallback(widget);
         widget.__aiUpsellFetched = true; widget.__aiUpsellFetchInFlight = false;
         loadingEl.style.display = 'none'; contentEl.innerHTML = html; contentEl.style.display = 'block';
         console.log('[AI Upsell] ✅ Products rendered successfully');
-        attachQtyListeners(contentEl); attachVariantListeners(contentEl);
+        attachQtyListeners(contentEl); attachVariantListeners(contentEl); attachMultiBundleListeners(contentEl);
         trackViewEvents(products, { location: 'product_detail_page', sourceProductId: PRODUCT_ID || null, sourceProductName: _C.productTitle || '' });
 
         contentEl.querySelectorAll('.ai-add-to-cart-btn').forEach(function (button) {
@@ -2119,12 +2336,26 @@
         if (products.length === 0) { clearLoadingFallback(widget); widget.style.display = 'none'; return; }
         var productMap = new Map(products.map(function (p) { return [String(p.id), p]; }));
         var sourceTitle = cart.items.map(function (item) { return item.product_title; }).join(', ') || 'Cart Items';
-        var html = '<div class="ai-upsell-header"><h2 class="ai-upsell-title">' + getWidgetHeading(products, 'Recommended for You', _C.heading) + '</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + MAX_PRODUCTS + '">';
-        products.forEach(function (p) { html += buildCardHTML(p); });
-        html += '</div>';
+        var cartBundles = products.filter(function(p) { return p.offerType === 'bundle'; });
+        var cartVolumes = products.filter(function(p) { return p.offerType === 'volume_discount'; });
+        var cartOthers = products.filter(function(p) { return p.offerType !== 'bundle' && p.offerType !== 'volume_discount'; });
+        var html = '';
+        if (cartBundles.length > 0) {
+          html += '<div class="ai-upsell-header"><h2 class="ai-upsell-title">Bundle &amp; Save</h2></div>' + buildMultiBundleCardHTML(null, cartBundles);
+        }
+        if (cartVolumes.length > 0) {
+          html += '<div class="ai-upsell-header" style="margin-top:24px"><h2 class="ai-upsell-title">Buy More, Save More</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + cartVolumes.length + '">';
+          cartVolumes.forEach(function(p) { html += buildCardHTML(p); });
+          html += '</div>';
+        }
+        if (cartOthers.length > 0) {
+          html += '<div class="ai-upsell-header" style="margin-top:24px"><h2 class="ai-upsell-title">' + getWidgetHeading(cartOthers, 'Recommended for You', _C.heading) + '</h2></div><div class="ai-upsell-grid ai-upsell-grid-' + cartOthers.length + '">';
+          cartOthers.forEach(function(p) { html += buildCardHTML(p); });
+          html += '</div>';
+        }
         clearLoadingFallback(widget);
         loadingEl.style.display = 'none'; contentEl.innerHTML = html; contentEl.style.display = 'block';
-        attachQtyListeners(contentEl); attachVariantListeners(contentEl);
+        attachQtyListeners(contentEl); attachVariantListeners(contentEl); attachMultiBundleListeners(contentEl);
         trackViewEvents(products, { location: 'cart_page', sourceProductId: cart.items[0] && cart.items[0].product_id || null, sourceProductName: sourceTitle });
 
         contentEl.querySelectorAll('.ai-add-to-cart-btn').forEach(function (button) {

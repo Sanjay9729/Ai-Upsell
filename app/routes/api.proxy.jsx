@@ -107,18 +107,109 @@ export const loader = async ({ request }) => {
 
     console.log(`🔍 Looking for product ID: ${productId} (type: ${typeof productId})`);
 
-    // Self-heal: if webhook missed, fetch product via Admin GraphQL and upsert
-    // In dev/local calls without a Shopify signature, appProxy auth will fail — skip in that case.
-    const hasSignature = Boolean(params.signature);
-    let admin = null;
-    if (hasSignature) {
-      try {
-        const authResult = await authenticate.public.appProxy(request);
-        admin = authResult?.admin || null;
-      } catch (authErr) {
-        console.error('⚠️ App proxy auth failed (continuing without admin):', authErr.message || authErr);
-      }
+    // ── Persistent response cache (survives server restarts) ─────────────────
+    // FRESH  (< 10 min) : return instantly, skip entire pipeline
+    // STALE  (10-60 min): return stale data immediately + refresh in background
+    // EXPIRED (> 60 min): run full pipeline, save new result to cache
+    const CACHE_FRESH_MS = 10 * 60 * 1000;
+    const CACHE_STALE_MS = 60 * 60 * 1000;
+    const _cacheHeaders = {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+    };
+
+    const cachedDoc = await import("../../backend/database/mongodb.js")
+      .then(({ getDb }) => getDb().then(db =>
+        db.collection('upsell_response_cache').findOne(
+          { shopId: shop, productId },
+          { projection: { _id: 0, recommendations: 1, decision: 1, cachedAt: 1 } }
+        )
+      ))
+      .catch(() => null);
+
+    const cacheAge = cachedDoc ? Date.now() - new Date(cachedDoc.cachedAt).getTime() : Infinity;
+
+    if (cachedDoc && cacheAge < CACHE_FRESH_MS) {
+      console.log(`⚡ Cache hit for product ${productId} (age: ${Math.round(cacheAge / 1000)}s)`);
+      return json(
+        { success: true, productId, shop, recommendations: cachedDoc.recommendations, count: cachedDoc.recommendations.length, decision: cachedDoc.decision || null },
+        { headers: _cacheHeaders }
+      );
     }
+
+    if (cachedDoc && cacheAge < CACHE_STALE_MS) {
+      console.log(`⏱️ Stale cache for product ${productId} — serving stale, refreshing in background`);
+      // Background refresh — fire and forget, never blocks response
+      ;(async () => {
+        try {
+          const freshDecision = await decideProductOffers({ shopId: shop, productId, userId, limit: 4, placement: "product_page" });
+          const freshRecs = (freshDecision.offers || []).map(product => {
+            const recType = product.recommendationType || "similar";
+            const offerType = product.offerType || "addon_upsell";
+            const baseDiscount = product.discountPercent ?? freshDecision.meta?.discountPercent ?? null;
+            const discountPercent = (offerType === 'volume_discount' || offerType === 'subscription_upgrade') ? 0 : baseDiscount;
+            const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
+            const sellingPlanIdNumeric = product.sellingPlanIdNumeric || extractNumericId(sellingPlanId);
+            return {
+              id: product.productId, title: product.title, handle: product.handle,
+              price: product.aiData?.price || "0", compareAtPrice: product.aiData?.compareAtPrice || null,
+              image: product.images?.[0]?.src || product.image?.src || "",
+              reason: product.aiReason, confidence: product.confidence,
+              type: recType, offerType, discountPercent, sellingPlanId, sellingPlanIdNumeric,
+              decisionScore: product.decisionScore ?? null, decisionReason: product.decisionReason ?? null,
+              url: `/products/${product.handle}`,
+              availableForSale: product.status?.toUpperCase() === 'ACTIVE',
+              variantId: product.variants?.[0]?.id || null,
+              ...getOfferTypeExtras(offerType, baseDiscount),
+            };
+          });
+          const { getDb } = await import("../../backend/database/mongodb.js");
+          const db = await getDb();
+          await db.collection('upsell_response_cache').updateOne(
+            { shopId: shop, productId },
+            { $set: { recommendations: freshRecs, decision: freshDecision.meta || null, cachedAt: new Date() } },
+            { upsert: true }
+          );
+          console.log(`✅ Background cache refresh done for product ${productId}`);
+        } catch (bgErr) {
+          console.warn('⚠️ Background cache refresh failed:', bgErr.message);
+        }
+      })();
+      return json(
+        { success: true, productId, shop, recommendations: cachedDoc.recommendations, count: cachedDoc.recommendations.length, decision: cachedDoc.decision || null },
+        { headers: _cacheHeaders }
+      );
+    }
+    // ── End cache check — falling through to full pipeline ───────────────────
+
+    // Run auth + merchantConfig in parallel to save time
+    const hasSignature = Boolean(params.signature);
+
+    const [authResult, merchantConfig] = await Promise.all([
+      // Auth (only if signature present)
+      hasSignature
+        ? authenticate.public.appProxy(request).catch(err => {
+            console.error('⚠️ App proxy auth failed (continuing without admin):', err.message || err);
+            return null;
+          })
+        : Promise.resolve(null),
+      // Merchant config
+      import("../../backend/database/mongodb.js")
+        .then(async ({ getDb, collections }) => {
+          const db = await getDb();
+          return db.collection(collections.merchantConfig).findOne({ shopId: shop });
+        })
+        .catch(() => null),
+    ]);
+
+    const admin = authResult?.admin || null;
+    if (hasSignature && !admin) console.warn('⚠️ No admin client from appProxy auth');
+
+    let offerDisplayMode = merchantConfig?.offerDisplayMode || 'both';
+    let merchantGoal = merchantConfig?.goal || 'increase_aov';
+
+    // Self-heal: if webhook missed, fetch product via Admin GraphQL and upsert
     if (admin?.graphql) {
       const existing = await getProductById(shop, productId);
       const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
@@ -129,12 +220,10 @@ export const loader = async ({ request }) => {
           // Product not in DB yet — must wait before AI can find it
           await refreshPromise;
         } else {
-          // Product exists but stale — refresh in background, don't block AI
+          // Product exists but stale — refresh in background, don't block response
           refreshPromise.catch(err => console.warn('⚠️ Background product refresh failed:', err));
         }
       }
-    } else if (hasSignature) {
-      console.warn('⚠️ No admin client from appProxy auth');
     }
 
     // Run decision engine to select offers (pass userId for personalization)
@@ -145,7 +234,20 @@ export const loader = async ({ request }) => {
       limit: 4,
       placement: "product_page"
     });
-    const recommendations = decision.offers || [];
+    let recommendations = decision.offers || [];
+
+    // Filter/override by offer display mode — only for AOV & Inventory goals
+    const isAovOrInventory = merchantGoal === 'increase_aov' || merchantGoal === 'inventory_movement';
+    if (isAovOrInventory && offerDisplayMode !== 'both') {
+      if (offerDisplayMode === 'bundle') {
+        // Only show products the AI explicitly tagged as bundle
+        recommendations = recommendations.filter(r => (r.offerType || 'addon_upsell') === 'bundle');
+      } else if (offerDisplayMode === 'volume_discount') {
+        // Override offer type for all products so they display as Buy More, Save More
+        // (AI may tag them addon_upsell when maxDiscountCap is 0, but merchant explicitly chose this mode)
+        recommendations = recommendations.map(r => ({ ...r, offerType: 'volume_discount' }));
+      }
+    }
 
     // Use source product already fetched by AI engine — no extra DB query needed
     const sourceProductTitle = decision.sourceProduct?.title || `Product ${productId}`;
@@ -270,6 +372,17 @@ export const loader = async ({ request }) => {
       console.error('⚠️ Inventory enrichment failed:', invError.message);
     }
 
+    // Persist result to MongoDB cache for instant future loads (fire-and-forget)
+    import("../../backend/database/mongodb.js")
+      .then(({ getDb }) => getDb().then(db =>
+        db.collection('upsell_response_cache').updateOne(
+          { shopId: shop, productId },
+          { $set: { recommendations: formattedRecommendations, decision: decision.meta || null, cachedAt: new Date() } },
+          { upsert: true }
+        )
+      ))
+      .catch(() => {}); // never block the response
+
     // Return response in Liquid-compatible format
     return json({
       success: true,
@@ -282,7 +395,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
       }
     });
 

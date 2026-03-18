@@ -52,14 +52,21 @@ export async function decideProductOffers({
     return { offers: [], meta: { reason: 'missing_inputs' }, sourceProduct: null };
   }
 
-  // Safety Mode check — block all offers when active
-  const safetyActive = await getSafetyMode(shopId).catch(() => false);
+  // Run all independent setup queries in parallel to reduce latency
+  const sessionId = userId || null;
+  const [safetyActive, config, merchantContext, placementShift, seenProducts] = await Promise.all([
+    getSafetyMode(shopId).catch(() => false),
+    loadConfig(shopId),
+    getMerchantContext(shopId),
+    recommendPlacementShift(shopId).catch(() => null),
+    getSeenProductsInSession(shopId, sessionId).catch(() => new Set()),
+  ]);
+
   if (safetyActive) {
     console.log(`🛡️ Safety mode active for ${shopId} — skipping all offers`);
     return { offers: [], meta: { reason: 'safety_mode_active', status: 'safety_mode' }, sourceProduct: null };
   }
 
-  const config = await loadConfig(shopId);
   const guardrails = config.guardrails || {};
   const goalConfig = applyOptimizationOverrides(
     config.goalConfig || GOAL_MAPPING[config.goal] || GOAL_MAPPING[DEFAULT_CONFIG.goal],
@@ -67,8 +74,6 @@ export async function decideProductOffers({
   );
   const riskConfig = config.riskConfig || RISK_MAPPING[config.riskTolerance] || RISK_MAPPING[DEFAULT_CONFIG.riskTolerance];
   const normalizedPlacement = normalizePlacement(placement);
-  const merchantContext = await getMerchantContext(shopId);
-  const sessionId = userId || null;
 
   if (!isPlacementAllowed(normalizedPlacement, riskConfig)) {
     return {
@@ -78,7 +83,6 @@ export async function decideProductOffers({
     };
   }
 
-  const placementShift = await recommendPlacementShift(shopId).catch(() => null);
   // Do not fully suppress cart-drawer offers; shift is advisory for cart context.
   const shiftBlocksPlacement = normalizedPlacement === 'cart_drawer'
     ? false
@@ -93,7 +97,6 @@ export async function decideProductOffers({
     };
   }
 
-  const seenProducts = await getSeenProductsInSession(shopId, sessionId).catch(() => new Set());
   const effectiveLimit = computeEffectiveLimit(limit, guardrails, riskConfig, seenProducts);
   if (effectiveLimit <= 0) {
     return {
@@ -177,14 +180,21 @@ export async function decideCartOffers({
     return { offers: [], meta: { reason: 'missing_inputs' }, cartProducts: [] };
   }
 
-  // Safety Mode check — block all offers when active
-  const safetyActive = await getSafetyMode(shopId).catch(() => false);
+  // Run all independent setup queries in parallel to reduce latency
+  const sessionId = userId || null;
+  const [safetyActive, config, merchantContext, placementShift, seenProducts] = await Promise.all([
+    getSafetyMode(shopId).catch(() => false),
+    loadConfig(shopId),
+    getMerchantContext(shopId),
+    recommendPlacementShift(shopId).catch(() => null),
+    getSeenProductsInSession(shopId, sessionId).catch(() => new Set()),
+  ]);
+
   if (safetyActive) {
     console.log(`🛡️ Safety mode active for ${shopId} — skipping all cart offers`);
     return { offers: [], meta: { reason: 'safety_mode_active', status: 'safety_mode' }, cartProducts: [] };
   }
 
-  const config = await loadConfig(shopId);
   const guardrails = config.guardrails || {};
   const goalConfig = applyOptimizationOverrides(
     config.goalConfig || GOAL_MAPPING[config.goal] || GOAL_MAPPING[DEFAULT_CONFIG.goal],
@@ -192,8 +202,6 @@ export async function decideCartOffers({
   );
   const riskConfig = config.riskConfig || RISK_MAPPING[config.riskTolerance] || RISK_MAPPING[DEFAULT_CONFIG.riskTolerance];
   const normalizedPlacement = normalizePlacement(placement);
-  const merchantContext = await getMerchantContext(shopId);
-  const sessionId = userId || null;
 
   if (!isPlacementAllowed(normalizedPlacement, riskConfig)) {
     return {
@@ -203,7 +211,6 @@ export async function decideCartOffers({
     };
   }
 
-  const placementShift = await recommendPlacementShift(shopId).catch(() => null);
   // Do not fully suppress cart-drawer offers; shift is advisory for cart context.
   const shiftBlocksPlacement = normalizedPlacement === 'cart_drawer'
     ? false
@@ -218,7 +225,6 @@ export async function decideCartOffers({
     };
   }
 
-  const seenProducts = await getSeenProductsInSession(shopId, sessionId).catch(() => new Set());
   const effectiveLimit = computeEffectiveLimit(limit, guardrails, riskConfig, seenProducts);
   if (effectiveLimit <= 0) {
     return {
@@ -407,7 +413,7 @@ async function decideFromCandidates(candidates, {
     const price = getProductPrice(product);
     const inventory = getProductInventory(product);
     const isSubscription = aiEngine.isSubscriptionProduct(product);
-    const bundleEligible = Boolean(bundleEligibility[String(product.productId || product.id)]);
+    const bundleEligible = Boolean(bundleEligibility[String(product.productId || product.id)]) || product.recommendationType === 'bundle';
     const scoreResult = scoreCandidate(config.goal, {
       confidence: product._confidence,
       price,
@@ -703,7 +709,7 @@ function selectOfferType(goal, { isSubscription, inventory, maxInventory, mercha
     if (type === 'volume_discount' && hasDiscountBudget) {
       return 'volume_discount';
     }
-    if (type === 'bundle' && bundleEligible) return 'bundle';
+    if (type === 'bundle' && (bundleEligible || priority[0] === 'bundle')) return 'bundle';
     if (type === 'addon_upsell') return 'addon_upsell';
   }
   return 'addon_upsell';

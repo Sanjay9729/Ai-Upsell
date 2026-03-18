@@ -11,7 +11,13 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const config = await getMerchantConfig(session.shop);
   console.log("[goal-setup loader] shop:", session.shop, "config:", JSON.stringify(config));
-  return json(config);
+
+  // Load offerDisplayMode separately
+  const { getDb, collections } = await import("../../backend/database/mongodb.js");
+  const db = await getDb();
+  const rawConfig = await db.collection(collections.merchantConfig).findOne({ shopId: session.shop });
+
+  return json({ ...config, offerDisplayMode: rawConfig?.offerDisplayMode || 'both' });
 };
 
 // ─── Action ────────────────────────────────────────────────────────────────
@@ -39,6 +45,7 @@ export const action = async ({ request }) => {
 
   const goal = formData.get("goal");
   const riskTolerance = formData.get("riskTolerance");
+  const offerDisplayMode = formData.get("offerDisplayMode") || "both";
   const maxDiscountCap = parseInt(formData.get("maxDiscountCap") || "20", 10);
   const inventoryMinThreshold = parseInt(formData.get("inventoryMinThreshold") || "0", 10);
   const sessionOfferLimit = parseInt(formData.get("sessionOfferLimit") || "3", 10);
@@ -84,6 +91,15 @@ export const action = async ({ request }) => {
     if (!result.success) {
       return json({ success: false, errors: result.errors }, { status: 400 });
     }
+
+    // Save offerDisplayMode separately
+    const { getDb, collections } = await import("../../backend/database/mongodb.js");
+    const db = await getDb();
+    await db.collection(collections.merchantConfig).updateOne(
+      { shopId: session.shop },
+      { $set: { offerDisplayMode } },
+      { upsert: true }
+    );
 
     return json({ success: true });
   } catch (err) {
@@ -225,6 +241,7 @@ export default function GoalSetup() {
   const saving = fetcher.state !== "idle";
   const [selectedGoal, setSelectedGoal] = useState(data.goal);
   const [selectedRisk, setSelectedRisk] = useState(data.riskTolerance);
+  const [offerDisplayMode, setOfferDisplayMode] = useState(data.offerDisplayMode || 'both');
   const [maxDiscountCap, setMaxDiscountCap] = useState(data.guardrails.maxDiscountCap);
   const [inventoryMin, setInventoryMin] = useState(data.guardrails.inventoryMinThreshold);
   const [sessionLimit, setSessionLimit] = useState(data.guardrails.sessionOfferLimit);
@@ -286,6 +303,7 @@ export default function GoalSetup() {
         subscriptionProtection: subscriptionProtection ? "on" : "off",
         excludedProducts: excludedProducts || "",
         excludedCollections: excludedCollections || "",
+        offerDisplayMode,
       },
       { method: "POST" }
     );
@@ -591,6 +609,44 @@ export default function GoalSetup() {
           />
         </GuardrailField>
       </s-section>
+
+      {/* ── Offer Display Mode — only for AOV & Inventory goals ── */}
+      {(selectedGoal === 'increase_aov' || selectedGoal === 'inventory_movement') && <s-section heading="Offer Display Mode">
+        <p style={{ fontSize: "14px", color: "#6d7175", marginBottom: "16px", fontFamily: font }}>
+          Choose which type of offer to show customers on the product page.
+        </p>
+        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+          {[
+            { value: "bundle", label: "Bundle & Save", desc: "Show only bundle offers" },
+            { value: "volume_discount", label: "Buy More, Save More", desc: "Show only volume discount offers" },
+          ].map((opt) => (
+            <label
+              key={opt.value}
+              onClick={() => setOfferDisplayMode(opt.value)}
+              style={{
+                display: "flex", alignItems: "flex-start", gap: "10px",
+                padding: "12px 16px", border: `2px solid ${offerDisplayMode === opt.value ? "#005bd3" : "#c9cccf"}`,
+                borderRadius: "8px", cursor: "pointer",
+                backgroundColor: offerDisplayMode === opt.value ? "#e8f0fe" : "#fff",
+                flex: "1", minWidth: "160px",
+              }}
+            >
+              <input
+                type="radio"
+                name="offerDisplayMode"
+                value={opt.value}
+                checked={offerDisplayMode === opt.value}
+                onChange={() => setOfferDisplayMode(opt.value)}
+                style={{ marginTop: "2px" }}
+              />
+              <div>
+                <div style={{ fontWeight: "600", fontSize: "14px", fontFamily: font }}>{opt.label}</div>
+                <div style={{ fontSize: "12px", color: "#6d7175", marginTop: "2px", fontFamily: font }}>{opt.desc}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </s-section>}
 
     </s-page>
 

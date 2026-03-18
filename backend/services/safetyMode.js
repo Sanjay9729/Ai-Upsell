@@ -14,6 +14,14 @@ import { getMerchantConfig, updateMerchantConfig } from './merchantConfig.js';
 
 const COLLECTION = 'safety_mode';
 
+// Short-lived cache — safety mode rarely changes, 30s is safe
+const _safetyCache = new Map();
+const SAFETY_CACHE_TTL = 30 * 1000; // 30 seconds
+
+function _invalidateSafetyCache(shopId) {
+  if (shopId) _safetyCache.delete(shopId);
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -22,10 +30,16 @@ const COLLECTION = 'safety_mode';
  */
 export async function getSafetyMode(shopId) {
   if (!shopId) return false;
+  const cached = _safetyCache.get(shopId);
+  if (cached && (Date.now() - cached.ts) < SAFETY_CACHE_TTL) {
+    return cached.active;
+  }
   try {
     const db = await getDb();
     const doc = await db.collection(COLLECTION).findOne({ shopId });
-    return doc?.active === true;
+    const active = doc?.active === true;
+    _safetyCache.set(shopId, { active, ts: Date.now() });
+    return active;
   } catch (err) {
     console.warn('⚠️ getSafetyMode failed, defaulting to off:', err.message);
     return false;
@@ -72,6 +86,7 @@ export async function setSafetyMode(shopId, active, reason = '') {
       { upsert: true }
     );
 
+    _invalidateSafetyCache(shopId);
     console.log(`🛡️ Safety mode ${active ? 'ENABLED' : 'DISABLED'} for ${shopId}${reason ? ` — ${reason}` : ''}`);
     return { success: true, active };
   } catch (err) {

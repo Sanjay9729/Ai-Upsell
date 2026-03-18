@@ -59,11 +59,16 @@ export const collections = {
    aovImpact: 'aov_impact',
    // Learning & Optimization Loop scheduler — Pillar 5
    schedulerState: 'scheduler_state',
-   optimizationHistory: 'optimization_history'
+   optimizationHistory: 'optimization_history',
+   // Response cache — instant upsell loads
+   upsellResponseCache: 'upsell_response_cache'
  };
 
 export async function initializeCollections() {
   const database = await getDb();
+
+  // Response cache index — fast lookup by shop + product
+  await database.collection(collections.upsellResponseCache).createIndex({ shopId: 1, productId: 1 }, { unique: true });
 
   // Create indexes for better performance
   await database.collection(collections.products).createIndex({ shopId: 1, productId: 1 }, { unique: true });

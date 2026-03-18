@@ -715,7 +715,10 @@ async function startServer() {
     // Initialize Mongo + indexes in background so startup never blocks (prevents 504s on cold starts)
     (async () => {
       try {
-        await connectToMongoDB();
+        // Warm up both DB clients in parallel — connection.js (Express routes) and
+        // mongodb.js (Remix routes) use separate MongoClient instances
+        const { getDb: getRemixDb } = await import('./backend/database/mongodb.js');
+        await Promise.all([connectToMongoDB(), getRemixDb()]);
         await initializeCollections();
         console.log('📊 All collections and indexes initialized successfully');
         startProductReconciliationJob();

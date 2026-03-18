@@ -10,6 +10,10 @@ export const loader = async ({ request }) => {
     const { getDb, collections } = await import("../../backend/database/mongodb.js");
     const { getBundles, getBundleAnalytics } = await import("../../backend/services/bundleEngine.js");
     const db = await getDb();
+
+    // Load current offer display mode setting
+    const config = await db.collection(collections.merchantConfig).findOne({ shopId: session.shop });
+    const offerDisplayMode = config?.offerDisplayMode || 'both';
     
     // Fetch bundles for the shop
     const bundlesResult = await getBundles(session.shop);
@@ -42,7 +46,8 @@ export const loader = async ({ request }) => {
     return json({
       success: true,
       bundles: bundlesWithAnalytics,
-      shopId: session.shop
+      shopId: session.shop,
+      offerDisplayMode
     });
   } catch (error) {
     console.error('Error loading bundles:', error);
@@ -58,9 +63,21 @@ export const loader = async ({ request }) => {
 export const action = async ({ request }) => {
   if (request.method === 'POST') {
     const { session } = await authenticate.admin(request);
-    const { actionType, bundleId, name, productIds, discountPercent } = await request.json();
+    const { actionType, bundleId, name, productIds, discountPercent, offerDisplayMode } = await request.json();
 
     try {
+      const { getDb, collections } = await import("../../backend/database/mongodb.js");
+
+      if (actionType === 'save_offer_mode') {
+        const db = await getDb();
+        await db.collection(collections.merchantConfig).updateOne(
+          { shopId: session.shop },
+          { $set: { offerDisplayMode, updatedAt: new Date() } },
+          { upsert: true }
+        );
+        return json({ success: true, message: 'Offer display mode saved' });
+      }
+
       const { pauseBundle, createBundle } = await import("../../backend/services/bundleEngine.js");
       if (actionType === 'pause') {
         const result = await pauseBundle(session.shop, bundleId, true);
@@ -99,15 +116,26 @@ export const action = async ({ request }) => {
 };
 
 export default function BundlesPage() {
-  const { bundles, shopId } = useLoaderData();
+  const { bundles, shopId, offerDisplayMode: initialOfferMode } = useLoaderData();
   const fetcher = useFetcher();
   const [showCreate, setShowCreate] = useState(false);
   const [expandedBundles, setExpandedBundles] = useState(new Set());
+  const [offerMode, setOfferMode] = useState(initialOfferMode || 'both');
+  const [modeSaved, setModeSaved] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     productIds: [],
     discountPercent: 10
   });
+
+  const handleSaveOfferMode = () => {
+    fetcher.submit(
+      { actionType: 'save_offer_mode', offerDisplayMode: offerMode },
+      { method: 'POST', encType: 'application/json' }
+    );
+    setModeSaved(true);
+    setTimeout(() => setModeSaved(false), 3000);
+  };
 
   const toggleDetails = (bundleId) => {
     setExpandedBundles(prev => {
@@ -142,6 +170,48 @@ export default function BundlesPage() {
 
   return (
     <div style={{ padding: '24px', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto' }}>
+
+      {/* Offer Display Mode Setting */}
+      <div style={{ marginBottom: '28px', padding: '20px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
+        <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '6px' }}>Offer Display Mode</h2>
+        <p style={{ fontSize: '13px', color: '#666', marginBottom: '16px' }}>
+          Choose which type of offer to show customers on the product page.
+        </p>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
+          {[
+            { value: 'bundle', label: 'Bundle & Save', desc: 'Show only bundle offers' },
+            { value: 'volume_discount', label: 'Buy More, Save More', desc: 'Show only volume discount offers' },
+            { value: 'both', label: 'Both', desc: 'Show both types together' },
+          ].map(opt => (
+            <label
+              key={opt.value}
+              onClick={() => setOfferMode(opt.value)}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: '10px',
+                padding: '12px 16px', border: `2px solid ${offerMode === opt.value ? '#007bff' : '#ddd'}`,
+                borderRadius: '8px', cursor: 'pointer', backgroundColor: offerMode === opt.value ? '#e8f0fe' : '#fff',
+                minWidth: '180px', flex: '1'
+              }}
+            >
+              <input type="radio" name="offerMode" value={opt.value} checked={offerMode === opt.value} onChange={() => setOfferMode(opt.value)} style={{ marginTop: '2px' }} />
+              <div>
+                <div style={{ fontWeight: '600', fontSize: '14px' }}>{opt.label}</div>
+                <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{opt.desc}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button
+            onClick={handleSaveOfferMode}
+            style={{ padding: '8px 20px', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
+          >
+            Save Setting
+          </button>
+          {modeSaved && <span style={{ color: '#28a745', fontSize: '13px', fontWeight: '600' }}>Saved!</span>}
+        </div>
+      </div>
+
       <div style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1 style={{ fontSize: '28px', fontWeight: '600', marginBottom: '8px' }}>📦 Bundle Review</h1>
