@@ -4,6 +4,9 @@ import { authenticate } from "../shopify.server";
 import { decideProductOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
 
+// Pre-warm MongoDB at module load — eliminates cold-start delay on first request after server restart
+import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
+
 /**
  * Shopify App Proxy Handler
  * Handles requests from storefront via /apps/ai-upsell proxy
@@ -119,21 +122,61 @@ export const loader = async ({ request }) => {
       "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
     };
 
-    const cachedDoc = await import("../../backend/database/mongodb.js")
-      .then(({ getDb }) => getDb().then(db =>
-        db.collection('upsell_response_cache').findOne(
-          { shopId: shop, productId },
-          { projection: { _id: 0, recommendations: 1, decision: 1, cachedAt: 1 } }
-        )
-      ))
-      .catch(() => null);
+    // Fetch cache + merchantConfig in parallel so offerDisplayMode filter applies to cached results too
+    const hasSignature = Boolean(params.signature);
+
+    const [cachedDoc, merchantConfig] = await Promise.all([
+      import("../../backend/database/mongodb.js")
+        .then(({ getDb }) => getDb().then(db =>
+          db.collection('upsell_response_cache').findOne(
+            { shopId: shop, productId },
+            { projection: { _id: 0, recommendations: 1, decision: 1, cachedAt: 1 } }
+          )
+        ))
+        .catch(() => null),
+      import("../../backend/database/mongodb.js")
+        .then(async ({ getDb, collections }) => {
+          const db = await getDb();
+          return db.collection(collections.merchantConfig).findOne({ shopId: shop });
+        })
+        .catch(() => null),
+    ]);
 
     const cacheAge = cachedDoc ? Date.now() - new Date(cachedDoc.cachedAt).getTime() : Infinity;
 
+    // Helper to apply goal + offerDisplayMode filter to a recommendations array
+    function applyDisplayModeFilter(recs, goal, displayMode, decisionDiscountPercent = null) {
+      // Revenue per Visitor & Subscription Adoption: always addon_upsell, no bundles/volume
+      if (goal === 'revenue_per_visitor' || goal === 'subscription_adoption') {
+        return recs.map(r => ({ ...r, offerType: 'addon_upsell' }));
+      }
+      // AOV & Inventory Movement: apply merchant's display mode choice
+      if (displayMode === 'bundle') {
+        // When remapping to bundle, restore discountPercent if it was zeroed (e.g. was volume_discount in cache)
+        return recs.map(r => {
+          const missingDiscount = (r.discountPercent === 0 || r.discountPercent === null || r.discountPercent === undefined);
+          return {
+            ...r,
+            offerType: 'bundle',
+            discountPercent: missingDiscount && decisionDiscountPercent > 0 ? decisionDiscountPercent : r.discountPercent,
+          };
+        });
+      }
+      if (displayMode === 'volume_discount') {
+        return recs.map(r => ({ ...r, offerType: 'volume_discount' }));
+      }
+      return recs;
+    }
+
+    const cachedGoal = merchantConfig?.goal || 'increase_aov';
+    const cachedDisplayMode = merchantConfig?.offerDisplayMode || 'both';
+
     if (cachedDoc && cacheAge < CACHE_FRESH_MS) {
       console.log(`⚡ Cache hit for product ${productId} (age: ${Math.round(cacheAge / 1000)}s)`);
+      const cachedDiscountPct = cachedDoc.decision?.discountPercent ?? null;
+      const filteredRecs = applyDisplayModeFilter(cachedDoc.recommendations, cachedGoal, cachedDisplayMode, cachedDiscountPct);
       return json(
-        { success: true, productId, shop, recommendations: cachedDoc.recommendations, count: cachedDoc.recommendations.length, decision: cachedDoc.decision || null },
+        { success: true, productId, shop, recommendations: filteredRecs, count: filteredRecs.length, decision: cachedDoc.decision || null },
         { headers: _cacheHeaders }
       );
     }
@@ -176,32 +219,22 @@ export const loader = async ({ request }) => {
           console.warn('⚠️ Background cache refresh failed:', bgErr.message);
         }
       })();
+      const staleDiscountPct = cachedDoc.decision?.discountPercent ?? null;
+      const filteredRecs = applyDisplayModeFilter(cachedDoc.recommendations, cachedGoal, cachedDisplayMode, staleDiscountPct);
       return json(
-        { success: true, productId, shop, recommendations: cachedDoc.recommendations, count: cachedDoc.recommendations.length, decision: cachedDoc.decision || null },
+        { success: true, productId, shop, recommendations: filteredRecs, count: filteredRecs.length, decision: cachedDoc.decision || null },
         { headers: _cacheHeaders }
       );
     }
     // ── End cache check — falling through to full pipeline ───────────────────
 
-    // Run auth + merchantConfig in parallel to save time
-    const hasSignature = Boolean(params.signature);
-
-    const [authResult, merchantConfig] = await Promise.all([
-      // Auth (only if signature present)
-      hasSignature
-        ? authenticate.public.appProxy(request).catch(err => {
-            console.error('⚠️ App proxy auth failed (continuing without admin):', err.message || err);
-            return null;
-          })
-        : Promise.resolve(null),
-      // Merchant config
-      import("../../backend/database/mongodb.js")
-        .then(async ({ getDb, collections }) => {
-          const db = await getDb();
-          return db.collection(collections.merchantConfig).findOne({ shopId: shop });
+    // Run auth (merchantConfig already fetched above alongside cache)
+    const authResult = hasSignature
+      ? await authenticate.public.appProxy(request).catch(err => {
+          console.error('⚠️ App proxy auth failed (continuing without admin):', err.message || err);
+          return null;
         })
-        .catch(() => null),
-    ]);
+      : null;
 
     const admin = authResult?.admin || null;
     if (hasSignature && !admin) console.warn('⚠️ No admin client from appProxy auth');
@@ -236,18 +269,8 @@ export const loader = async ({ request }) => {
     });
     let recommendations = decision.offers || [];
 
-    // Filter/override by offer display mode — only for AOV & Inventory goals
-    const isAovOrInventory = merchantGoal === 'increase_aov' || merchantGoal === 'inventory_movement';
-    if (isAovOrInventory && offerDisplayMode !== 'both') {
-      if (offerDisplayMode === 'bundle') {
-        // Only show products the AI explicitly tagged as bundle
-        recommendations = recommendations.filter(r => (r.offerType || 'addon_upsell') === 'bundle');
-      } else if (offerDisplayMode === 'volume_discount') {
-        // Override offer type for all products so they display as Buy More, Save More
-        // (AI may tag them addon_upsell when maxDiscountCap is 0, but merchant explicitly chose this mode)
-        recommendations = recommendations.map(r => ({ ...r, offerType: 'volume_discount' }));
-      }
-    }
+    // Apply goal-based offer type filter
+    recommendations = applyDisplayModeFilter(recommendations, merchantGoal, offerDisplayMode);
 
     // Use source product already fetched by AI engine — no extra DB query needed
     const sourceProductTitle = decision.sourceProduct?.title || `Product ${productId}`;

@@ -61,7 +61,9 @@ export const collections = {
    schedulerState: 'scheduler_state',
    optimizationHistory: 'optimization_history',
    // Response cache — instant upsell loads
-   upsellResponseCache: 'upsell_response_cache'
+   upsellResponseCache: 'upsell_response_cache',
+   // Guardrail trigger audit log — Pillar 2
+   guardrailEvents: 'guardrail_events'
  };
 
 export async function initializeCollections() {
@@ -144,6 +146,10 @@ export async function initializeCollections() {
   // Safety Mode — Pillar rollback & emergency stop
   await database.collection('safety_mode').createIndex({ shopId: 1 }, { unique: true });
   await database.collection('config_snapshots').createIndex({ shopId: 1, createdAt: -1 });
+
+  // Guardrail Events — Pillar 2 audit log
+  await database.collection(collections.guardrailEvents).createIndex({ shopId: 1, timestamp: -1 });
+  await database.collection(collections.guardrailEvents).createIndex({ shopId: 1, guardrailType: 1 });
 
   console.log('MongoDB collections initialized');
   }

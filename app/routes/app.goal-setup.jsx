@@ -92,7 +92,7 @@ export const action = async ({ request }) => {
       return json({ success: false, errors: result.errors }, { status: 400 });
     }
 
-    // Save offerDisplayMode separately
+    // Save offerDisplayMode and invalidate response cache so changes show immediately
     const { getDb, collections } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
     await db.collection(collections.merchantConfig).updateOne(
@@ -100,6 +100,10 @@ export const action = async ({ request }) => {
       { $set: { offerDisplayMode } },
       { upsert: true }
     );
+
+    // Clear cached upsell responses so the new goal/display settings take effect instantly
+    await db.collection('upsell_response_cache').deleteMany({ shopId: session.shop });
+    console.log(`[goal-setup action] Cache cleared for shop: ${session.shop}`);
 
     return json({ success: true });
   } catch (err) {

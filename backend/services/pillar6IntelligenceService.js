@@ -1,324 +1,305 @@
 /**
  * Pillar 6 — Merchandising Intelligence Service
- * Provides comprehensive bundle review, segment analysis, context injection, and explainability
+ * Scalable: uses batch aggregations instead of per-document DB calls (no N+1 queries)
  */
 
-const { getDb, collections } = require("../database/mongodb");
+import { getDb, collections } from '../database/mongodb.js';
 
 /**
- * Get all bundles with performance metrics, margin/inventory impact, and segment breakdown
+ * Get bundle-type offers with performance metrics.
+ * Single aggregate for all performance data — no N+1 queries.
  */
-async function getBundlesWithPerformance(shopId, limit = 50) {
-  const db = await getDb();
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+export async function getBundlesWithPerformance(shopId, limit = 50) {
+  if (!shopId) return [];
+  try {
+    const db = await getDb();
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  // Get all offers of type 'bundle'
-  const bundles = await db.collection(collections.decisionOffers).find({
-    shopId,
-    offerType: 'bundle'
-  }).limit(limit).toArray();
+    // Step 1: Fetch bundle offers (one query)
+    const bundleOffers = await db.collection(collections.offerLogs)
+      .find({ shopId, offerType: 'bundle' })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray();
 
-  // Enrich with performance data
-  const bundlesEnriched = await Promise.all(bundles.map(async (bundle) => {
-    const perfKey = `${bundle.sourceProductId}:${bundle.upsellProductId}`;
+    if (bundleOffers.length === 0) return [];
 
-    // Get performance events for this bundle
-    const events = await db.collection(collections.upsellEvents).find({
-      shopId,
-      sourceProductId: bundle.sourceProductId,
-      upsellProductId: bundle.upsellProductId,
-      timestamp: { $gte: thirtyDaysAgo }
-    }).toArray();
+    // Step 2: Collect all unique src+upsell pairs
+    const pairs = bundleOffers.map(b => ({
+      src: b.sourceProductId ?? null,
+      upsell: b.upsellProductId ?? null
+    }));
 
-    const views = events.filter(e => e.eventType === 'view').length;
-    const clicks = events.filter(e => e.eventType === 'click').length;
-    const cartAdds = events.filter(e => e.eventType === 'cart_add').length;
-    const purchases = events.filter(e => e.eventType === 'purchase').length;
-
-    const ctr = views > 0 ? (clicks / views) * 100 : 0;
-    const conversion = views > 0 ? (cartAdds / views) * 100 : 0;
-    const purchaseRate = cartAdds > 0 ? (purchases / cartAdds) * 100 : 0;
-
-    // Get segment breakdown
-    const segmentData = await db.collection(collections.upsellEvents).aggregate([
+    // Step 3: ONE aggregate for all performance data (not per-bundle)
+    const perfRows = await db.collection(collections.upsellEvents).aggregate([
       {
         $match: {
           shopId,
-          sourceProductId: bundle.sourceProductId,
-          upsellProductId: bundle.upsellProductId,
-          timestamp: { $gte: thirtyDaysAgo }
+          timestamp: { $gte: thirtyDaysAgo },
+          $or: pairs.map(p => ({
+            sourceProductId: p.src,
+            upsellProductId: p.upsell
+          }))
         }
       },
       {
         $group: {
-          _id: '$metadata.segment',
-          views: { $sum: { $cond: [{ $eq: ['$eventType', 'view'] }, 1, 0] } },
-          clicks: { $sum: { $cond: [{ $eq: ['$eventType', 'click'] }, 1, 0] } },
-          adds: { $sum: { $cond: [{ $eq: ['$eventType', 'cart_add'] }, 1, 0] } }
+          _id: {
+            src: '$sourceProductId',
+            upsell: '$upsellProductId',
+            eventType: '$eventType',
+            segment: { $ifNull: ['$metadata.segment', 'unknown'] }
+          },
+          count: { $sum: 1 }
         }
       }
     ]).toArray();
 
-    // Calculate margin impact (estimated from offer type)
-    const estimatedMarginImpact = bundle.discount ? -bundle.discount : 0;
+    // Step 4: ONE query for all offer controls
+    const offerKeys = bundleOffers.map(b => b.offerKey).filter(Boolean);
+    const controls = offerKeys.length > 0
+      ? await db.collection(collections.offerControls)
+          .find({ shopId, offerKey: { $in: offerKeys } })
+          .toArray()
+      : [];
+    const controlMap = {};
+    for (const c of controls) controlMap[c.offerKey] = c;
 
-    // Get control status
-    const control = await db.collection(collections.offerControls).findOne({
-      shopId,
-      offerKey: bundle.offerId
-    });
+    // Step 5: Build performance map keyed by "src:upsell"
+    const perfMap = {};
+    const segMap = {};
+    for (const row of perfRows) {
+      const key = `${row._id.src}:${row._id.upsell}`;
+      if (!perfMap[key]) perfMap[key] = { views: 0, clicks: 0, cartAdds: 0 };
+      if (row._id.eventType === 'view') perfMap[key].views += row.count;
+      if (row._id.eventType === 'click') perfMap[key].clicks += row.count;
+      if (row._id.eventType === 'cart_add') perfMap[key].cartAdds += row.count;
 
-    return {
-      bundleId: bundle.offerId,
-      offerId: bundle.offerId,
-      sourceProductId: bundle.sourceProductId,
-      sourceProductName: bundle.sourceProductName,
-      upsellProductId: bundle.upsellProductId,
-      upsellProductName: bundle.upsellProductName,
-      createdAt: bundle.createdAt,
-      discount: bundle.discount,
-      performance: {
-        views,
-        clicks,
-        cartAdds,
-        purchases,
-        ctr: parseFloat(ctr.toFixed(2)),
-        conversion: parseFloat(conversion.toFixed(2)),
-        purchaseRate: parseFloat(purchaseRate.toFixed(2))
-      },
-      segmentBreakdown: segmentData.map(seg => ({
-        segment: seg._id || 'unknown',
-        views: seg.views,
-        clicks: seg.clicks,
-        adds: seg.adds,
-        ctr: seg.views > 0 ? parseFloat(((seg.clicks / seg.views) * 100).toFixed(2)) : 0,
-        conversion: seg.views > 0 ? parseFloat(((seg.adds / seg.views) * 100).toFixed(2)) : 0
-      })),
-      marginImpact: estimatedMarginImpact,
-      inventoryImpact: 'neutral',
-      controlStatus: control?.status || 'auto',
-      controlNote: control?.note || null,
-      recommendedAction: getRecommendedAction({ ctr, conversion, views })
-    };
-  }));
+      // Segment breakdown
+      if (!segMap[key]) segMap[key] = {};
+      const seg = row._id.segment;
+      if (!segMap[key][seg]) segMap[key][seg] = { views: 0, clicks: 0, adds: 0 };
+      if (row._id.eventType === 'view') segMap[key][seg].views += row.count;
+      if (row._id.eventType === 'click') segMap[key][seg].clicks += row.count;
+      if (row._id.eventType === 'cart_add') segMap[key][seg].adds += row.count;
+    }
 
-  return bundlesEnriched;
-}
+    // Step 6: Assemble final result (no extra DB calls)
+    return bundleOffers.map(bundle => {
+      const key = `${bundle.sourceProductId ?? null}:${bundle.upsellProductId ?? null}`;
+      const perf = perfMap[key] || { views: 0, clicks: 0, cartAdds: 0 };
+      const ctr = perf.views > 0 ? (perf.clicks / perf.views) * 100 : 0;
+      const conversion = perf.views > 0 ? (perf.cartAdds / perf.views) * 100 : 0;
+      const segs = segMap[key] || {};
+      const control = controlMap[bundle.offerKey] || null;
 
-/**
- * Get segment-based performance with first-time, returning, subscription, and high-LTV breakdown
- */
-async function getSegmentPerformanceAnalysis(shopId) {
-  const db = await getDb();
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-  const segments = await db.collection(collections.upsellEvents).aggregate([
-    {
-      $match: {
-        shopId,
-        timestamp: { $gte: thirtyDaysAgo }
-      }
-    },
-    {
-      $group: {
-        _id: {
-          segment: { $ifNull: ['$metadata.segment', 'unknown'] },
-          eventType: '$eventType'
+      return {
+        bundleId: bundle.offerId || String(bundle._id),
+        offerKey: bundle.offerKey,
+        sourceProductId: bundle.sourceProductId,
+        sourceProductName: bundle.sourceProductName,
+        upsellProductId: bundle.upsellProductId,
+        upsellProductName: bundle.upsellProductName,
+        contextKey: bundle.contextKey || 'product',
+        createdAt: bundle.createdAt,
+        discountPercent: bundle.discountPercent,
+        decisionScore: bundle.decisionScore,
+        confidence: bundle.confidence,
+        decisionReason: bundle.decisionReason,
+        aiReason: bundle.aiReason,
+        goal: bundle.goal,
+        performance: {
+          views: perf.views,
+          clicks: perf.clicks,
+          cartAdds: perf.cartAdds,
+          ctr: parseFloat(ctr.toFixed(2)),
+          conversion: parseFloat(conversion.toFixed(2))
         },
-        count: { $sum: 1 },
-        totalValue: { $sum: { $ifNull: ['$metadata.orderValue', 0] } }
-      }
-    }
-  ]).toArray();
-
-  const segmentMap = {};
-  for (const row of segments) {
-    const segment = row._id.segment;
-    if (!segmentMap[segment]) {
-      segmentMap[segment] = { segment, views: 0, clicks: 0, adds: 0, value: 0 };
-    }
-    if (row._id.eventType === 'view') segmentMap[segment].views = row.count;
-    if (row._id.eventType === 'click') segmentMap[segment].clicks = row.count;
-    if (row._id.eventType === 'cart_add') segmentMap[segment].adds = row.count;
-    segmentMap[segment].value += row.totalValue;
+        segmentBreakdown: Object.entries(segs).map(([seg, s]) => ({
+          segment: seg,
+          views: s.views,
+          clicks: s.clicks,
+          adds: s.adds,
+          ctr: s.views > 0 ? parseFloat(((s.clicks / s.views) * 100).toFixed(2)) : 0,
+          conversion: s.views > 0 ? parseFloat(((s.adds / s.views) * 100).toFixed(2)) : 0
+        })),
+        marginImpact: bundle.discountPercent ? -bundle.discountPercent : 0,
+        controlStatus: control?.status || 'auto',
+        controlNote: control?.note || null,
+        recommendedAction: getRecommendedAction({ ctr, conversion, views: perf.views })
+      };
+    });
+  } catch (err) {
+    console.warn('⚠️ getBundlesWithPerformance failed:', err.message);
+    return [];
   }
-
-  const segmentAnalysis = Object.values(segmentMap).map(s => ({
-    segment: s.segment,
-    views: s.views,
-    clicks: s.clicks,
-    cartAdds: s.adds,
-    ctr: s.views > 0 ? parseFloat(((s.clicks / s.views) * 100).toFixed(2)) : 0,
-    conversion: s.views > 0 ? parseFloat(((s.adds / s.views) * 100).toFixed(2)) : 0,
-    totalOrderValue: parseFloat(s.value.toFixed(2)),
-    health: getSegmentHealth(s.views, s.clicks, s.adds),
-    recommendation: getSegmentRecommendation(s.views, s.clicks, s.adds)
-  }));
-
-  return segmentAnalysis;
 }
 
 /**
- * Get context injection effectiveness - merchant focus vs AI generated
+ * Get explainability data for recent offers.
+ * Single aggregate for performance — no N+1 queries.
  */
-async function getContextInjectionEffectiveness(shopId) {
-  const db = await getDb();
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+export async function getExplainabilityDashboard(shopId, limit = 20) {
+  if (!shopId) return [];
+  try {
+    const db = await getDb();
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  // Get merchant context
-  const context = await db.collection(collections.merchantIntelligence).findOne({ shopId });
+    // Step 1: Fetch recent offers (one query)
+    const offers = await db.collection(collections.offerLogs)
+      .find({ shopId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray();
 
-  // Analyze performance of merchant-focused vs AI-generated offers
-  const comparison = await db.collection(collections.upsellEvents).aggregate([
-    {
-      $match: {
-        shopId,
-        timestamp: { $gte: thirtyDaysAgo }
-      }
-    },
-    {
-      $group: {
-        _id: '$metadata.recommendationType',
-        views: { $sum: { $cond: [{ $eq: ['$eventType', 'view'] }, 1, 0] } },
-        clicks: { $sum: { $cond: [{ $eq: ['$eventType', 'click'] }, 1, 0] } },
-        adds: { $sum: { $cond: [{ $eq: ['$eventType', 'cart_add'] }, 1, 0] } },
-        value: { $sum: { $ifNull: ['$metadata.orderValue', 0] } }
-      }
-    }
-  ]).toArray();
+    if (offers.length === 0) return [];
 
-  const effectiveness = {
-    merchantFocus: null,
-    aiGenerated: null,
-    context: {
-      priority: context?.priority || 'none',
-      focusProducts: context?.focusProductIds || [],
-      focusCollections: context?.focusCollectionIds || [],
-      preferBundles: context?.preferBundles || false,
-      notes: context?.notes || ''
-    }
-  };
+    // Step 2: ONE aggregate for all performance data
+    const pairs = offers.map(o => ({
+      sourceProductId: o.sourceProductId ?? null,
+      upsellProductId: o.upsellProductId ?? null
+    }));
 
-  for (const row of comparison) {
-    const type = row._id || 'auto';
-    const ctr = row.views > 0 ? (row.clicks / row.views) * 100 : 0;
-    const conv = row.views > 0 ? (row.adds / row.views) * 100 : 0;
-
-    const data = {
-      type,
-      views: row.views,
-      clicks: row.clicks,
-      adds: row.adds,
-      ctr: parseFloat(ctr.toFixed(2)),
-      conversion: parseFloat(conv.toFixed(2)),
-      totalValue: parseFloat(row.value.toFixed(2)),
-      avgOrderValue: row.adds > 0 ? parseFloat((row.value / row.adds).toFixed(2)) : 0
-    };
-
-    if (type === 'merchant_focus' || type === 'merchant_approved') {
-      effectiveness.merchantFocus = data;
-    } else {
-      effectiveness.aiGenerated = data;
-    }
-  }
-
-  // Calculate effectiveness score
-  if (effectiveness.merchantFocus && effectiveness.aiGenerated) {
-    effectiveness.merchantFocusWins = effectiveness.merchantFocus.ctr > effectiveness.aiGenerated.ctr ? 'ctr' : 
-                                      effectiveness.merchantFocus.conversion > effectiveness.aiGenerated.conversion ? 'conversion' : 'tie';
-  }
-
-  return effectiveness;
-}
-
-/**
- * Get explainability data - why each offer was created
- */
-async function getExplainabilityDashboard(shopId, limit = 20) {
-  const db = await getDb();
-
-  const offers = await db.collection(collections.decisionOffers).find({
-    shopId
-  })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .toArray();
-
-  const explainability = await Promise.all(offers.map(async (offer) => {
-    // Get control/approval history
-    const controls = await db.collection(collections.offerLogs).find({
-      shopId,
-      offerId: offer.offerId
-    }).sort({ timestamp: -1 }).toArray();
-
-    // Get performance
-    const events = await db.collection(collections.upsellEvents).find({
-      shopId,
-      sourceProductId: offer.sourceProductId,
-      upsellProductId: offer.upsellProductId
-    }).toArray();
-
-    const views = events.filter(e => e.eventType === 'view').length;
-    const clicks = events.filter(e => e.eventType === 'click').length;
-    const adds = events.filter(e => e.eventType === 'cart_add').length;
-
-    return {
-      offerId: offer.offerId,
-      sourceProduct: offer.sourceProductName || offer.sourceProductId,
-      upsellProduct: offer.upsellProductName || offer.upsellProductId,
-      offerType: offer.offerType,
-      placement: offer.placement,
-      discount: offer.discount,
-      decisionScore: offer.decisionScore,
-      confidence: offer.confidence,
-      createdAt: offer.createdAt,
-      whyCreated: offer.decisionReason ? [offer.decisionReason] : [],
-      whyShown: offer.aiReason ? [offer.aiReason] : [],
-      dataSignals: [
-        { signal: 'AI Confidence', value: offer.confidence, weight: 0.3 },
-        { signal: 'Goal Alignment', value: offer.decisionScore * 0.2, weight: 0.2 },
-        { signal: 'Performance History', value: clicks > 0 ? (adds / clicks) * 100 : 0, weight: 0.2 },
-        { signal: 'Control Status', value: offer.controlStatus || 'auto', weight: 0.3 }
-      ],
-      performance: {
-        views,
-        clicks,
-        adds,
-        ctr: views > 0 ? parseFloat(((clicks / views) * 100).toFixed(2)) : 0,
-        conversion: views > 0 ? parseFloat(((adds / views) * 100).toFixed(2)) : 0
+    const perfRows = await db.collection(collections.upsellEvents).aggregate([
+      {
+        $match: {
+          shopId,
+          timestamp: { $gte: thirtyDaysAgo },
+          $or: pairs.map(p => ({
+            sourceProductId: p.sourceProductId,
+            upsellProductId: p.upsellProductId
+          }))
+        }
       },
-      automationJourney: controls.map(c => ({
-        date: c.timestamp,
-        action: c.action,
-        details: c.details
-      })),
-      nextReviewDate: new Date(offer.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000)
-    };
-  }));
+      {
+        $group: {
+          _id: {
+            src: '$sourceProductId',
+            upsell: '$upsellProductId',
+            eventType: '$eventType'
+          },
+          count: { $sum: 1 }
+        }
+      }
+    ]).toArray();
 
-  return explainability;
+    // Step 3: Build perf map
+    const perfMap = {};
+    for (const row of perfRows) {
+      const key = `${row._id.src}:${row._id.upsell}`;
+      if (!perfMap[key]) perfMap[key] = { views: 0, clicks: 0, adds: 0 };
+      if (row._id.eventType === 'view') perfMap[key].views += row.count;
+      if (row._id.eventType === 'click') perfMap[key].clicks += row.count;
+      if (row._id.eventType === 'cart_add') perfMap[key].adds += row.count;
+    }
+
+    // Step 4: Assemble (no extra DB calls)
+    return offers.map(offer => {
+      const key = `${offer.sourceProductId ?? null}:${offer.upsellProductId ?? null}`;
+      const perf = perfMap[key] || { views: 0, clicks: 0, adds: 0 };
+      const conf = Number.isFinite(Number(offer.confidence)) ? Number(offer.confidence) : 0;
+      const score = Number.isFinite(Number(offer.decisionScore)) ? Number(offer.decisionScore) : 0;
+
+      return {
+        offerId: offer.offerId,
+        offerKey: offer.offerKey,
+        sourceProduct: offer.sourceProductName || offer.sourceProductId || 'Cart',
+        upsellProduct: offer.upsellProductName || offer.upsellProductId,
+        offerType: offer.offerType,
+        placement: offer.placement,
+        discountPercent: offer.discountPercent,
+        decisionScore: score,
+        confidence: conf,
+        goal: offer.goal,
+        riskTolerance: offer.riskTolerance,
+        createdAt: offer.createdAt,
+        whyCreated: [
+          offer.decisionReason,
+          offer.goal ? `Goal: ${offer.goal}` : null
+        ].filter(Boolean),
+        whyShown: [
+          offer.aiReason,
+          offer.placement ? `Placement: ${offer.placement}` : null
+        ].filter(Boolean),
+        dataSignals: [
+          { signal: 'AI Confidence', value: conf, weight: 0.3 },
+          { signal: 'Decision Score', value: score, weight: 0.4 },
+          { signal: 'Conversion (30d)', value: perf.views > 0 ? parseFloat(((perf.adds / perf.views) * 100).toFixed(1)) : 0, weight: 0.3 }
+        ],
+        performance: {
+          views: perf.views,
+          clicks: perf.clicks,
+          adds: perf.adds,
+          ctr: perf.views > 0 ? parseFloat(((perf.clicks / perf.views) * 100).toFixed(2)) : 0,
+          conversion: perf.views > 0 ? parseFloat(((perf.adds / perf.views) * 100).toFixed(2)) : 0
+        }
+      };
+    });
+  } catch (err) {
+    console.warn('⚠️ getExplainabilityDashboard failed:', err.message);
+    return [];
+  }
 }
 
 /**
- * Helper: Determine recommended action for a bundle
+ * Segment performance analysis — already a single aggregate, stays as-is.
  */
-function getRecommendedAction(perf) {
-  const { ctr, conversion, views } = perf;
-  
+export async function getSegmentPerformanceAnalysis(shopId) {
+  if (!shopId) return [];
+  try {
+    const db = await getDb();
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const rows = await db.collection(collections.upsellEvents).aggregate([
+      { $match: { shopId, timestamp: { $gte: thirtyDaysAgo } } },
+      {
+        $group: {
+          _id: {
+            segment: { $ifNull: ['$metadata.segment', 'unknown'] },
+            eventType: '$eventType'
+          },
+          count: { $sum: 1 }
+        }
+      }
+    ]).toArray();
+
+    const segmentMap = {};
+    for (const row of rows) {
+      const seg = row._id.segment;
+      if (!segmentMap[seg]) segmentMap[seg] = { segment: seg, views: 0, clicks: 0, adds: 0 };
+      if (row._id.eventType === 'view') segmentMap[seg].views = row.count;
+      if (row._id.eventType === 'click') segmentMap[seg].clicks = row.count;
+      if (row._id.eventType === 'cart_add') segmentMap[seg].adds = row.count;
+    }
+
+    return Object.values(segmentMap).map(s => ({
+      segment: s.segment,
+      views: s.views,
+      clicks: s.clicks,
+      cartAdds: s.adds,
+      ctr: s.views > 0 ? parseFloat(((s.clicks / s.views) * 100).toFixed(2)) : 0,
+      conversion: s.views > 0 ? parseFloat(((s.adds / s.views) * 100).toFixed(2)) : 0,
+      health: getSegmentHealth(s.views, s.clicks, s.adds),
+      recommendation: getSegmentRecommendation(s.views, s.clicks, s.adds)
+    }));
+  } catch (err) {
+    console.warn('⚠️ getSegmentPerformanceAnalysis failed:', err.message);
+    return [];
+  }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function getRecommendedAction({ ctr, conversion, views }) {
   if (views < 10) return 'monitor';
   if (conversion < 1) return 'pause';
-  if (ctr < 3) return 'boost_discount';
   if (conversion > 5) return 'approve';
-  return 'watch';
+  return 'monitor';
 }
 
-/**
- * Helper: Determine segment health
- */
 function getSegmentHealth(views, clicks, adds) {
   const ctr = views > 0 ? (clicks / views) * 100 : 0;
   const conv = views > 0 ? (adds / views) * 100 : 0;
-
   if (views < 5) return 'insufficient_data';
   if (conv > 5 && ctr > 5) return 'excellent';
   if (conv > 2 && ctr > 3) return 'good';
@@ -326,22 +307,11 @@ function getSegmentHealth(views, clicks, adds) {
   return 'poor';
 }
 
-/**
- * Helper: Get segment recommendation
- */
 function getSegmentRecommendation(views, clicks, adds) {
-  const ctr = views > 0 ? (clicks / views) * 100 : 0;
   const conv = views > 0 ? (adds / views) * 100 : 0;
-
-  if (conv < 1) return 'increase_discount';
-  if (ctr < 2) return 'optimize_placement';
-  if (views < 50) return 'gather_more_data';
-  return 'maintain_current_strategy';
+  const clickRate = views > 0 ? (clicks / views) * 100 : 0;
+  if (conv < 1) return 'Increase discount or improve offer relevance';
+  if (clickRate < 2) return 'Optimize placement or offer copy';
+  if (views < 50) return 'Gather more data before acting';
+  return 'Maintain current strategy';
 }
-
-module.exports = {
-  getBundlesWithPerformance,
-  getSegmentPerformanceAnalysis,
-  getContextInjectionEffectiveness,
-  getExplainabilityDashboard
-};

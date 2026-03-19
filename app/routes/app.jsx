@@ -72,6 +72,7 @@ export default function App() {
         <s-link href="/app/intelligence">Merchandising Intelligence</s-link>
         <s-link href="/app/optimization">Learning & Optimization & Bundles</s-link>
         <s-link href="/app/safety">Safety Mode</s-link>
+        <s-link href="/app/guardrail-monitor">Guardrail Monitor</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

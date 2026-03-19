@@ -7,71 +7,55 @@ export const loader = async ({ request }) => {
 
   try {
     const { getDb, collections } = await import("../../backend/database/mongodb.js");
-    const { syncProductsWithGraphQL } = await import("../../backend/database/collections.js");
-    const { ProductService } = await import("../../backend/services/productService.js");
     const db = await getDb();
-    const totalConversions = await db.collection(collections.upsellEvents)
-      .countDocuments({ shopId: session.shop, isUpsellEvent: true, eventType: 'cart_add' });
 
-    // Auto-sync products on first load if store has none in MongoDB
-    let productCount = await db.collection(collections.products)
-      .countDocuments({ shopId: session.shop });
+    // Run DB queries and theme editor URL fetch in parallel — never block on each other
+    const [totalConversions, productCount, themeEditorUrl] = await Promise.all([
+      db.collection(collections.upsellEvents)
+        .countDocuments({ shopId: session.shop, isUpsellEvent: true, eventType: 'cart_add' })
+        .catch(() => 0),
 
-    const productService = new ProductService();
+      db.collection(collections.products)
+        .countDocuments({ shopId: session.shop })
+        .catch(() => 0),
 
-    if (productCount === 0) {
-      if (admin?.graphql) {
+      // Build theme editor deep link
+      (async () => {
         try {
-          const syncedCount = await syncProductsWithGraphQL(session.shop, admin.graphql);
-          productCount = syncedCount;
-        } catch (syncError) {
-          console.error("Auto product sync failed:", syncError);
-        }
-      } else {
-        console.warn("Admin GraphQL client not available for auto-sync.");
-      }
-    } else {
-      const needsBackfill = await productService.needsVariantBackfill(session.shop);
-      if (needsBackfill) {
-        if (admin?.graphql) {
-          try {
+          if (!admin?.graphql) return null;
+          const productRes = await admin.graphql(`#graphql
+            query getPreviewProduct {
+              products(first: 1, sortKey: CREATED_AT, reverse: true) {
+                nodes { handle }
+              }
+            }`);
+          const productData = await productRes.json();
+          const productHandle = productData?.data?.products?.nodes?.[0]?.handle || null;
+          const storeHandle = session.shop.replace(".myshopify.com", "");
+          const previewPath = productHandle ? `/products/${productHandle}` : "/products";
+          return storeHandle
+            ? `https://admin.shopify.com/store/${storeHandle}/themes/current/editor?context=apps&previewPath=${encodeURIComponent(previewPath)}`
+            : null;
+        } catch { return null; }
+      })(),
+    ]);
+
+    // Product sync / backfill — run in background, never block the page render
+    if (admin?.graphql) {
+      (async () => {
+        try {
+          const { syncProductsWithGraphQL } = await import("../../backend/database/collections.js");
+          if (productCount === 0) {
             await syncProductsWithGraphQL(session.shop, admin.graphql);
-          } catch (syncError) {
-            console.error("Variant backfill sync failed:", syncError);
+          } else {
+            const { ProductService } = await import("../../backend/services/productService.js");
+            const needsBackfill = await new ProductService().needsVariantBackfill(session.shop);
+            if (needsBackfill) await syncProductsWithGraphQL(session.shop, admin.graphql);
           }
-        } else {
-          console.warn("Admin GraphQL client not available for variant backfill.");
+        } catch (err) {
+          console.error("Background product sync failed:", err.message);
         }
-      }
-    }
-
-    // Build theme editor deep link (opens App embeds panel on a product page)
-    let themeEditorUrl = null;
-    try {
-      let productHandle = null;
-      if (admin?.graphql) {
-        const productRes = await admin.graphql(
-          `#graphql
-          query getPreviewProduct {
-            products(first: 1, sortKey: CREATED_AT, reverse: true) {
-              nodes { handle }
-            }
-          }`
-        );
-        const productData = await productRes.json();
-        productHandle = productData?.data?.products?.nodes?.[0]?.handle || null;
-      }
-
-      const storeHandle = session.shop.replace(".myshopify.com", "");
-      const previewPath = productHandle ? `/products/${productHandle}` : "/products";
-
-      if (storeHandle) {
-        themeEditorUrl =
-          `https://admin.shopify.com/store/${storeHandle}/themes/current/editor` +
-          `?context=apps&previewPath=${encodeURIComponent(previewPath)}`;
-      }
-    } catch (err) {
-      console.error("Theme editor URL error:", err);
+      })();
     }
 
     return json({ totalConversions, productCount, themeEditorUrl });

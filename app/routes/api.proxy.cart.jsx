@@ -5,6 +5,9 @@ import { decideCartOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
 import { getSafetyMode } from "../../backend/services/safetyMode.js";
 
+// Pre-warm MongoDB at module load — eliminates cold-start delay on first request after server restart
+import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
+
 /**
  * Fetch live inventory using authenticated admin client from appProxy
  */
@@ -264,10 +267,14 @@ export const loader = async ({ request }) => {
     // Use cart products already fetched by AI engine — no extra DB query needed
     let recommendations = decision.offers || [];
 
-    // Filter by offer display mode — only for AOV & Inventory goals
-    const isAovOrInventory = merchantGoal === 'increase_aov' || merchantGoal === 'inventory_movement';
-    if (isAovOrInventory && offerDisplayMode !== 'both') {
-      recommendations = recommendations.filter(r => (r.offerType || 'addon_upsell') === offerDisplayMode);
+    // Apply goal-based offer type filter
+    if (merchantGoal === 'revenue_per_visitor' || merchantGoal === 'subscription_adoption') {
+      // These goals: always addon_upsell only, no bundles/volume discounts
+      recommendations = recommendations.map(r => ({ ...r, offerType: 'addon_upsell' }));
+    } else if (offerDisplayMode === 'bundle') {
+      recommendations = recommendations.map(r => ({ ...r, offerType: 'bundle' }));
+    } else if (offerDisplayMode === 'volume_discount') {
+      recommendations = recommendations.map(r => ({ ...r, offerType: 'volume_discount' }));
     }
     const validCartProducts = decision.cartProducts || [];
     const cartSourceTitle = validCartProducts.length > 0

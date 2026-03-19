@@ -25,11 +25,11 @@ export const GOAL_MAPPING = {
 
 export const RISK_MAPPING = {
   conservative: {
-    maxOfferFrequency: 1,
+    maxOfferFrequency: 4,
     minAcceptanceProbability: 0.25,
     discountMultiplier: 0.5,
     allowedPlacements: ["product_page"],
-    description: "One offer per view, half the discount ceiling, product page only. Lowest disruption.",
+    description: "Four offers per view, half the discount ceiling, product page only. Lowest disruption.",
   },
   balanced: {
     maxOfferFrequency: 4,
@@ -39,10 +39,10 @@ export const RISK_MAPPING = {
     description: "Four offers per view, 75% of discount ceiling, all placement stages enabled.",
   },
   aggressive: {
-    maxOfferFrequency: 3,
+    maxOfferFrequency: 4,
     minAcceptanceProbability: 0.05,
     discountMultiplier: 1.0,
     allowedPlacements: ["product_page", "cart_drawer", "checkout", "post_purchase"],
-    description: "Maximum offer frequency, full discount ceiling, all placement stages enabled.",
+    description: "Maximum offers per view, full discount ceiling, all placement stages enabled.",
   },
 };

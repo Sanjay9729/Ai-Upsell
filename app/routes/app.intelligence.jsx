@@ -57,25 +57,26 @@ export const loader = async ({ request }) => {
     const { getDb, collections } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
 
-    // Import Pillar 6 service
-    const {
-        getBundlesWithPerformance,
-        getSegmentPerformanceAnalysis,
-        getContextInjectionEffectiveness,
-        getExplainabilityDashboard
-    } = await import("../../backend/services/pillar6IntelligenceService.js");
+    // Import Pillar 6 service — wrapped in try/catch so a crash never breaks the page
+    let getBundlesWithPerformance = async () => [];
+    let getExplainabilityDashboard = async () => [];
+    try {
+        const p6 = await import("../../backend/services/pillar6IntelligenceService.js");
+        getBundlesWithPerformance = p6.getBundlesWithPerformance;
+        getExplainabilityDashboard = p6.getExplainabilityDashboard;
+    } catch (err) {
+        console.warn("[intelligence] pillar6 service import failed:", err.message);
+    }
 
-    const [context, offerLogResult, contextDoc, bundles, segments, contextInjection, explainability] = await Promise.all([
+    const [context, offerLogResult, contextDoc, bundles, explainability] = await Promise.all([
         getMerchantContext(shopId),
         getOfferLogs(shopId, { limit: 120 }),
         db.collection(collections.merchantIntelligence).findOne(
             { shopId },
             { projection: { updatedAt: 1, createdAt: 1 } }
         ),
-        getBundlesWithPerformance(shopId, 50),
-        getSegmentPerformanceAnalysis(shopId),
-        getContextInjectionEffectiveness(shopId),
-        getExplainabilityDashboard(shopId, 20)
+        getBundlesWithPerformance(shopId, 50).catch(() => []),
+        getExplainabilityDashboard(shopId, 20).catch(() => []),
     ]);
 
     const offers = (offerLogResult.offers || []).map((offer) => ({
@@ -190,7 +191,6 @@ export const loader = async ({ request }) => {
         performanceMap,
         loaderSegments,
         bundles,
-        contextInjection,
         explainability,
         lastSavedAt: contextDoc?.updatedAt || contextDoc?.createdAt || null
     });
@@ -264,7 +264,7 @@ export const action = async ({ request }) => {
 };
 
 export default function IntelligencePage() {
-    const { context, offers, controlMap, performanceMap, loaderSegments, bundles, contextInjection, explainability, lastSavedAt } = useLoaderData();
+    const { context, offers, controlMap, performanceMap, loaderSegments, bundles, explainability, lastSavedAt } = useLoaderData();
     const actionData = useActionData();
     const revalidator = useRevalidator();
     const [filter, setFilter] = useState("all");
@@ -472,34 +472,92 @@ export default function IntelligencePage() {
                     {bundles && bundles.length > 0 && (
                         <div style={{ marginBottom: "20px", padding: "12px", background: "#e3f5e1", borderRadius: "8px", border: "1px solid #b7e4b0" }}>
                             <div style={{ fontSize: "13px", fontWeight: 600, color: "#1a7f37" }}>
-                                📦 {bundles.length} Bundles | Avg CTR: {(bundles.reduce((s, b) => s + b.performance.ctr, 0) / bundles.length).toFixed(1)}% | Avg Conv: {(bundles.reduce((s, b) => s + b.performance.conversion, 0) / bundles.length).toFixed(1)}%
+                                📦 {bundles.length} Bundles | Avg Conv: {(bundles.reduce((s, b) => s + b.performance.conversion, 0) / bundles.length).toFixed(1)}%
                             </div>
                         </div>
                     )}
-                    {bundles && bundles.map(bundle => (
+                    {bundles && bundles.map(bundle => {
+                        const bStatus = bundle.controlStatus || 'auto';
+                        const statusColors = {
+                            approved: { bg: '#e3f5e1', color: '#1a7f37', border: '#b7e4b0' },
+                            paused: { bg: '#fde8e8', color: '#b42318', border: '#f3bebe' },
+                            guided: { bg: '#eaf0ff', color: '#3b5998', border: '#c5d4f5' },
+                            auto: { bg: '#f1f2f3', color: '#6d7175', border: '#d2d5d8' }
+                        };
+                        const sc = statusColors[bStatus] || statusColors.auto;
+                        return (
                         <div key={bundle.bundleId} style={{ border: "1px solid #e1e3e5", borderRadius: "8px", padding: "14px", marginBottom: "10px", background: "#ffffff" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                                 <div>
-                                    <div style={{ fontSize: "13px", fontWeight: 700 }}>{bundle.sourceProductName} → {bundle.upsellProductName}</div>
-                                    <div style={{ fontSize: "12px", color: "#6d7175", marginTop: "2px" }}>CTR: {bundle.performance.ctr.toFixed(1)}% | Conv: {bundle.performance.conversion.toFixed(1)}% | Views: {bundle.performance.views}</div>
+                                    <div style={{ fontSize: "13px", fontWeight: 700 }}>{bundle.sourceProductName || bundle.sourceProductId || "Cart"} → {bundle.upsellProductName || bundle.upsellProductId}</div>
+                                    <div style={{ fontSize: "12px", color: "#6d7175", marginTop: "2px" }}>
+                                        Views: {bundle.performance.views} · Conv: {bundle.performance.conversion.toFixed(1)}%
+                                        {bundle.discountPercent ? ` · Discount: ${bundle.discountPercent}%` : ""}
+                                        {bundle.goal ? ` · Goal: ${bundle.goal}` : ""}
+                                    </div>
+                                    {bundle.decisionReason && (
+                                        <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: "3px" }}>Why: {bundle.decisionReason}</div>
+                                    )}
                                 </div>
-                                <span style={{ padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: 600, background: bundle.controlStatus === "approved" ? "#e3f5e1" : "#fde8e8", color: bundle.controlStatus === "approved" ? "#1a7f37" : "#b42318" }}>
-                                    {bundle.controlStatus.toUpperCase()}
+                                <span style={{ padding: "3px 10px", borderRadius: "100px", fontSize: "11px", fontWeight: 600, background: sc.bg, color: sc.color, border: `1px solid ${sc.border}`, whiteSpace: "nowrap" }}>
+                                    {bStatus.toUpperCase()}
                                 </span>
                             </div>
-                            <div style={{ fontSize: "12px", color: "#303030", padding: "8px", background: "#f9fafb", borderRadius: "6px" }}>
-                                <strong>Recommended:</strong> {bundle.recommendedAction === 'pause' ? '⏸️ Pause' : bundle.recommendedAction === 'approve' ? '✅ Approve' : '👀 Monitor'}
+                            <div style={{ fontSize: "12px", color: "#303030", padding: "8px", background: "#f9fafb", borderRadius: "6px", marginBottom: "10px" }}>
+                                <strong>Recommended:</strong>{" "}
+                                {bundle.recommendedAction === 'pause' ? '⏸️ Pause — low conversion' :
+                                 bundle.recommendedAction === 'approve' ? '✅ Approve — high conversion' :
+                                 '👀 Monitor — gathering data'}
+                            </div>
+                            {/* Segment breakdown */}
+                            {bundle.segmentBreakdown && bundle.segmentBreakdown.filter(s => s.views > 0).length > 0 && (
+                                <div style={{ fontSize: "11px", color: "#6d7175", marginBottom: "10px", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                                    {bundle.segmentBreakdown.filter(s => s.views > 0).map(seg => (
+                                        <span key={seg.segment} style={{ background: "#f7f7f8", padding: "2px 8px", borderRadius: "4px" }}>
+                                            {seg.segment}: {seg.conversion.toFixed(1)}% conv
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                            {/* Action buttons */}
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                                <Form method="post">
+                                    <input type="hidden" name="intent" value="offer_action" />
+                                    <input type="hidden" name="offerKey" value={bundle.offerKey} />
+                                    <input type="hidden" name="status" value="approved" />
+                                    <input type="hidden" name="contextKey" value={bundle.contextKey || "product"} />
+                                    <input type="hidden" name="sourceProductId" value={bundle.sourceProductId || ""} />
+                                    <input type="hidden" name="upsellProductId" value={bundle.upsellProductId || ""} />
+                                    <button type="submit" className={buttonClass(false, "primary")} style={{ fontSize: "12px", padding: "5px 12px" }}>Approve</button>
+                                </Form>
+                                <Form method="post">
+                                    <input type="hidden" name="intent" value="offer_action" />
+                                    <input type="hidden" name="offerKey" value={bundle.offerKey} />
+                                    <input type="hidden" name="status" value="paused" />
+                                    <input type="hidden" name="contextKey" value={bundle.contextKey || "product"} />
+                                    <input type="hidden" name="sourceProductId" value={bundle.sourceProductId || ""} />
+                                    <input type="hidden" name="upsellProductId" value={bundle.upsellProductId || ""} />
+                                    <button type="submit" className={buttonClass(false, "tertiary")} style={{ fontSize: "12px", padding: "5px 12px" }}>Pause</button>
+                                </Form>
                             </div>
                         </div>
-                    ))}
+                        );
+                    })}
                 </s-section>
             )}
 
             {activeTab === "segments" && (
                 <s-section heading="Segment Performance (Last 30 Days)">
                 {segments.length === 0 ? (
-                    <div style={{ padding: "16px", color: "#6d7175", background: "#f9fafb", borderRadius: "8px", border: "1px dashed #e1e3e5" }}>
-                        No segment data yet. When events include metadata.segment or customer IDs, performance will appear here.
+                    <div style={{ padding: "24px", textAlign: "center", background: "#f9fafb", borderRadius: "10px", border: "1px dashed #d2d5d8" }}>
+                        <div style={{ fontSize: "28px", marginBottom: "10px" }}>👥</div>
+                        <div style={{ fontSize: "14px", fontWeight: 600, color: "#303030", marginBottom: "6px" }}>No segment data yet</div>
+                        <div style={{ fontSize: "13px", color: "#6d7175", maxWidth: "400px", margin: "0 auto" }}>
+                            Segment performance will appear here automatically once customers start visiting your product pages and interacting with upsell offers.
+                        </div>
+                        <div style={{ marginTop: "14px", padding: "10px 14px", background: "#eaf0ff", borderRadius: "8px", fontSize: "12px", color: "#3b5998", display: "inline-block" }}>
+                            Tip: Make sure your theme embed is enabled and offers are being shown to customers.
+                        </div>
                     </div>
                 ) : (
                     <div style={{ border: "1px solid #e1e3e5", borderRadius: "8px", overflow: "hidden" }}>
@@ -508,9 +566,7 @@ export default function IntelligencePage() {
                                 <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
                                     <th style={{ padding: "10px 14px" }}>Segment</th>
                                     <th style={{ padding: "10px 14px" }}>Views</th>
-                                    <th style={{ padding: "10px 14px" }}>Clicks</th>
                                     <th style={{ padding: "10px 14px" }}>Adds</th>
-                                    <th style={{ padding: "10px 14px" }}>CTR</th>
                                     <th style={{ padding: "10px 14px" }}>Conversion</th>
                                 </tr>
                             </thead>
@@ -519,9 +575,7 @@ export default function IntelligencePage() {
                                     <tr key={seg.segment} style={{ borderBottom: "1px solid #f1f2f3" }}>
                                         <td style={{ padding: "10px 14px", fontWeight: 600 }}>{seg.segment}</td>
                                         <td style={{ padding: "10px 14px" }}>{seg.views}</td>
-                                        <td style={{ padding: "10px 14px" }}>{seg.clicks}</td>
                                         <td style={{ padding: "10px 14px" }}>{seg.cartAdds}</td>
-                                        <td style={{ padding: "10px 14px" }}>{seg.views > 0 ? `${seg.clickThroughRate.toFixed(1)}%` : "—"}</td>
                                         <td style={{ padding: "10px 14px" }}>{seg.views > 0 ? `${seg.conversionRate.toFixed(1)}%` : "—"}</td>
                                     </tr>
                                 ))}
@@ -559,8 +613,15 @@ export default function IntelligencePage() {
                             ))}
                         </div>
                     ) : (
-                        <div style={{ padding: "16px", color: "#6d7175", background: "#f9fafb", borderRadius: "8px", border: "1px dashed #e1e3e5" }}>
-                            No explainability data yet.
+                        <div style={{ padding: "24px", textAlign: "center", background: "#f9fafb", borderRadius: "10px", border: "1px dashed #d2d5d8" }}>
+                            <div style={{ fontSize: "28px", marginBottom: "10px" }}>💡</div>
+                            <div style={{ fontSize: "14px", fontWeight: 600, color: "#303030", marginBottom: "6px" }}>No offer explanations yet</div>
+                            <div style={{ fontSize: "13px", color: "#6d7175", maxWidth: "420px", margin: "0 auto" }}>
+                                Once the AI engine starts generating offers for your store, you'll see exactly why each offer was created — which data signals drove it, which goal it supports, and its live performance.
+                            </div>
+                            <div style={{ marginTop: "14px", padding: "10px 14px", background: "#f0fdf4", borderRadius: "8px", fontSize: "12px", color: "#166534", display: "inline-block" }}>
+                                Offers generate automatically when customers visit product or cart pages.
+                            </div>
                         </div>
                     )}
                 </s-section>
@@ -596,7 +657,6 @@ export default function IntelligencePage() {
                             const perf = performanceMap[perfKey] || { views: 0, clicks: 0, cart_adds: 0 };
                             const status = controlMap[offer.offerKey]?.status || "auto";
                             const note = controlMap[offer.offerKey]?.note || "";
-                            const ctr = perf.views > 0 ? ((perf.clicks / perf.views) * 100).toFixed(1) : "—";
                             const conv = perf.views > 0 ? ((perf.cart_adds / perf.views) * 100).toFixed(1) : "—";
 
                             return (
@@ -643,9 +703,7 @@ export default function IntelligencePage() {
 
                                     <div style={{ display: "flex", gap: "14px", marginTop: "10px", fontSize: "12px", color: "#6d7175" }}>
                                         <div>Views: {perf.views}</div>
-                                        <div>Clicks: {perf.clicks}</div>
                                         <div>Adds: {perf.cart_adds}</div>
-                                        <div>CTR: {ctr === "—" ? "—" : `${ctr}%`}</div>
                                         <div>Conv: {conv === "—" ? "—" : `${conv}%`}</div>
                                     </div>
 
