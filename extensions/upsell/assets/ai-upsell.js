@@ -26,6 +26,66 @@
     return isImmediateDiscountGoal(goal) || isBuy2Goal(goal);
   }
 
+  function safeLoadDrawerUpsells() {
+    try {
+      if (typeof window.__AI_UPSELL_LOAD_DRAWER__ === 'function') {
+        window.__AI_UPSELL_LOAD_DRAWER__();
+      }
+    } catch (_) {}
+  }
+
+  async function restoreDiscountFromCart() {
+    try {
+      var res = await fetch('/cart.js');
+      if (!res || !res.ok) return;
+      var cart = await res.json();
+      var code = cart && cart.discount_code;
+      if (!code && cart && cart.attributes && cart.attributes.ai_discount_code) {
+        code = cart.attributes.ai_discount_code;
+      }
+      if (!code) {
+        var apps = Array.isArray(cart && cart.cart_level_discount_applications)
+          ? cart.cart_level_discount_applications
+          : [];
+        var match = apps.find(function (d) {
+          return isAiDiscountLabel((d && (d.code || d.title)) || '');
+        });
+        if (match) code = match.code || match.title;
+      }
+      if (code && isAiDiscountLabel(code)) {
+        window.__AI_UPSELL_DISCOUNT_CODE__ = code;
+        try { sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ code: code })); } catch (_) {}
+        if (typeof syncCheckoutLinks === 'function') syncCheckoutLinks(code);
+      }
+    } catch (_) {}
+  }
+
+  function safeBuildDiscountRedirectUrl(code, redirectPath) {
+    try {
+      if (typeof buildDiscountRedirectUrl === 'function') {
+        return buildDiscountRedirectUrl(code, redirectPath);
+      }
+    } catch (_) {}
+    if (!code) return null;
+    var rootPath = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) ? window.Shopify.routes.root : '/';
+    if (rootPath.charAt(0) !== '/') rootPath = '/' + rootPath;
+    if (rootPath.charAt(rootPath.length - 1) !== '/') rootPath += '/';
+    var cleanRedirect = String(redirectPath || 'cart').replace(/^\/+/, '');
+    var redirect = rootPath + cleanRedirect;
+    if (redirect.charAt(0) !== '/') redirect = '/' + redirect;
+    return rootPath + 'discount/' + encodeURIComponent(code) + '?redirect=' + encodeURIComponent(redirect);
+  }
+
+  function buildCheckoutUrlWithDiscount(code) {
+    if (!code) return null;
+    var root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) ? window.Shopify.routes.root : '/';
+    if (root.charAt(0) !== '/') root = '/' + root;
+    if (root.charAt(root.length - 1) !== '/') root += '/';
+    var checkout = root + 'checkout';
+    var joiner = checkout.indexOf('?') === -1 ? '?' : '&';
+    return checkout + joiner + 'discount=' + encodeURIComponent(code);
+  }
+
   // ── Restore discount code across page navigations ─────────────────────────
   // window.__AI_UPSELL_DISCOUNT_CODE__ is in-memory only. Restore it from
   // sessionStorage so the checkout-button handler can append it even after
@@ -36,9 +96,18 @@
       var _parsedVolume = JSON.parse(_storedVolume);
       if (_parsedVolume && _parsedVolume.code) {
         window.__AI_UPSELL_DISCOUNT_CODE__ = _parsedVolume.code;
+        // Sync checkout links after DOM is ready so any checkout anchors get the discount URL
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', function () { syncCheckoutLinks(_parsedVolume.code); });
+        } else {
+          syncCheckoutLinks(_parsedVolume.code);
+        }
       }
     }
   } catch (_) {}
+  if (!window.__AI_UPSELL_DISCOUNT_CODE__) {
+    restoreDiscountFromCart();
+  }
 
   var __AI_UPSELL_CART_GOAL__ = null;
 
@@ -79,22 +148,62 @@
 
     document.addEventListener('click', function (e) {
       var code = window.__AI_UPSELL_DISCOUNT_CODE__;
+      // Always refresh drawer upsells when cart drawer is opened
+      var cartDrawerToggle = e.target.closest('#cart-icon-bubble, summary[aria-controls="cart-drawer"], button[aria-controls="cart-drawer"], a[href*="cart"]');
+      if (cartDrawerToggle) {
+        setTimeout(function () { safeLoadDrawerUpsells(); }, 120);
+      }
       if (!code) return;
-      var checkoutTarget = e.target.closest('a[href*="/checkout"], button[name="checkout"], input[name="checkout"]');
-      if (checkoutTarget) {
-        var checkoutUrl = buildDiscountRedirectUrl(code, 'checkout');
-        if (!checkoutUrl) return;
+      // Broad checkout button detection: named buttons, links, and submit buttons inside checkout forms
+      var _checkoutEl = e.target.closest('a[href*="/checkout"], button[name="checkout"], input[name="checkout"]');
+      if (!_checkoutEl) {
+        var _submitEl = e.target.closest('button[type="submit"], input[type="submit"], button:not([type])');
+        if (_submitEl) {
+          var _parentForm = _submitEl.closest('form');
+          if (_parentForm && (_parentForm.action || '').indexOf('/checkout') !== -1) _checkoutEl = _submitEl;
+        }
+      }
+      if (_checkoutEl) {
         e.preventDefault();
         e.stopPropagation();
         if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-        window.location.href = checkoutUrl;
+        if (typeof redirectToCheckoutWithDiscount === 'function') {
+          redirectToCheckoutWithDiscount(code);
+        } else {
+          var _checkoutUrl = (window.location && window.location.pathname && window.location.pathname.indexOf('/cart') === 0)
+            ? buildCheckoutUrlWithDiscount(code)
+            : safeBuildDiscountRedirectUrl(code, 'checkout');
+          _checkoutUrl = _checkoutUrl || (SHOPIFY_ROOT + 'checkout');
+          if (_checkoutUrl) window.location.href = _checkoutUrl;
+        }
         return;
       }
 
       var cartTarget = e.target.closest('a[href="/cart"], a[href$="/cart"], a[href*="/cart?"]');
       if (cartTarget && cartTarget.tagName === 'A' && cartTarget.href) {
-        var cartUrl = buildDiscountRedirectUrl(code, 'cart');
+        var cartUrl = safeBuildDiscountRedirectUrl(code, 'cart');
         if (cartUrl) cartTarget.href = cartUrl;
+      }
+    }, true);
+
+    // Also catch checkout form submissions (e.g. cart page form[action="/checkout"])
+    document.addEventListener('submit', function (e) {
+      var form = e.target;
+      if (!form || form.tagName !== 'FORM') return;
+      var action = form.action || form.getAttribute('action') || '';
+      if (action.indexOf('/checkout') === -1) return;
+      var code = window.__AI_UPSELL_DISCOUNT_CODE__;
+      if (!code) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof redirectToCheckoutWithDiscount === 'function') {
+        redirectToCheckoutWithDiscount(code);
+      } else {
+        var _checkoutUrl2 = (window.location && window.location.pathname && window.location.pathname.indexOf('/cart') === 0)
+          ? buildCheckoutUrlWithDiscount(code)
+          : safeBuildDiscountRedirectUrl(code, 'checkout');
+        _checkoutUrl2 = _checkoutUrl2 || (SHOPIFY_ROOT + 'checkout');
+        if (_checkoutUrl2) window.location.href = _checkoutUrl2;
       }
     }, true);
 
@@ -363,16 +472,9 @@
       var cartRoot = document.querySelector('.cart');
       var cartItems = cartRoot && cartRoot.querySelector('.cart__items');
       if (cartRoot && cartItems && cartItems.parentNode === cartRoot && !isInsideCartDrawer(cartItems)) { insertAfter(cartItems, targetWidget); return; }
-      var cartCtas = document.querySelector('.cart__ctas');
-      if (cartCtas && cartCtas.parentNode && !isInsideCartDrawer(cartCtas)) { cartCtas.parentNode.insertBefore(targetWidget, cartCtas); return; }
-      var checkoutButton = document.querySelector('button[name="checkout"], #checkout, .cart__checkout-button button');
-      if (checkoutButton && !isInsideCartDrawer(checkoutButton)) {
-        var ctaWrapper = checkoutButton.closest('.cart__ctas, .cart__checkout-button') || checkoutButton.parentElement;
-        if (ctaWrapper && ctaWrapper.parentNode) { ctaWrapper.parentNode.insertBefore(targetWidget, ctaWrapper); return; }
-        if (checkoutButton.parentNode) { checkoutButton.parentNode.insertBefore(targetWidget, checkoutButton); return; }
-      }
+      // Avoid inserting near checkout CTA to prevent theme-specific CTA hiding issues.
       var cartFooter = document.querySelector('#main-cart-footer, .cart__footer, cart-footer');
-      if (cartFooter && cartFooter.parentNode && !isInsideCartDrawer(cartFooter)) { cartFooter.parentNode.insertBefore(targetWidget, cartFooter); return; }
+      if (cartFooter && cartFooter.parentNode && !isInsideCartDrawer(cartFooter)) { insertAfter(cartFooter, targetWidget); return; }
       // Fallback: attach to main content if theme selectors don't match
       var fallbackHost = document.querySelector('#MainContent, main, .content-for-layout') || document.body;
       if (fallbackHost && targetWidget.parentNode !== fallbackHost) {
@@ -382,6 +484,8 @@
 
     var PRODUCT_ID = _C.productId || '';
     var MAX_PRODUCTS = _C.maxProducts || 4;
+    // Cart drawer "You may also like" should always show up to 4 items, regardless of goal/settings.
+    var DRAWER_MAX_PRODUCTS = 4;
     var SHOPIFY_ROOT = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) ? window.Shopify.routes.root : '/';
     var secondarySourceProductId = null;
     var secondaryAllProducts = [];
@@ -420,6 +524,64 @@
       var redirect = rootPath + cleanRedirect;
       if (redirect.charAt(0) !== '/') redirect = '/' + redirect;
       return rootPath + 'discount/' + encodeURIComponent(code) + '?redirect=' + encodeURIComponent(redirect);
+    }
+
+    function sleep(ms) {
+      return new Promise(function (resolve) { setTimeout(resolve, ms || 0); });
+    }
+
+    async function waitForCartDiscount(code, attempts) {
+      var tries = typeof attempts === 'number' ? attempts : 8;
+      for (var i = 0; i < tries; i++) {
+        try {
+          var r = await fetch(SHOPIFY_ROOT + 'cart.js');
+          if (r && r.ok) {
+            var cart = await r.json();
+            if (cart && (cart.discount_code === code || (cart.cart_level_discount_applications || []).some(function (d) { return isAiDiscountLabel((d && (d.title || d.code)) || ''); }))) {
+              return true;
+            }
+          }
+        } catch (_) {}
+        await sleep(150);
+      }
+      return false;
+    }
+
+    // Ensure discount is applied before navigating to checkout.
+    function redirectToCheckoutWithDiscount(code) {
+      if (!code) return;
+      var navigated = false;
+      var fallbackUrl = safeBuildDiscountRedirectUrl(code, 'checkout') || (SHOPIFY_ROOT + 'checkout');
+      var fallbackTimer = setTimeout(function () {
+        if (navigated || !fallbackUrl) return;
+        navigated = true;
+        window.location.href = fallbackUrl;
+      }, 1200);
+      (async function () {
+        try {
+          await applyDiscountCodeToCart(code, 'checkout');
+          await waitForCartDiscount(code, 8);
+        } catch (_) {}
+        if (navigated) return;
+        navigated = true;
+        clearTimeout(fallbackTimer);
+        var checkoutUrl = safeBuildDiscountRedirectUrl(code, 'checkout') || (SHOPIFY_ROOT + 'checkout');
+        if (checkoutUrl) window.location.href = checkoutUrl;
+      })();
+    }
+
+    // Update all checkout anchor links on the page to go through the discount redirect URL.
+    // Called proactively whenever a discount code is set so the user reaches checkout
+    // with the discount applied regardless of which button or link they click.
+    function syncCheckoutLinks(code) {
+      if (!code) return;
+      try {
+        var checkoutUrl = safeBuildDiscountRedirectUrl(code, 'checkout');
+        if (!checkoutUrl) return;
+        document.querySelectorAll('a[href*="/checkout"]').forEach(function (el) {
+          el.setAttribute('href', checkoutUrl);
+        });
+      } catch (_) {}
     }
 
     function cartHasAiOfferItems(cart) {
@@ -482,43 +644,36 @@
 
     async function applyDiscountCodeToCart(discountCode, redirectPath) {
       if (!discountCode) return false;
-      
-      // First, clear ALL existing discounts (both AI and others) before applying new code
-      try {
-        await fetch(SHOPIFY_ROOT + 'cart/update.js', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ discount: '' })
-        });
-      } catch (_) {}
 
-      var redirectUrl = buildDiscountRedirectUrl(discountCode, redirectPath || 'cart');
-      if (!redirectUrl) return false;
-
-      try {
-        var redirectRes = await fetch(redirectUrl, {
-          method: 'GET',
-          credentials: 'same-origin',
-          redirect: 'follow'
-        });
-        if (redirectRes && redirectRes.ok) {
-          return true;
-        }
-      } catch (err) {
-        console.warn('[AI Upsell] Discount redirect apply failed:', err && err.message ? err.message : err);
-      }
-
+      // Step 1: Set discount directly on cart object (most reliable — Shopify checkout reads this)
+      // Always do this first so the discount persists to checkout even if step 2 fails.
+      var cartUpdateOk = false;
       try {
         var updateRes = await fetch(SHOPIFY_ROOT + 'cart/update.js', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ discount: discountCode })
+          body: JSON.stringify({ discount: discountCode, attributes: { ai_discount_code: discountCode } })
         });
-        return !!(updateRes && updateRes.ok);
+        cartUpdateOk = !!(updateRes && updateRes.ok);
+        console.log('[AI Upsell] cart/update.js discount set:', cartUpdateOk, discountCode);
       } catch (err2) {
         console.warn('[AI Upsell] cart/update discount apply failed:', err2 && err2.message ? err2.message : err2);
-        return false;
       }
+
+      // Step 2: Also apply via /discount/CODE redirect to set the session cookie
+      // (belt-and-suspenders for older checkout and cart page display)
+      var redirectUrl = safeBuildDiscountRedirectUrl(discountCode, redirectPath || 'cart');
+      if (redirectUrl) {
+        try {
+          await fetch(redirectUrl, {
+            method: 'GET',
+            credentials: 'same-origin',
+            redirect: 'follow'
+          });
+        } catch (_) {}
+      }
+
+      return cartUpdateOk;
     }
 
     async function syncStoredDiscountToCart(cartOverride) {
@@ -574,7 +729,7 @@
       var drawer = document.querySelector('cart-drawer');
       if (!drawer) return;
       if (drawer.querySelector('.ai-drawer-upsell')) return;
-      var products = secondaryAllProducts.length > 0 ? secondaryAllProducts.slice(0, MAX_PRODUCTS) : [];
+      var products = secondaryAllProducts.length > 0 ? secondaryAllProducts.slice(0, DRAWER_MAX_PRODUCTS) : [];
       if (products.length === 0) return;
 
       // Build slider card HTML for each product
@@ -690,7 +845,7 @@
             var addRes = await fetch('/cart/add.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cartPayload) });
             var addData = addRes.ok ? await addRes.json() : {};
             if (discountCode) {
-              try { window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode; sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ productId: productId, minQty: getMinVolumeQuantity(productData) || 1, code: discountCode })); await applyDiscountCodeToCart(discountCode, 'cart'); } catch (_) {}
+              try { window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode; syncCheckoutLinks(discountCode); sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ productId: productId, minQty: getMinVolumeQuantity(productData) || 1, code: discountCode })); await applyDiscountCodeToCart(discountCode, 'cart'); } catch (_) {}
             }
             btn.textContent = '✓'; btn.style.background = '#333';
             // Remove this product from future "You may also like" suggestions
@@ -738,6 +893,8 @@
                 if (iconEl) { var tmp2 = document.createElement('div'); tmp2.innerHTML = sectionsData['cart-icon-bubble']; var newIcon = tmp2.querySelector('#cart-icon-bubble'); if (newIcon) { iconEl.replaceWith(newIcon); updateCartCountBubble(cartData.item_count); } }
               }
               updateLineItemDiscountedPrices(cartData);
+              // After drawer re-render, update checkout links with discount URL
+              if (window.__AI_UPSELL_DISCOUNT_CODE__) syncCheckoutLinks(window.__AI_UPSELL_DISCOUNT_CODE__);
             } catch (_) {
               // Fallback: event-based refresh
               fetch('/cart.js').then(function (r) { return r.json(); }).then(function (cart) {
@@ -755,9 +912,42 @@
           } catch (_) { btn.textContent = 'Add'; btn.disabled = false; }
         });
       });
-      var footer = drawer.querySelector('.drawer__footer');
-      if (footer && footer.parentNode) footer.parentNode.insertBefore(wrapper, footer);
-      else { var contents = drawer.querySelector('.drawer__inner, .drawer__contents, cart-drawer-items'); if (contents) contents.appendChild(wrapper); }
+      // Place before footer so checkout sits below the upsell block.
+      var footer = drawer.querySelector('.drawer__footer, .cart-drawer__footer, #CartDrawer-Footer, cart-drawer-footer');
+      if (footer && footer.parentNode) { footer.parentNode.insertBefore(wrapper, footer); return; }
+      // If footer not found, place before checkout CTA inside drawer.
+      var checkoutBtn = drawer.querySelector('button[name="checkout"], #CartDrawer-Checkout, .cart__checkout-button button, a[href*="/checkout"]');
+      if (checkoutBtn && checkoutBtn.parentNode) {
+        var checkoutWrap = checkoutBtn.closest('.cart__ctas, .cart__checkout-button, .drawer__footer, .cart-drawer__footer, form') || checkoutBtn.parentNode;
+        if (checkoutWrap && checkoutWrap.parentNode) { checkoutWrap.parentNode.insertBefore(wrapper, checkoutWrap); return; }
+      }
+      // Fallback: place under cart items if footer not found.
+      var itemsHost = drawer.querySelector('cart-drawer-items, #CartDrawer-CartItems, .drawer__contents .cart-items, .drawer__contents [data-cart-items]');
+      if (itemsHost && itemsHost.parentNode) { insertAfter(itemsHost, wrapper); return; }
+      var contents = drawer.querySelector('.drawer__inner, .drawer__contents, cart-drawer-items');
+      if (contents) contents.appendChild(wrapper);
+    }
+
+    var _drawerUpsellRefreshInFlight = false;
+    async function refreshDrawerUpsellFromCart() {
+      if (_drawerUpsellRefreshInFlight) return;
+      _drawerUpsellRefreshInFlight = true;
+      try {
+        var drawer = document.querySelector('cart-drawer');
+        if (!drawer) return;
+        if (drawer.querySelector('.ai-drawer-upsell')) return;
+        var cartRes = await fetch(SHOPIFY_ROOT + 'cart.js');
+        if (!cartRes.ok) return;
+        var cart = await cartRes.json();
+        var cartProductIds = (cart && cart.items || []).map(function (item) { return item.product_id; });
+        if (!cartProductIds.length) return;
+        await loadSecondaryRecommendations(cartProductIds, cart);
+        placeInCartDrawer();
+      } catch (_) {
+        // ignore
+      } finally {
+        _drawerUpsellRefreshInFlight = false;
+      }
     }
 
     function handleCartUpdated(event) {
@@ -928,7 +1118,7 @@
       if (!cartData || !Array.isArray(cartData.items)) return [];
       var ids = [];
       cartData.items.forEach(function (item) {
-        if (item && item.properties && item.properties.Offer) {
+        if (item && item.properties && (item.properties.Offer || item.properties.offer)) {
           ids.push(String(item.product_id));
         }
       });
@@ -1004,14 +1194,14 @@
         ? formatDiscountPercent(Number(functionDiscountPercent))
         : formattedDiscount;
       if (offerType === 'volume_discount') {
-        var volumeProps = { 'Offer': 'Volume ' + formattedDiscount + '% off' };
+        var volumeProps = { 'Offer': 'Volume ' + formattedDiscount + '% off', 'offer': 'Volume ' + formattedDiscount + '% off' };
         if (originalBasePrice) volumeProps['_ai_original_price'] = String(originalBasePrice);
         return { properties: volumeProps };
       }
       // Always store the discount % in the Offer property so updateLineItemDiscountedPrices
       // can read it back and patch the cart drawer price regardless of AI goal type.
       var prefix = offerType === 'bundle' ? 'Bundle' : 'Offer';
-      var props = { 'Offer': prefix + ' ' + formattedDiscount + '% off' };
+      var props = { 'Offer': prefix + ' ' + formattedDiscount + '% off', 'offer': prefix + ' ' + formattedDiscount + '% off' };
       if (originalBasePrice) props['_ai_original_price'] = String(originalBasePrice);
       return { properties: props };
     }
@@ -1082,7 +1272,7 @@
       if (typeof vid === 'string' && vid.includes('/')) vid = vid.split('/').pop();
       var hasV = Array.isArray(product.variants) && product.variants.length > 0 && !(product.variants.length === 1 && product.variants[0].title === 'Default Title');
       var first = hasV ? (product.variants.find(function (v) { return v.available; }) || product.variants[0]) : null;
-      var eVid = hasV ? (first && first.id) : vid;
+      var eVid = (hasV ? (first && first.id) : null) || vid;
       var dp = hasV && first && first.price ? first.price : product.price;
       var dc = hasV && first && first.compareAtPrice ? first.compareAtPrice : product.compareAtPrice;
       var priceInfo = applyAiDiscount(dp, dc, product.discountPercent);
@@ -1247,7 +1437,7 @@
             var qty = itemEl ? parseInt(itemEl.querySelector('.ai-mbc-qty-val').textContent) || 1 : 1;
             var handle = itemEl ? (itemEl.getAttribute('data-handle') || '') : '';
             var freshVid = await resolveVariantId(handle, variantIds[i]);
-            items.push({ id: parseInt(freshVid), quantity: qty, properties: { _source: 'ai-bundle', Offer: offerProp } });
+            items.push({ id: parseInt(freshVid), quantity: qty, properties: { _source: 'ai-bundle', Offer: offerProp, offer: offerProp } });
           }
           button.disabled = true; button.textContent = 'Adding...';
           try {
@@ -1286,7 +1476,7 @@
               (async function() {
                 try {
                   var bundleOnlyVids = items
-                    .filter(function(it) { return it.properties && it.properties.Offer; })
+                    .filter(function(it) { return it.properties && (it.properties.Offer || it.properties.offer); })
                     .map(function(it) { return String(it.id); });
                   var shop = window.location.hostname.split('.')[0] || 'unknown';
                   var discRes = await fetch('/apps/ai-upsell/discount?shop=' + encodeURIComponent(shop), {
@@ -1298,6 +1488,7 @@
                     var discData = await discRes.json();
                     if (discData.code) {
                       window.__AI_UPSELL_DISCOUNT_CODE__ = discData.code;
+                      syncCheckoutLinks(discData.code);
                       try { sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ code: discData.code })); } catch(_) {}
                       await applyDiscountCodeToCart(discData.code, 'cart');
                       console.log('[AI Upsell] ✅ Bundle discount code applied:', discData.code);
@@ -1322,7 +1513,7 @@
       if (typeof vid === 'string' && vid.includes('/')) vid = vid.split('/').pop();
       var hasV = Array.isArray(product.variants) && product.variants.length > 0 && !(product.variants.length === 1 && product.variants[0].title === 'Default Title');
       var first = hasV ? (product.variants.find(function (v) { return v.available; }) || product.variants[0]) : null;
-      var eVid = hasV ? (first && first.id) : vid;
+      var eVid = (hasV ? (first && first.id) : null) || vid;
       var dp = hasV && first && first.price ? first.price : product.price;
       var dc = hasV && first && first.compareAtPrice ? first.compareAtPrice : product.compareAtPrice;
       var offerType = product.offerType || 'addon_upsell';
@@ -1494,12 +1685,19 @@
     }
 
     async function addToCartAndRefresh(variantId, quantity, cartPayload, discountCode) {
+      console.log('[AI Upsell] cart/add.js payload:', JSON.stringify(cartPayload));
       var response = await fetch('/cart/add.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cartPayload) });
-      if (!response.ok) throw new Error('Failed to add to cart');
+      if (!response.ok) {
+        var errBody = '';
+        try { errBody = await response.text(); } catch (_) {}
+        console.error('[AI Upsell] /cart/add.js failed:', response.status, errBody);
+        throw new Error('Cart add failed (' + response.status + '): ' + errBody);
+      }
       if (discountCode) {
         try {
           console.log('[AI Upsell] Applying discount code:', discountCode);
           window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode;
+          syncCheckoutLinks(discountCode);
           // Persist so it survives navigation to cart page / checkout click
           try { sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ code: discountCode })); } catch (_) {}
           var applied = await applyDiscountCodeToCart(discountCode, 'cart');
@@ -1507,8 +1705,6 @@
           if (!applied) {
             console.warn('[AI Upsell] Failed to apply discount code to cart');
           }
-          // Wait for Shopify to process the discount
-          await new Promise(function(resolve) { setTimeout(resolve, 1000); });
         } catch (err) { console.error('[AI Upsell] Error applying discount:', err.message); }
       } else {
         console.warn('[AI Upsell] No discount code to apply');
@@ -1744,6 +1940,14 @@
       if (!nodes.length) return false;
       nodes.forEach(function (node) {
         var row = (node.closest && node.closest('li, .discounts__discount, .totals__discount, .cart-discount, .discount')) || node;
+        var footer = row && row.closest && row.closest('.drawer__footer, .cart-drawer__footer, #CartDrawer-Footer, cart-drawer-footer');
+        var hasCheckout = row && row.querySelector && row.querySelector('button[name="checkout"], a[href*="/checkout"]');
+        if (footer || hasCheckout) {
+          // Never hide checkout footer; hide only the discount label itself.
+          node.style.display = 'none';
+          node.setAttribute('data-ai-hidden-cart-discount', 'true');
+          return;
+        }
         row.style.display = 'none';
         row.setAttribute('data-ai-hidden-cart-discount', 'true');
       });
@@ -1904,7 +2108,7 @@
         // Read discount % from the Offer line-item property
         var discountPct = 0;
         if (item.properties && typeof item.properties === 'object') {
-          var offerText = item.properties['Offer'] || '';
+          var offerText = item.properties['Offer'] || item.properties['offer'] || '';
           console.log('[AI Upsell] Item', index, 'title:', item.title, '- Offer property:', offerText);
           var discountMatch = offerText.match(/(\d+(?:\.\d+)?)\s*%/);
           if (discountMatch) discountPct = parseFloat(discountMatch[1]);
@@ -1945,7 +2149,7 @@
       cart.items.forEach(function (it) {
         var pct = 0;
         if (it.properties && typeof it.properties === 'object') {
-          var txt = it.properties['Offer'] || '';
+          var txt = it.properties['Offer'] || it.properties['offer'] || '';
           var mm = txt.match(/(\d+(?:\.\d+)?)\s*%/);
           if (mm) pct = parseFloat(mm[1]);
         }
@@ -2005,7 +2209,7 @@
         cart.items.forEach(function (item, index) {
           var discountPct = 0;
           if (item.properties && typeof item.properties === 'object') {
-            var m = (item.properties['Offer'] || '').match(/(\d+(?:\.\d+)?)\s*%/);
+            var m = (item.properties['Offer'] || item.properties['offer'] || '').match(/(\d+(?:\.\d+)?)\s*%/);
             if (m) discountPct = parseFloat(m[1]);
           }
           if (discountPct <= 0) return;
@@ -2038,7 +2242,7 @@
         var newSubtotalCents = 0;
         cart.items.forEach(function (it) {
           var pct = 0;
-          var m = ((it.properties && it.properties['Offer']) || '').match(/(\d+(?:\.\d+)?)\s*%/);
+          var m = ((it.properties && (it.properties['Offer'] || it.properties['offer'])) || '').match(/(\d+(?:\.\d+)?)\s*%/);
           if (m) pct = parseFloat(m[1]);
           if (pct > 0) {
             var storedOriginalCents4 = getStoredOriginalPriceCents(it.properties);
@@ -2138,7 +2342,7 @@
         var cacheParam = '&_t=' + Date.now();
         fetch(SHOPIFY_ROOT + 'cart.js').then(function (r) { return r.json(); }).then(function (cart) {
           console.log('[AI Upsell] 📦 Cart state after discount:', { itemCount: cart.item_count, discountCode: cart.discount_code, items: cart.items.length });
-          cart.items.forEach(function (it, idx) { console.log('[AI Upsell] - Item', idx, ':', it.title, 'Offer:', (it.properties && it.properties['Offer']) || 'none'); });
+          cart.items.forEach(function (it, idx) { console.log('[AI Upsell] - Item', idx, ':', it.title, 'Offer:', (it.properties && (it.properties['Offer'] || it.properties['offer'])) || 'none'); });
           document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
           updateCartCountBubble(cart.item_count);
           // Fetch sections with cache busting to ensure fresh render
@@ -2285,7 +2489,8 @@
         startLoadingFallback(widget, loadingEl, 15000);
         var products = null;
         try { products = await fetchAiRecommendations(currentProductId, MAX_PRODUCTS); } catch (fetchErr) { console.error('[AI Upsell] fetchAiRecommendations error:', fetchErr); }
-        if (!products) { try { products = await fetchShopifyRecommendations(currentProductId, MAX_PRODUCTS); } catch (fallbackErr) { console.error('[AI Upsell] fetchShopifyRecommendations error:', fallbackErr); } }
+        var _lastDecision = window.__AI_UPSELL_LAST_DECISION__;
+        if (!products && (!_lastDecision || _lastDecision.status !== 'safety_mode')) { try { products = await fetchShopifyRecommendations(currentProductId, MAX_PRODUCTS); } catch (fallbackErr) { console.error('[AI Upsell] fetchShopifyRecommendations error:', fallbackErr); } }
         console.log('[AI Upsell] Products fetched:', products ? products.length : 0);
         if (products && products.length > 0) { console.log('[AI Upsell] First product:', JSON.stringify(products[0]).substring(0, 300)); }
         if (!products || products.length === 0) { clearLoadingFallback(widget); widget.__aiUpsellFetchInFlight = false; widget.style.display = 'none'; return; }
@@ -2332,6 +2537,30 @@
             var quantity = qtyInput ? parseInt(qtyInput.value) : 1;
             var productTitle = (productCard.querySelector('.ai-upsell-product-title') || {}).textContent || 'Unknown Product';
             var productData = productMap.get(String(upsellProductId)) || {};
+            // Validate variantId — if missing or same as productId, fetch real variant from Shopify storefront
+            if (!variantId || variantId === 'null' || variantId === 'undefined' || variantId === String(upsellProductId)) {
+              var _handle = productData.handle;
+              if (_handle) {
+                try {
+                  var _pRes = await fetch('/products/' + _handle + '.js');
+                  if (_pRes.ok) {
+                    var _pData = await _pRes.json();
+                    var _firstVariant = (_pData.variants || [])[0];
+                    if (_firstVariant && _firstVariant.id) {
+                      variantId = String(_firstVariant.id);
+                      console.log('[AI Upsell] PDP: resolved real variantId=' + variantId + ' via storefront for product', upsellProductId);
+                    }
+                  }
+                } catch (_) {}
+              }
+              if (!variantId || variantId === 'null' || variantId === String(upsellProductId)) {
+                console.error('[AI Upsell] PDP: cannot resolve variantId for product', upsellProductId);
+                button.textContent = 'Failed'; button.style.background = '#d72c0d';
+                setTimeout(function () { button.textContent = originalText; button.disabled = false; button.style.background = ''; }, 2000);
+                return;
+              }
+            }
+            console.log('[AI Upsell] PDP add-to-cart clicked: variantId=' + variantId + ' productId=' + upsellProductId);
             var offerType = (productCard.dataset && productCard.dataset.offerType) || productData.offerType || 'addon_upsell';
             var sellingPlanId = normalizeSellingPlanId((productCard.dataset && productCard.dataset.sellingPlanId) || productData.sellingPlanIdNumeric || productData.sellingPlanId);
             var effectiveDiscount;
@@ -2385,7 +2614,7 @@
               try { sessionStorage.setItem('lastAiUpsellProduct', upsellProductId); } catch (_) {}
               document.dispatchEvent(new CustomEvent('ai-upsell:product-added', { detail: { productId: upsellProductId, source: 'ai-upsell' } }));
               setTimeout(function () { button.textContent = originalText; button.disabled = false; }, 2000);
-            } catch (_) { button.textContent = 'Failed'; button.style.background = '#d72c0d'; setTimeout(function () { button.textContent = originalText; button.disabled = false; button.style.background = ''; }, 2000); }
+            } catch (addErr) { console.error('[AI Upsell] PDP add-to-cart error:', addErr && addErr.message ? addErr.message : addErr); button.textContent = 'Failed'; button.style.background = '#d72c0d'; setTimeout(function () { button.textContent = originalText; button.disabled = false; button.style.background = ''; }, 2000); }
           });
         });
       } catch (renderErr) { console.error('[AI Upsell] loadAIUpsells render error:', renderErr); clearLoadingFallback(widget); widget.__aiUpsellFetchInFlight = false; widget.style.display = 'none'; }
@@ -2681,16 +2910,20 @@
         var cartProductIds = new Set(cartItems.map(function (i) { return String(i.product_id); }));
         var products = await fetchCartDrawerRecommendations(cartItems);
         if (!products || products.length === 0) {
-          products = await fetchShopifyRecommendations(cartItems[0].product_id, MAX_PRODUCTS);
+          products = await fetchShopifyRecommendations(cartItems[0].product_id, DRAWER_MAX_PRODUCTS);
         }
         if (!products || products.length === 0) return;
         products = products.filter(function (p) { return !cartProductIds.has(String(p.id)); });
         if (products.length === 0) return;
-        _drawerProducts = products.slice(0, MAX_PRODUCTS);
+        _drawerProducts = products.slice(0, DRAWER_MAX_PRODUCTS);
         secondaryAllProducts = _drawerProducts;
         placeInCartDrawer();
       } catch (_) {}
     }
+
+    window.__AI_UPSELL_LOAD_DRAWER__ = function () {
+      loadDrawerUpsellsFromCart();
+    };
 
     if (!window.__AI_DRAWER_OBSERVER__) {
       window.__AI_DRAWER_OBSERVER__ = true;
@@ -2704,12 +2937,12 @@
           var cartProductIds = new Set(cartItems.map(function (i) { return String(i.product_id); }));
           var products = await fetchCartDrawerRecommendations(cartItems);
           if (!products || products.length === 0) {
-            products = await fetchShopifyRecommendations(cartItems[0].product_id, MAX_PRODUCTS);
+            products = await fetchShopifyRecommendations(cartItems[0].product_id, DRAWER_MAX_PRODUCTS);
           }
           if (!products || products.length === 0) return;
           products = products.filter(function (p) { return !cartProductIds.has(String(p.id)); });
           if (products.length === 0) return;
-          _drawerProducts = products.slice(0, MAX_PRODUCTS);
+          _drawerProducts = products.slice(0, DRAWER_MAX_PRODUCTS);
           secondaryAllProducts = _drawerProducts;
           placeInCartDrawer();
         } catch (_) {}

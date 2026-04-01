@@ -1,13 +1,17 @@
 query Input {
   cart {
-    attribute(key: "ai_goal") {
+    aiGoal: attribute(key: "ai_goal") {
       key
       value
     }
     lines {
       id
       quantity
-      attribute(key: "offer") {
+      offer: attribute(key: "offer") {
+        key
+        value
+      }
+      offerUpper: attribute(key: "Offer") {
         key
         value
       }

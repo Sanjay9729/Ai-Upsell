@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { authenticate } from "../shopify.server";
 import { decideProductOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
+import { getSafetyMode } from "../../backend/services/safetyMode.js";
 
 // Pre-warm MongoDB at module load — eliminates cold-start delay on first request after server restart
 import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
@@ -125,6 +126,15 @@ export const loader = async ({ request }) => {
     // Fetch cache + merchantConfig in parallel so offerDisplayMode filter applies to cached results too
     const hasSignature = Boolean(params.signature);
 
+    // Safety mode check — must run before cache so paused state is always respected
+    const safetyStatus = await getSafetyMode(shop).catch(() => null);
+    if (safetyStatus === true) {
+      return json(
+        { success: true, productId, shop, recommendations: [], count: 0, decision: { reason: 'safety_mode_active', status: 'safety_mode' } },
+        { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" } }
+      );
+    }
+
     const [cachedDoc, merchantConfig] = await Promise.all([
       import("../../backend/database/mongodb.js")
         .then(({ getDb }) => getDb().then(db =>
@@ -165,13 +175,25 @@ export const loader = async ({ request }) => {
       if (displayMode === 'volume_discount') {
         return recs.map(r => ({ ...r, offerType: 'volume_discount' }));
       }
+      // 'both': if volume_discount is present, convert bundle products to volume_discount
+      // so all products appear together in the "Buy More, Save More" grid instead of
+      // splitting between "Bundle & Save" and "Buy More, Save More" sections.
+      const hasVolume = recs.some(r => r.offerType === 'volume_discount');
+      if (hasVolume) {
+        return recs.map(r => r.offerType === 'bundle' ? { ...r, offerType: 'volume_discount' } : r);
+      }
       return recs;
     }
 
     const cachedGoal = merchantConfig?.goal || 'increase_aov';
     const cachedDisplayMode = merchantConfig?.offerDisplayMode || 'both';
 
-    if (cachedDoc && cacheAge < CACHE_FRESH_MS) {
+    // Skip cache if it stored a safety_mode response — so disabling safety mode takes effect immediately.
+    // Also skip if cached count is below the expected limit (e.g. was built before a guardrail fix)
+    // so the pipeline re-runs and replenishes to the full 4-product set.
+    const EXPECTED_MIN = 4;
+    const cachedCountLow = Array.isArray(cachedDoc?.recommendations) && cachedDoc.recommendations.length < EXPECTED_MIN;
+    if (cachedDoc && cacheAge < CACHE_FRESH_MS && cachedDoc.decision?.reason !== 'safety_mode_active' && !cachedCountLow) {
       console.log(`⚡ Cache hit for product ${productId} (age: ${Math.round(cacheAge / 1000)}s)`);
       const cachedDiscountPct = cachedDoc.decision?.discountPercent ?? null;
       const filteredRecs = applyDisplayModeFilter(cachedDoc.recommendations, cachedGoal, cachedDisplayMode, cachedDiscountPct);
@@ -181,7 +203,7 @@ export const loader = async ({ request }) => {
       );
     }
 
-    if (cachedDoc && cacheAge < CACHE_STALE_MS) {
+    if (cachedDoc && cacheAge < CACHE_STALE_MS && !cachedCountLow) {
       console.log(`⏱️ Stale cache for product ${productId} — serving stale, refreshing in background`);
       // Background refresh — fire and forget, never blocks response
       ;(async () => {

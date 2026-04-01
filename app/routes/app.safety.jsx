@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { useLoaderData, useActionData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
@@ -52,7 +52,6 @@ export const action = async ({ request }) => {
 
 export default function SafetyPage() {
   const { status } = useLoaderData();
-  const actionData = useActionData();
   const fetcher = useFetcher();
 
   const isActive = status?.active === true;
@@ -107,6 +106,24 @@ export default function SafetyPage() {
           )}
         </div>
 
+        {/* Manual Snapshot — shown before safety toggle so merchant saves config first */}
+        {!isActive && (
+          <div style={{ marginBottom: "16px" }}>
+            <div style={{ fontSize: "13px", color: "#6d7175", marginBottom: "10px" }}>
+              Save a snapshot of your current config before making changes. You can restore to any snapshot if something goes wrong.
+            </div>
+            <fetcher.Form method="post">
+              <input type="hidden" name="intent" value="snapshot" />
+              <button type="submit" style={btnStyle()}>
+                📸 Save Current Config Snapshot
+              </button>
+              {fetcher.data?.success && fetcher.data.intent === "snapshot" && (
+                <span style={{ marginLeft: "12px", fontSize: "12px", color: "#008060" }}>Snapshot saved</span>
+              )}
+            </fetcher.Form>
+          </div>
+        )}
+
         {/* Toggle Controls */}
         {isActive ? (
           <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
@@ -147,33 +164,31 @@ export default function SafetyPage() {
           </fetcher.Form>
         )}
 
-        {actionData?.error && (
+        {fetcher.data?.error && (
           <div style={{ marginTop: "12px", color: "#b42318", fontSize: "13px" }}>
-            Error: {actionData.error}
+            Error: {fetcher.data.error}
           </div>
         )}
-        {actionData?.success && actionData.intent === "restore" && actionData.restoredFrom && (
+        {fetcher.data?.success && fetcher.data.intent === "restore" && fetcher.data.restoredFrom && (
           <div style={{ marginTop: "12px", color: "#008060", fontSize: "13px" }}>
-            ✅ Config restored from snapshot: {actionData.restoredFrom.label} ({new Date(actionData.restoredFrom.createdAt).toLocaleString()})
+            ✅ Config restored from snapshot: {fetcher.data.restoredFrom.label} ({new Date(fetcher.data.restoredFrom.createdAt).toLocaleString()})
           </div>
         )}
       </s-section>
 
-      {/* Manual Snapshot */}
+      {/* Snapshots Table */}
       <s-section heading="Config Snapshots">
-        <div style={{ fontSize: "13px", color: "#6d7175", marginBottom: "12px" }}>
-          Save a snapshot of your current merchant config before making changes. You can restore to any snapshot if something goes wrong.
-        </div>
-
-        <fetcher.Form method="post" style={{ marginBottom: "20px" }}>
-          <input type="hidden" name="intent" value="snapshot" />
-          <button type="submit" style={btnStyle()}>
-            📸 Save Current Config Snapshot
-          </button>
-          {actionData?.success && actionData.intent === "snapshot" && (
-            <span style={{ marginLeft: "12px", fontSize: "12px", color: "#008060" }}>Snapshot saved</span>
-          )}
-        </fetcher.Form>
+        {isActive && (
+          <fetcher.Form method="post" style={{ marginBottom: "20px" }}>
+            <input type="hidden" name="intent" value="snapshot" />
+            <button type="submit" style={btnStyle()}>
+              📸 Save Current Config Snapshot
+            </button>
+            {fetcher.data?.success && fetcher.data.intent === "snapshot" && (
+              <span style={{ marginLeft: "12px", fontSize: "12px", color: "#008060" }}>Snapshot saved</span>
+            )}
+          </fetcher.Form>
+        )}
 
         {status?.snapshots?.length > 0 ? (
           <div style={{ border: "1px solid #e1e3e5", borderRadius: "8px", overflow: "hidden" }}>

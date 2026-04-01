@@ -20,7 +20,7 @@ export const DEFAULT_CONFIG = {
   guardrails: {
     maxDiscountCap: 20,
     inventoryMinThreshold: 0,
-    sessionOfferLimit: 3,
+    sessionOfferLimit: 4,
     premiumSkuProtection: false,
     subscriptionProtection: false,
     excludedProductIds: [],

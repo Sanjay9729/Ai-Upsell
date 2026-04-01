@@ -4,13 +4,14 @@ const BUY2_GOALS = new Set(["increase_aov", "inventory_movement"]);
 const IMMEDIATE_GOALS = new Set(["revenue_per_visitor", "subscription_adoption"]);
 
 function getGoal(cart) {
-  // New schema exposes attribute(key: "ai_goal") instead of cart.attributes[]
-  return cart.attribute?.value || "revenue_per_visitor";
+  // Use explicit alias from input.graphql
+  return cart?.aiGoal?.value || "revenue_per_visitor";
 }
 
-function parsePercentFromAttribute(attr) {
-  if (!attr?.value) return 0;
-  const match = String(attr.value).match(/(\d+(?:\.\d+)?)\s*%/);
+function parsePercentFromAttribute(attr, upperAttr) {
+  const value = attr?.value || upperAttr?.value;
+  if (!value) return 0;
+  const match = String(value).match(/(\d+(?:\.\d+)?)\s*%/);
   if (match) return Math.max(0, Math.min(100, parseFloat(match[1])));
   return 0;
 }
@@ -27,7 +28,7 @@ export const run = shopifyFunction(({ input }) => {
 
   for (const line of cart.lines) {
     // Line attributes now fetched one-by-one via attribute(key: "offer")
-    const pct = parsePercentFromAttribute(line.attribute);
+    const pct = parsePercentFromAttribute(line.offer, line.offerUpper);
     if (!pct) continue;
 
     let pctToApply = pct;

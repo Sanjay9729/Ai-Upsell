@@ -275,6 +275,15 @@ export const loader = async ({ request }) => {
       recommendations = recommendations.map(r => ({ ...r, offerType: 'bundle' }));
     } else if (offerDisplayMode === 'volume_discount') {
       recommendations = recommendations.map(r => ({ ...r, offerType: 'volume_discount' }));
+    } else {
+      // 'both': if volume_discount is present, convert bundle products to volume_discount
+      // so all products appear together in the "Buy More, Save More" grid.
+      const hasVolume = recommendations.some(r => r.offerType === 'volume_discount');
+      if (hasVolume) {
+        recommendations = recommendations.map(r =>
+          r.offerType === 'bundle' ? { ...r, offerType: 'volume_discount' } : r
+        );
+      }
     }
     const validCartProducts = decision.cartProducts || [];
     const cartSourceTitle = validCartProducts.length > 0

@@ -9,8 +9,14 @@ export const loader = async ({ request }) => {
     const { getDb, collections } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
 
-    // Run DB queries and theme editor URL fetch in parallel — never block on each other
-    const [totalConversions, productCount, themeEditorUrl] = await Promise.all([
+    // Build theme editor URL directly — no GraphQL call needed
+    const storeHandle = session.shop.replace(".myshopify.com", "");
+    const themeEditorUrl = storeHandle
+      ? `https://admin.shopify.com/store/${storeHandle}/themes/current/editor?context=apps`
+      : null;
+
+    // Run DB queries in parallel
+    const [totalConversions, productCount] = await Promise.all([
       db.collection(collections.upsellEvents)
         .countDocuments({ shopId: session.shop, isUpsellEvent: true, eventType: 'cart_add' })
         .catch(() => 0),
@@ -18,26 +24,6 @@ export const loader = async ({ request }) => {
       db.collection(collections.products)
         .countDocuments({ shopId: session.shop })
         .catch(() => 0),
-
-      // Build theme editor deep link
-      (async () => {
-        try {
-          if (!admin?.graphql) return null;
-          const productRes = await admin.graphql(`#graphql
-            query getPreviewProduct {
-              products(first: 1, sortKey: CREATED_AT, reverse: true) {
-                nodes { handle }
-              }
-            }`);
-          const productData = await productRes.json();
-          const productHandle = productData?.data?.products?.nodes?.[0]?.handle || null;
-          const storeHandle = session.shop.replace(".myshopify.com", "");
-          const previewPath = productHandle ? `/products/${productHandle}` : "/products";
-          return storeHandle
-            ? `https://admin.shopify.com/store/${storeHandle}/themes/current/editor?context=apps&previewPath=${encodeURIComponent(previewPath)}`
-            : null;
-        } catch { return null; }
-      })(),
     ]);
 
     // Product sync / backfill — run in background, never block the page render
