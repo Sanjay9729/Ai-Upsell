@@ -392,17 +392,16 @@ cart-drawer .ai-upsell-widget {
 }
 
 /* Keep checkout visible even with drawer upsell */
-cart-drawer .drawer__footer,
-cart-drawer .cart-drawer__footer,
-cart-drawer #CartDrawer-Footer {
+cart-drawer.ai-has-upsell .drawer__footer,
+cart-drawer.ai-has-upsell .cart-drawer__footer,
+cart-drawer.ai-has-upsell #CartDrawer-Footer {
   position: sticky;
   bottom: 0;
   background: #fff;
   z-index: 5;
   box-shadow: 0 -1px 0 rgba(0,0,0,0.06);
-  display: block !important;
 }
-cart-drawer .drawer__footer > * {
+cart-drawer.ai-has-upsell .drawer__footer > * {
   position: relative;
   z-index: 6;
 }

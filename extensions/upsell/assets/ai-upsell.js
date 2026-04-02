@@ -504,6 +504,44 @@
       return Date.now() < __AI_UPSELL_PATCH_SUPPRESS_UNTIL__;
     }
 
+    function isCartPage() {
+      return window.location.pathname === '/cart' || window.location.pathname.indexOf('/cart') === 0;
+    }
+
+    function restoreCartFooterVisibility() {
+      if (!isCartPage()) return;
+      try {
+        var footer = document.getElementById('main-cart-footer') || document.querySelector('cart-footer, .cart__footer');
+        if (footer) {
+          if (footer.style && footer.style.display === 'none') footer.style.display = '';
+          if (footer.style && footer.style.visibility === 'hidden') footer.style.visibility = '';
+          if (footer.hasAttribute && footer.hasAttribute('hidden')) footer.removeAttribute('hidden');
+          if (footer.classList) {
+            footer.classList.remove('loading', 'is-loading', 'cart-footer--loading');
+          }
+          var targets = footer.querySelectorAll('.js-contents, .cart__blocks, .cart__ctas, .totals, .totals__wrapper, [data-cart-footer]');
+          Array.prototype.slice.call(targets).forEach(function (el) {
+            if (!el) return;
+            if (el.style && el.style.display === 'none') el.style.display = '';
+            if (el.style && el.style.visibility === 'hidden') el.style.visibility = '';
+            if (el.hasAttribute && el.hasAttribute('hidden')) el.removeAttribute('hidden');
+            if (el.classList) {
+              el.classList.remove('loading', 'is-loading', 'cart-footer--loading', 'cart-items--loading');
+            }
+            if (el.getAttribute && el.getAttribute('data-ai-hidden-cart-discount') === 'true') {
+              el.removeAttribute('data-ai-hidden-cart-discount');
+            }
+          });
+        }
+        Array.prototype.slice.call(document.querySelectorAll('[data-ai-hidden-cart-discount="true"]')).forEach(function (el) {
+          if (!el.closest || !el.closest('cart-drawer')) {
+            el.style.display = '';
+            el.removeAttribute('data-ai-hidden-cart-discount');
+          }
+        });
+      } catch (_) {}
+    }
+
     function isAiManagedMutationNode(node) {
       if (!node || node.nodeType !== 1) return false;
       if (node.matches && node.matches('[data-ai-discounted-node="true"], [data-ai-hidden-detail-price="true"], [data-ai-hidden-offer="true"]')) return true;
@@ -728,7 +766,7 @@
     function placeInCartDrawer() {
       var drawer = document.querySelector('cart-drawer');
       if (!drawer) return;
-      if (drawer.querySelector('.ai-drawer-upsell')) return;
+      if (drawer.querySelector('.ai-drawer-upsell')) { drawer.classList.add('ai-has-upsell'); return; }
       var products = secondaryAllProducts.length > 0 ? secondaryAllProducts.slice(0, DRAWER_MAX_PRODUCTS) : [];
       if (products.length === 0) return;
 
@@ -789,6 +827,9 @@
             '<div class="ai-slider-track">' + cardsHtml + '</div>' +
           '</div>' +
         '</div>';
+
+      // Mark drawer so CSS can safely scope sticky footer tweaks
+      drawer.classList.add('ai-has-upsell');
 
       // Slider arrow navigation
       var track = wrapper.querySelector('.ai-slider-track');
@@ -959,6 +1000,9 @@
          console.log('[AI Upsell] handleCartUpdated: calling patchCartDrawerPricesFromAPI');
          patchCartDrawerPricesFromAPI();
        }
+       // Ensure checkout footer stays visible on cart page after AJAX updates.
+       setTimeout(function () { restoreCartFooterVisibility(); }, 120);
+       setTimeout(function () { restoreCartFooterVisibility(); }, 600);
        if (event && event.detail && event.detail.source === 'ai-upsell') {
          var isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
          if (isCart) {
@@ -974,6 +1018,7 @@
            refreshSecondaryFromCart(cartFromEvent);
          }
          loadDrawerUpsellsFromCart(cartFromEvent);
+         restoreCartFooterVisibility();
        }, 150);
      }
 
@@ -1720,9 +1765,26 @@
       return 'USD';
     }
 
+    function tryShopifyFormatMoney(cents) {
+      try {
+        if (window.Shopify && typeof window.Shopify.formatMoney === 'function') {
+          var format = window.Shopify.money_format || window.Shopify.money_with_currency_format;
+          return window.Shopify.formatMoney(cents, format);
+        }
+      } catch (_) {}
+      return '';
+    }
+
     function formatMoneyFromReference(cents, referenceText, cart) {
       var amount = (Number(cents || 0) / 100).toFixed(2);
       var ref = String(referenceText || '').trim();
+      if (ref) {
+        var lowered = ref.toLowerCase();
+        if (lowered.indexOf('estimated') !== -1 || lowered.indexOf('subtotal') !== -1 || lowered.indexOf('total') !== -1) {
+          var cleaned = ref.replace(/estimated|subtotal|total/ig, '').replace(/\s+/g, ' ').trim();
+          if (cleaned && /\d/.test(cleaned)) ref = cleaned;
+        }
+      }
       var prefixMatch = ref.match(/^[^\d-]*/);
       var suffixMatch = ref.match(/[^\d.,\s]+[\s]*$/);
       var prefix = prefixMatch ? prefixMatch[0] : '';
@@ -1730,6 +1792,8 @@
       if (prefix || suffix) {
         return (prefix + amount + suffix).trim();
       }
+      var shopifyFormatted = tryShopifyFormatMoney(cents);
+      if (shopifyFormatted) return shopifyFormatted;
       try {
         return new Intl.NumberFormat(undefined, {
           style: 'currency',
@@ -1748,6 +1812,39 @@
       var amount = parseFloat(value[0]);
       if (!isFinite(amount)) return 0;
       return Math.round(amount * 100);
+    }
+
+    function isLikelyValueText(text) {
+      var t = String(text || '').trim();
+      if (!/\d/.test(t)) return false;
+      // If the text includes long words (e.g. "Estimated", "Subtotal"), it's likely a label row.
+      var alphaWords = t.match(/[A-Za-z]{4,}/g);
+      return !alphaWords;
+    }
+
+    function shouldUpdateSubtotalNode(el) {
+      if (!el || (el.children && el.children.length)) return false;
+      if (el.hasAttribute && el.hasAttribute('data-cart-subtotal')) return true;
+      var cls = el.classList;
+      if (cls && (cls.contains('totals__subtotal-value') || cls.contains('totals__total-value') || cls.contains('cart-subtotal__price'))) {
+        return true;
+      }
+      return isLikelyValueText(el.textContent);
+    }
+
+    function getSubtotalReferenceText(nodes) {
+      if (!nodes || !nodes.length) return '';
+      for (var i = 0; i < nodes.length; i++) {
+        if (shouldUpdateSubtotalNode(nodes[i])) {
+          var t1 = String(nodes[i].textContent || '').trim();
+          if (t1) return t1;
+        }
+      }
+      for (var j = 0; j < nodes.length; j++) {
+        var t2 = String(nodes[j].textContent || '').trim();
+        if (isLikelyValueText(t2)) return t2;
+      }
+      return String(nodes[0].textContent || '').trim();
     }
 
     function getStoredOriginalPriceCents(properties) {
@@ -1920,36 +2017,48 @@
 
     function hideAiDiscountApplicationNodes(root) {
       if (!root || !root.querySelectorAll) return false;
+      var isCartPage = window.location.pathname === '/cart' || window.location.pathname.indexOf('/cart') === 0;
+      // Cart page: do not hide discount nodes at all to prevent checkout being hidden.
+      if (isCartPage) return false;
       var selectors = [
-        'li',
         '.discounts__discount',
         '.totals__discount',
         '.cart-discount',
         '.discount',
-        'p',
-        'div',
-        'dd',
-        'span'
+        '.discounts li',
+        '[data-cart-discount]',
+        '[data-discount-code]'
       ].join(', ');
       var nodes = Array.prototype.slice.call(root.querySelectorAll(selectors)).filter(function (el) {
         if (!el || el.getAttribute('data-ai-hidden-cart-discount') === 'true') return false;
+        // On cart page, never hide discount nodes outside the cart drawer.
+        if (isCartPage && !(el.closest && el.closest('cart-drawer'))) return false;
+        // Skip broad containers that include totals or checkout — hiding them would remove the checkout section.
+        if (el.querySelector && el.querySelector('.totals, .cart__ctas, button[name="checkout"], a[href*="/checkout"]')) return false;
+        if (el.classList && (el.classList.contains('cart__footer') || el.classList.contains('cart__blocks') || el.classList.contains('cart__ctas') || el.classList.contains('js-contents'))) return false;
+        // Must be within a discount container to be eligible.
+        if (el.closest && !el.closest('.discounts, .cart__discounts, .cart-discount, .totals__discount, .discounts__discount, [data-cart-discount], [data-discount-code]')) return false;
         var text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
         if (!text) return false;
-        return /^((AIUS|UPSELL)-[A-Z0-9-]+)/i.test(text);
+        if (!/^((AIUS|UPSELL)-[A-Z0-9-]+)/i.test(text)) return false;
+        // Only hide small, leaf-like nodes (avoid large containers that happen to include the code)
+        if (text.length > 40) return false;
+        if (el.children && el.children.length) return false;
+        return true;
       });
       if (!nodes.length) return false;
       nodes.forEach(function (node) {
-        var row = (node.closest && node.closest('li, .discounts__discount, .totals__discount, .cart-discount, .discount')) || node;
-        var footer = row && row.closest && row.closest('.drawer__footer, .cart-drawer__footer, #CartDrawer-Footer, cart-drawer-footer');
-        var hasCheckout = row && row.querySelector && row.querySelector('button[name="checkout"], a[href*="/checkout"]');
-        if (footer || hasCheckout) {
-          // Never hide checkout footer; hide only the discount label itself.
-          node.style.display = 'none';
-          node.setAttribute('data-ai-hidden-cart-discount', 'true');
+        var row = (node.closest && node.closest('li, .discounts__discount, .totals__discount, .cart-discount, .discount')) || null;
+        var rowHasTotals = row && row.querySelector && row.querySelector('.totals, .cart__ctas, button[name="checkout"], a[href*="/checkout"]');
+        var inDrawer = !!(node.closest && node.closest('cart-drawer'));
+        if (row && !rowHasTotals && inDrawer && !isCartPage) {
+          row.style.display = 'none';
+          row.setAttribute('data-ai-hidden-cart-discount', 'true');
           return;
         }
-        row.style.display = 'none';
-        row.setAttribute('data-ai-hidden-cart-discount', 'true');
+        // Only hide the label itself if row is unsafe to hide (or on cart page)
+        node.style.display = 'none';
+        node.setAttribute('data-ai-hidden-cart-discount', 'true');
       });
       return true;
     }
@@ -2050,9 +2159,23 @@
       );
       if (!rows.length) return false;
 
+      var rowsArr = Array.prototype.slice.call(rows);
+      if (scope === document) {
+        var isCartPage = window.location.pathname === '/cart' || window.location.pathname.indexOf('/cart') === 0;
+        if (isCartPage) {
+          // On the cart page, exclude hidden cart-drawer rows to avoid double counting.
+          rowsArr = rowsArr.filter(function (row) { return !(row.closest && row.closest('cart-drawer')); });
+        } else {
+          // On non-cart pages, prefer drawer rows if present.
+          var drawerRows = rowsArr.filter(function (row) { return row.closest && row.closest('cart-drawer'); });
+          if (drawerRows.length) rowsArr = drawerRows;
+        }
+      }
+      if (!rowsArr.length) return false;
+
       var anyPatched = false;
       var subtotalCents = 0;
-      Array.prototype.slice.call(rows).forEach(function (row) {
+      rowsArr.forEach(function (row) {
         var offerText = '';
         var detailText = row.querySelector('.cart-item__details') ? row.querySelector('.cart-item__details').textContent : row.textContent;
         var offerMatch = String(detailText || '').match(/Offer[\s\S]*?(\d+(?:\.\d+)?)\s*%/i);
@@ -2086,10 +2209,10 @@
           '.cart__subtotal, .cart-drawer__footer .totals p, ' +
           'cart-drawer .totals__subtotal-value'
         );
-        var subtotalRef = subtotalTargets[0] ? subtotalTargets[0].textContent : '';
+        var subtotalRef = getSubtotalReferenceText(subtotalTargets);
         var subtotalStr = formatMoneyFromReference(subtotalCents, subtotalRef, null);
         Array.prototype.slice.call(subtotalTargets).forEach(function (el) {
-          if (!el.children.length) el.textContent = subtotalStr;
+          if (shouldUpdateSubtotalNode(el)) el.textContent = subtotalStr;
         });
       }
 
@@ -2171,11 +2294,11 @@
           '.cart__subtotal, .cart-drawer__footer .totals p, ' +
           'cart-drawer .totals__subtotal-value'
         );
-        var subtotalRef = subtotalTargets[0] ? subtotalTargets[0].textContent : '';
+        var subtotalRef = getSubtotalReferenceText(subtotalTargets);
         var subtotalStr = formatMoneyFromReference(newSubtotalCents, subtotalRef, cart);
         // Targets: Dawn .totals__subtotal-value, common fallbacks for other themes
         Array.prototype.slice.call(subtotalTargets).forEach(function (el) {
-          if (!el.children.length && !el.dataset.aiSubtotal) {
+          if (shouldUpdateSubtotalNode(el) && !el.dataset.aiSubtotal) {
             el.textContent = subtotalStr;
             el.dataset.aiSubtotal = 'true';
           }
@@ -2259,10 +2382,10 @@
           '[data-cart-subtotal], .cart-subtotal__price, ' +
           '.cart__subtotal, cart-drawer .totals p'
         );
-        var subtotalRef = subtotalTargets[0] ? subtotalTargets[0].textContent : '';
+        var subtotalRef = getSubtotalReferenceText(subtotalTargets);
         var subtotalStr = formatMoneyFromReference(newSubtotalCents, subtotalRef, cart);
         Array.prototype.slice.call(subtotalTargets).forEach(function (el) {
-          if (!el.children.length) el.textContent = subtotalStr;
+          if (shouldUpdateSubtotalNode(el)) el.textContent = subtotalStr;
         });
 
         hideInternalOfferNodes(doc);
@@ -2343,19 +2466,32 @@
         fetch(SHOPIFY_ROOT + 'cart.js').then(function (r) { return r.json(); }).then(function (cart) {
           console.log('[AI Upsell] 📦 Cart state after discount:', { itemCount: cart.item_count, discountCode: cart.discount_code, items: cart.items.length });
           cart.items.forEach(function (it, idx) { console.log('[AI Upsell] - Item', idx, ':', it.title, 'Offer:', (it.properties && (it.properties['Offer'] || it.properties['offer'])) || 'none'); });
-          document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
           updateCartCountBubble(cart.item_count);
-          // Fetch sections with cache busting to ensure fresh render
-          fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble,main-cart-items,main-cart-footer' + cacheParam).then(function (r) { return r.json(); }).then(function (sections) {
+          // Fetch sections with cache busting to ensure fresh render.
+          // NOTE: main-cart-footer is intentionally NOT replaced here. Replacing the
+          // cart-footer custom element triggers connectedCallback in the theme JS, which
+          // temporarily hides .js-contents (the Estimated Total + checkout button).
+          // Instead we update the total price in-place via updateLineItemDiscountedPrices.
+          fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble,main-cart-items' + cacheParam).then(function (r) { return r.json(); }).then(function (sections) {
             console.log('[AI Upsell] 📄 Got sections:', Object.keys(sections));
             // Pre-process HTML to bake discounted prices in BEFORE DOM insertion.
             // This prevents the theme's own cart:updated handler from overwriting patches.
             if (sections['cart-drawer']) { var el = document.querySelector('cart-drawer'); if (el) { var f = document.createElement('div'); f.innerHTML = patchCartSectionHtml(sections['cart-drawer'], cart); var n = f.querySelector('cart-drawer'); if (n) el.replaceWith(n); } }
             if (sections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = sections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
             if (sections['main-cart-items']) { console.log('[AI Upsell] 🔍 Looking for cart-items element'); var el3 = document.querySelector('cart-items'); console.log('[AI Upsell] cart-items found:', !!el3); if (el3) { var f3 = document.createElement('div'); f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart); var n3 = f3.querySelector('cart-items'); if (n3) el3.replaceWith(n3); } else { console.log('[AI Upsell] No cart-items found, calling updateLineItemDiscountedPrices directly'); updateLineItemDiscountedPrices(cart); } }
-            if (sections['main-cart-footer']) { var el4 = document.getElementById('main-cart-footer') || document.querySelector('cart-footer, .cart__footer'); if (el4) { var f4 = document.createElement('div'); f4.innerHTML = patchCartSectionHtml(sections['main-cart-footer'], cart); var n4 = f4.querySelector('#main-cart-footer, cart-footer, .cart__footer'); if (n4) el4.replaceWith(n4); } }
+            // Update the estimated total in the existing footer without replacing the element.
+            restoreCartFooterVisibility();
             // Always ensure cart prices are patched after section updates
-            setTimeout(function () { console.log('[AI Upsell] ⏱️ Calling updateLineItemDiscountedPrices with delay'); updateLineItemDiscountedPrices(cart); startPersistentPatchWatcher(cart); }, 100);
+            setTimeout(function () {
+              console.log('[AI Upsell] ⏱️ Calling updateLineItemDiscountedPrices with delay');
+              updateLineItemDiscountedPrices(cart);
+              restoreCartFooterVisibility();
+              // Dispatch cart:updated only after our DOM writes + footer restore are done
+              // so the theme reacts to the already-updated DOM rather than racing against us.
+              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
+              setTimeout(function () { restoreCartFooterVisibility(); }, 400);
+              startPersistentPatchWatcher(cart);
+            }, 100);
             placeInCartPage();
             refreshSecondaryFromCart(cart);
             loadDrawerUpsellsFromCart(cart);
@@ -2720,14 +2856,21 @@
               fetch(SHOPIFY_ROOT + 'cart.js').then(function (r) { return r.json(); }).then(function (cart) {
                 var originalCartItems = (cart.items || []).filter(function (item) { return String(item.product_id) !== String(upsellProductId); });
                 fetch('/apps/ai-upsell/analytics/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventType: 'cart_add', shopId: _C.shopDomain, sessionId: window.__AI_UPSELL_USER_ID__ || null, userId: window.__AI_UPSELL_USER_ID__ || null, sourceProductId: originalCartItems.length > 0 ? originalCartItems[0].product_id.toString() : null, sourceProductName: originalCartItems.map(function (i) { return i.product_title; }).join(', ') || 'Cart Items', upsellProductId: upsellProductId, upsellProductName: productTitle, variantId: variantId, recommendationType: recommendationType, confidence: parseFloat(confidence), quantity: quantity, metadata: { location: 'cart_page', offerType: offerType, discountPercent: effectiveDiscount, segment: _C.customerSegment || window.__AI_UPSELL_SEGMENT__ || 'anonymous' } }) }).catch(function () {});
-                document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
                 updateCartCountBubble(cart.item_count);
-                fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble,main-cart-items,main-cart-footer').then(function (r) { return r.json(); }).then(function (sections) {
+                // main-cart-footer intentionally omitted — replacing it triggers connectedCallback
+                // in the theme's cart-footer element which hides .js-contents (Estimated Total + checkout).
+                // The total is updated in-place by updateLineItemDiscountedPrices below.
+                fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble,main-cart-items').then(function (r) { return r.json(); }).then(function (sections) {
                   if (sections['cart-drawer']) { var el = document.querySelector('cart-drawer'); if (el) { var f = document.createElement('div'); f.innerHTML = patchCartSectionHtml(sections['cart-drawer'], cart); var n = f.querySelector('cart-drawer'); if (n) el.replaceWith(n); } }
                   if (sections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = sections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
                   if (sections['main-cart-items']) { var el3 = document.querySelector('cart-items'); if (el3) { var f3 = document.createElement('div'); f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart); var n3 = f3.querySelector('cart-items'); if (n3) el3.replaceWith(n3); } }
-                  if (sections['main-cart-footer']) { var el4 = document.getElementById('main-cart-footer') || document.querySelector('cart-footer, .cart__footer'); if (el4) { var f4 = document.createElement('div'); f4.innerHTML = patchCartSectionHtml(sections['main-cart-footer'], cart); var n4 = f4.querySelector('#main-cart-footer, cart-footer, .cart__footer'); if (n4) el4.replaceWith(n4); } }
-                  setTimeout(function () { updateLineItemDiscountedPrices(cart); }, 100);
+                  restoreCartFooterVisibility();
+                  setTimeout(function () {
+                    updateLineItemDiscountedPrices(cart);
+                    restoreCartFooterVisibility();
+                    document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
+                    setTimeout(function () { restoreCartFooterVisibility(); }, 400);
+                  }, 100);
                   placeInCartPage(); refreshSecondaryFromCart(cart);
                 });
               });
