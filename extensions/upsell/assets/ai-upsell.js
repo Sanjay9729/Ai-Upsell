@@ -1239,14 +1239,14 @@
         ? formatDiscountPercent(Number(functionDiscountPercent))
         : formattedDiscount;
       if (offerType === 'volume_discount') {
-        var volumeProps = { 'Offer': 'Volume ' + formattedDiscount + '% off', 'offer': 'Volume ' + formattedDiscount + '% off' };
+        var volumeProps = { 'Offer': 'Volume ' + formattedDiscount + '% off' };
         if (originalBasePrice) volumeProps['_ai_original_price'] = String(originalBasePrice);
         return { properties: volumeProps };
       }
       // Always store the discount % in the Offer property so updateLineItemDiscountedPrices
       // can read it back and patch the cart drawer price regardless of AI goal type.
       var prefix = offerType === 'bundle' ? 'Bundle' : 'Offer';
-      var props = { 'Offer': prefix + ' ' + formattedDiscount + '% off', 'offer': prefix + ' ' + formattedDiscount + '% off' };
+      var props = { 'Offer': prefix + ' ' + formattedDiscount + '% off' };
       if (originalBasePrice) props['_ai_original_price'] = String(originalBasePrice);
       return { properties: props };
     }
@@ -1482,7 +1482,7 @@
             var qty = itemEl ? parseInt(itemEl.querySelector('.ai-mbc-qty-val').textContent) || 1 : 1;
             var handle = itemEl ? (itemEl.getAttribute('data-handle') || '') : '';
             var freshVid = await resolveVariantId(handle, variantIds[i]);
-            items.push({ id: parseInt(freshVid), quantity: qty, properties: { _source: 'ai-bundle', Offer: offerProp, offer: offerProp } });
+            items.push({ id: parseInt(freshVid), quantity: qty, properties: { _source: 'ai-bundle', Offer: offerProp } });
           }
           button.disabled = true; button.textContent = 'Adding...';
           try {
@@ -1968,10 +1968,10 @@
       if (!detailRoot || !detailRoot.querySelectorAll) return false;
       var selectors = ['.product-option', '.line-item-property', '.cart-item__option', 'dd', 'p', 'span', 'div'].join(', ');
       var nodes = Array.prototype.slice.call(detailRoot.querySelectorAll(selectors)).filter(function (el) {
-        if (!el || el.children.length) return false;
+        if (!el) return false;
         if (el.getAttribute('data-ai-hidden-offer') === 'true') return false;
-        var text = String(el.textContent || '').trim();
-        return /^offer\s*:/i.test(text) && !/^Offer\s*:/.test(text);
+        var text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+        return /%/.test(text) && /^offer\b/i.test(text) && !/^Offer\b/.test(text);
       });
       if (!nodes.length) return false;
       nodes.forEach(function (node) {
@@ -2002,10 +2002,10 @@
         'div'
       ].join(', ');
       var nodes = Array.prototype.slice.call(root.querySelectorAll(selectors)).filter(function (el) {
-        if (!el || el.children.length) return false;
+        if (!el) return false;
         if (el.getAttribute('data-ai-hidden-offer') === 'true') return false;
         var text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
-        return /^offer\s*:/i.test(text) && !/^Offer\s*:/.test(text);
+        return /%/.test(text) && /^offer\b/i.test(text) && !/^Offer\b/.test(text);
       });
       if (!nodes.length) return false;
       nodes.forEach(function (node) {
@@ -2605,8 +2605,8 @@
             refreshCartUI(upsellProductId);
             try { sessionStorage.setItem('lastAiUpsellProduct', upsellProductId); } catch (_) {}
             document.dispatchEvent(new CustomEvent('ai-upsell:product-added', { detail: { productId: upsellProductId, source: 'ai-upsell' } }));
-            secondaryAllProducts = secondaryAllProducts.filter(function (p) { return String(p.id) !== String(upsellProductId); });
-            renderSecondaryList();
+            // Option 1 (direct refresh): avoid local removal to prevent 4→3 flicker.
+            // The list will be refreshed via refreshCartUI -> refreshSecondaryFromCart.
             button.textContent = 'Added!'; button.style.background = '#008060';
             setTimeout(function () { button.textContent = originalText; button.disabled = false; button.style.background = ''; }, 2000);
           } catch (_) { button.textContent = 'Failed'; button.style.background = '#d72c0d'; setTimeout(function () { button.textContent = originalText; button.disabled = false; button.style.background = ''; }, 2000); }
@@ -2890,9 +2890,14 @@
       var contentEl = secondaryWidget.querySelector('.ai-secondary-content');
       var previousProducts = secondaryAllProducts.slice();
       secondaryWidget.style.display = 'block';
-      if (loadingEl) loadingEl.style.display = 'block';
-      if (contentEl) contentEl.innerHTML = '';
-      startLoadingFallback(secondaryWidget, loadingEl, 6000);
+      var hasExistingContent = secondaryAllProducts.length > 0 && contentEl && contentEl.children && contentEl.children.length > 0;
+      if (!hasExistingContent) {
+        if (loadingEl) loadingEl.style.display = 'block';
+        if (contentEl) contentEl.innerHTML = '';
+        startLoadingFallback(secondaryWidget, loadingEl, 6000);
+      } else {
+        if (loadingEl) loadingEl.style.display = 'none';
+      }
       try {
         var productGids = productIds.map(function (id) { return 'gid://shopify/Product/' + id; });
         var cartUid = window.__AI_UPSELL_USER_ID__ || '';
