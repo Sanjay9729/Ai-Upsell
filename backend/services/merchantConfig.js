@@ -20,7 +20,7 @@ export const DEFAULT_CONFIG = {
   guardrails: {
     maxDiscountCap: 20,
     inventoryMinThreshold: 0,
-    sessionOfferLimit: 3,
+    sessionOfferLimit: 4,
     premiumSkuProtection: false,
     subscriptionProtection: false,
     excludedProductIds: [],
@@ -117,6 +117,15 @@ export function validateConfig({ goal, riskTolerance, guardrails }) {
   return { valid: errors.length === 0, errors };
 }
 
+// ─── In-memory cache ─────────────────────────────────────────────────────────
+
+const _configCache = new Map();
+const CONFIG_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+export function invalidateMerchantConfigCache(shopId) {
+  if (shopId) _configCache.delete(shopId);
+}
+
 // ─── Middleware / Reusable Loader ────────────────────────────────────────────
 
 /**
@@ -129,6 +138,12 @@ export function validateConfig({ goal, riskTolerance, guardrails }) {
  * This is the function the decision engine will call before generating offers.
  */
 export async function getMerchantConfig(shopId) {
+  const now = Date.now();
+  const cached = _configCache.get(shopId);
+  if (cached && (now - cached.ts) < CONFIG_CACHE_TTL) {
+    return cached.data;
+  }
+
   const db = await getDb();
   const saved = await db.collection(collections.merchantConfig).findOne(
     { shopId },
@@ -155,7 +170,7 @@ export async function getMerchantConfig(shopId) {
     topOfferType: VALID_OFFER_TYPES.has(rawOptimization?.topOfferType) ? rawOptimization.topOfferType : null,
   };
 
-  return {
+  const result = {
     shopId,
     goal,
     riskTolerance,
@@ -169,6 +184,9 @@ export async function getMerchantConfig(shopId) {
     savedAt: saved?.updatedAt ?? null,
     createdAt: saved?.createdAt ?? null,
   };
+
+  _configCache.set(shopId, { data: result, ts: Date.now() });
+  return result;
 }
 
 // ─── Save ────────────────────────────────────────────────────────────────────
@@ -232,6 +250,9 @@ export async function saveMerchantConfig(shopId, { goal, riskTolerance, guardrai
       },
       { upsert: true }
     );
+
+    // Invalidate cache so next read gets fresh data
+    invalidateMerchantConfigCache(shopId);
 
     return { success: true, errors: [] };
   } catch (err) {

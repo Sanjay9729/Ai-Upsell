@@ -12,6 +12,8 @@ import {
 } from '@shopify/ui-extensions/checkout';
 
 const BACKEND_URL = 'https://ai-upsell.onrender.com';
+let lastOffer = null; // Cache the last successfully fetched offer
+let lastProductIds = null; // Track which product IDs we fetched for
 
 export default extension('purchase.checkout.block.render', async (root, api) => {
   const shop = api.shop.myshopifyDomain.current;
@@ -21,28 +23,57 @@ export default extension('purchase.checkout.block.render', async (root, api) => 
 
   const productIds = lines
     .map(l => l.merchandise?.product?.id?.split('/').pop())
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort(); // Sort to normalize the array
 
   if (productIds.length === 0) return;
 
-  let offer;
-  try {
-    const res = await fetch(
-      `${BACKEND_URL}/api/checkout-upsell?shop=${shop}&ids=${encodeURIComponent(JSON.stringify(productIds))}&placement=checkout&limit=1`
-    );
-    const data = await res.json();
-    offer = data.offer || null;
-  } catch {
-    return;
+  // Use cached offer if we're fetching for the same products
+  const productIdKey = productIds.join(',');
+  let offer = lastOffer;
+
+  if (productIdKey !== lastProductIds) {
+    // Product list changed, fetch fresh offer
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/api/checkout-upsell?shop=${shop}&ids=${encodeURIComponent(JSON.stringify(productIds))}&placement=checkout&limit=1`
+      );
+      const data = await res.json();
+      offer = data.offer || null;
+
+      // Cache the offer and product IDs
+      if (offer) {
+        lastOffer = offer;
+        lastProductIds = productIdKey;
+      }
+    } catch {
+      return;
+    }
   }
 
   if (!offer) return;
 
-  const originalPrice = parseFloat(offer.price) || 0;
+  console.log(`[Checkout Ext] 🛒 Received offer:`, {
+    id: offer.id,
+    title: offer.title,
+    price: offer.price,
+    compareAtPrice: offer.compareAtPrice,
+    discountPercent: offer.discountPercent,
+    offerType: offer.offerType,
+    reason: offer.reason,
+  });
+
+  // Use compareAtPrice if available (original price), otherwise use current price
+  const originalPrice = parseFloat(offer.compareAtPrice || offer.price) || 0;
+  const currentPrice = parseFloat(offer.price) || 0;
   const discountPct = parseFloat(offer.discountPercent) || 0;
+
+  // Calculate discounted price from original price
   const discountedPrice = discountPct > 0
     ? (originalPrice * (1 - discountPct / 100)).toFixed(2)
     : originalPrice.toFixed(2);
+
+  // Only show discount badge if there's actually a discount and it results in a lower price
   const hasDiscount = discountPct > 0 && parseFloat(discountedPrice) < originalPrice;
   const sellingPlanGid = offer.sellingPlanId || (offer.sellingPlanIdNumeric ? `gid://shopify/SellingPlan/${offer.sellingPlanIdNumeric}` : null);
 

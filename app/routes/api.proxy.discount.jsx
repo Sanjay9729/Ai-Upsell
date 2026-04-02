@@ -37,15 +37,19 @@ export const action = async ({ request }) => {
        return json({ error: "Invalid JSON body" }, { status: 400, headers: corsHeaders });
      }
 
-     const { productIds, productId: singleProductId, discountPercent } = body;
+     const { productIds, productId: singleProductId, variantIds, discountPercent } = body;
 
-     // Support both new array format (productIds) and legacy single format (productId)
+     // Support variantIds (bundle), productIds array, or legacy single productId
      const allProductIds = productIds
        ? (Array.isArray(productIds) ? productIds : [productIds]).map(String).filter(Boolean)
        : singleProductId ? [String(singleProductId)] : [];
 
-     if (!allProductIds.length || !discountPercent || Number(discountPercent) <= 0) {
-       return json({ error: "Missing productIds or discountPercent" }, { status: 400, headers: corsHeaders });
+     const allVariantIds = variantIds
+       ? (Array.isArray(variantIds) ? variantIds : [variantIds]).map(String).filter(Boolean)
+       : [];
+
+     if ((!allProductIds.length && !allVariantIds.length) || !discountPercent || Number(discountPercent) <= 0) {
+       return json({ error: "Missing productIds/variantIds or discountPercent" }, { status: 400, headers: corsHeaders });
      }
 
      // Generate a unique short-lived discount code
@@ -101,7 +105,9 @@ export const action = async ({ request }) => {
                  endsAt,
                  customerGets: {
                    value: { percentage: percentageDecimal },
-                   items: { all: true }
+                   items: allVariantIds.length > 0
+                     ? { products: { productVariantsToAdd: allVariantIds.map(function(id) { return 'gid://shopify/ProductVariant/' + id; }) } }
+                     : { all: true }
                  },
                  customerSelection: { all: true }
                }

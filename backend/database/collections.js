@@ -100,6 +100,7 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}
                       price
                       compareAtPrice
                       inventoryQuantity
+                      inventoryPolicy
                       inventoryItem {
                         id
                       }
@@ -336,6 +337,7 @@ export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, produc
                 price
                 compareAtPrice
                 inventoryQuantity
+                inventoryPolicy
                 inventoryItem {
                   id
                 }

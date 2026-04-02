@@ -24,6 +24,24 @@ import {
 } from './merchandisingIntelligence.js';
 import { getDb, collections } from '../database/mongodb.js';
 
+/**
+ * Fire-and-forget guardrail event logger.
+ * Never throws — guardrail logging must never block offer delivery.
+ */
+async function logGuardrailEvent(shopId, guardrailType, context = {}) {
+  try {
+    const db = await getDb();
+    await db.collection(collections.guardrailEvents).insertOne({
+      shopId,
+      guardrailType,
+      timestamp: new Date(),
+      ...context
+    });
+  } catch (_) {
+    // intentionally silent
+  }
+}
+
 const DEFAULT_LIMIT = 4;
 const ALLOWED_OFFER_TYPES = new Set([
   'bundle',
@@ -52,14 +70,22 @@ export async function decideProductOffers({
     return { offers: [], meta: { reason: 'missing_inputs' }, sourceProduct: null };
   }
 
-  // Safety Mode check — block all offers when active
-  const safetyActive = await getSafetyMode(shopId).catch(() => false);
+  // Run all independent setup queries in parallel to reduce latency
+  const sessionId = userId || null;
+  const [safetyActive, config, merchantContext, placementShift, seenProducts] = await Promise.all([
+    getSafetyMode(shopId).catch(() => false),
+    loadConfig(shopId),
+    getMerchantContext(shopId),
+    recommendPlacementShift(shopId).catch(() => null),
+    getSeenProductsInSession(shopId, sessionId).catch(() => new Set()),
+  ]);
+
   if (safetyActive) {
     console.log(`🛡️ Safety mode active for ${shopId} — skipping all offers`);
+    logGuardrailEvent(shopId, 'safety_mode_active', { placement, productId });
     return { offers: [], meta: { reason: 'safety_mode_active', status: 'safety_mode' }, sourceProduct: null };
   }
 
-  const config = await loadConfig(shopId);
   const guardrails = config.guardrails || {};
   const goalConfig = applyOptimizationOverrides(
     config.goalConfig || GOAL_MAPPING[config.goal] || GOAL_MAPPING[DEFAULT_CONFIG.goal],
@@ -67,10 +93,9 @@ export async function decideProductOffers({
   );
   const riskConfig = config.riskConfig || RISK_MAPPING[config.riskTolerance] || RISK_MAPPING[DEFAULT_CONFIG.riskTolerance];
   const normalizedPlacement = normalizePlacement(placement);
-  const merchantContext = await getMerchantContext(shopId);
-  const sessionId = userId || null;
 
   if (!isPlacementAllowed(normalizedPlacement, riskConfig)) {
+    logGuardrailEvent(shopId, 'placement_blocked', { placement: normalizedPlacement, productId });
     return {
       offers: [],
       meta: buildMeta(config, goalConfig, riskConfig, normalizedPlacement, 0, 'placement_blocked'),
@@ -78,12 +103,17 @@ export async function decideProductOffers({
     };
   }
 
-  const placementShift = await recommendPlacementShift(shopId).catch(() => null);
   // Do not fully suppress cart-drawer offers; shift is advisory for cart context.
   const shiftBlocksPlacement = normalizedPlacement === 'cart_drawer'
     ? false
     : shouldBlockPlacement(normalizedPlacement, placementShift);
   if (shiftBlocksPlacement) {
+    logGuardrailEvent(shopId, 'placement_shifted', {
+      placement: normalizedPlacement,
+      productId,
+      shiftFrom: placementShift?.from,
+      shiftTo: placementShift?.to
+    });
     return {
       offers: [],
       meta: buildMeta(config, goalConfig, riskConfig, normalizedPlacement, 0, 'placement_shifted', {
@@ -93,9 +123,14 @@ export async function decideProductOffers({
     };
   }
 
-  const seenProducts = await getSeenProductsInSession(shopId, sessionId).catch(() => new Set());
   const effectiveLimit = computeEffectiveLimit(limit, guardrails, riskConfig, seenProducts);
   if (effectiveLimit <= 0) {
+    logGuardrailEvent(shopId, 'session_offer_limit', {
+      placement: normalizedPlacement,
+      productId,
+      seenCount: seenProducts?.size || 0,
+      sessionOfferLimit: guardrails?.sessionOfferLimit ?? null
+    });
     return {
       offers: [],
       meta: buildMeta(config, goalConfig, riskConfig, normalizedPlacement, 0, 'limit_zero', {
@@ -177,14 +212,22 @@ export async function decideCartOffers({
     return { offers: [], meta: { reason: 'missing_inputs' }, cartProducts: [] };
   }
 
-  // Safety Mode check — block all offers when active
-  const safetyActive = await getSafetyMode(shopId).catch(() => false);
+  // Run all independent setup queries in parallel to reduce latency
+  const sessionId = userId || null;
+  const [safetyActive, config, merchantContext, placementShift, seenProducts] = await Promise.all([
+    getSafetyMode(shopId).catch(() => false),
+    loadConfig(shopId),
+    getMerchantContext(shopId),
+    recommendPlacementShift(shopId).catch(() => null),
+    getSeenProductsInSession(shopId, sessionId).catch(() => new Set()),
+  ]);
+
   if (safetyActive) {
     console.log(`🛡️ Safety mode active for ${shopId} — skipping all cart offers`);
+    logGuardrailEvent(shopId, 'safety_mode_active', { placement, cartProductCount: cartProductIds.length });
     return { offers: [], meta: { reason: 'safety_mode_active', status: 'safety_mode' }, cartProducts: [] };
   }
 
-  const config = await loadConfig(shopId);
   const guardrails = config.guardrails || {};
   const goalConfig = applyOptimizationOverrides(
     config.goalConfig || GOAL_MAPPING[config.goal] || GOAL_MAPPING[DEFAULT_CONFIG.goal],
@@ -192,10 +235,9 @@ export async function decideCartOffers({
   );
   const riskConfig = config.riskConfig || RISK_MAPPING[config.riskTolerance] || RISK_MAPPING[DEFAULT_CONFIG.riskTolerance];
   const normalizedPlacement = normalizePlacement(placement);
-  const merchantContext = await getMerchantContext(shopId);
-  const sessionId = userId || null;
 
   if (!isPlacementAllowed(normalizedPlacement, riskConfig)) {
+    logGuardrailEvent(shopId, 'placement_blocked', { placement: normalizedPlacement, cartProductCount: cartProductIds.length });
     return {
       offers: [],
       meta: buildMeta(config, goalConfig, riskConfig, normalizedPlacement, 0, 'placement_blocked'),
@@ -203,12 +245,17 @@ export async function decideCartOffers({
     };
   }
 
-  const placementShift = await recommendPlacementShift(shopId).catch(() => null);
   // Do not fully suppress cart-drawer offers; shift is advisory for cart context.
   const shiftBlocksPlacement = normalizedPlacement === 'cart_drawer'
     ? false
     : shouldBlockPlacement(normalizedPlacement, placementShift);
   if (shiftBlocksPlacement) {
+    logGuardrailEvent(shopId, 'placement_shifted', {
+      placement: normalizedPlacement,
+      shiftFrom: placementShift?.from,
+      shiftTo: placementShift?.to,
+      cartProductCount: cartProductIds.length
+    });
     return {
       offers: [],
       meta: buildMeta(config, goalConfig, riskConfig, normalizedPlacement, 0, 'placement_shifted', {
@@ -218,9 +265,14 @@ export async function decideCartOffers({
     };
   }
 
-  const seenProducts = await getSeenProductsInSession(shopId, sessionId).catch(() => new Set());
   const effectiveLimit = computeEffectiveLimit(limit, guardrails, riskConfig, seenProducts);
   if (effectiveLimit <= 0) {
+    logGuardrailEvent(shopId, 'session_offer_limit', {
+      placement: normalizedPlacement,
+      seenCount: seenProducts?.size || 0,
+      sessionOfferLimit: guardrails?.sessionOfferLimit ?? null,
+      cartProductCount: cartProductIds.length
+    });
     return {
       offers: [],
       meta: buildMeta(config, goalConfig, riskConfig, normalizedPlacement, 0, 'limit_zero', {
@@ -314,6 +366,7 @@ async function decideFromCandidates(candidates, {
 }) {
   const list = Array.isArray(candidates) ? candidates.slice() : [];
   if (list.length === 0) {
+    logGuardrailEvent(shopId, 'no_candidates', { placement, contextKey, sourceProductId });
     return {
       offers: [],
       meta: buildMeta(config, goalConfig, riskConfig, placement, 0, 'no_candidates')
@@ -330,6 +383,7 @@ async function decideFromCandidates(candidates, {
     if (contextKey === 'product' || placement === 'product_page' || placement === 'cart_drawer') {
       dedupedBySession = list;
     } else {
+      logGuardrailEvent(shopId, 'seen_in_session', { placement, contextKey, seenCount: seenSet.size });
       return {
         offers: [],
         meta: buildMeta(config, goalConfig, riskConfig, placement, 0, 'seen_in_session', {
@@ -362,6 +416,14 @@ async function decideFromCandidates(candidates, {
   const pausedOffers = withControls.filter((p) => p._control?.status === 'paused');
   if (pausedOffers.length > 0) {
     console.log(`⏸️ Paused offers filtered out: ${pausedOffers.map(p => p.title || p.productId).join(', ')}`);
+    pausedOffers.forEach((p) => {
+      logGuardrailEvent(shopId, 'paused_offer', {
+        placement,
+        contextKey,
+        productId: p.productId,
+        productTitle: p.title || null
+      });
+    });
   }
   const controlFiltered = withControls.filter((p) => p._control?.status !== 'paused');
   if (controlFiltered.length === 0) {
@@ -392,6 +454,18 @@ async function decideFromCandidates(candidates, {
   });
 
   const filtered = withConfidence.filter((p) => p._confidence >= minAcceptance);
+  const lowConfidenceDropped = withConfidence.filter((p) => p._confidence < minAcceptance);
+  if (lowConfidenceDropped.length > 0) {
+    lowConfidenceDropped.forEach((p) => {
+      logGuardrailEvent(shopId, 'low_confidence', {
+        placement,
+        contextKey,
+        productId: p.productId,
+        confidence: p._confidence,
+        minAcceptance
+      });
+    });
+  }
   const base = filtered.length > 0 ? filtered : withConfidence;
 
   const maxPrice = Math.max(0, ...base.map(getProductPrice));
@@ -407,7 +481,7 @@ async function decideFromCandidates(candidates, {
     const price = getProductPrice(product);
     const inventory = getProductInventory(product);
     const isSubscription = aiEngine.isSubscriptionProduct(product);
-    const bundleEligible = Boolean(bundleEligibility[String(product.productId || product.id)]);
+    const bundleEligible = Boolean(bundleEligibility[String(product.productId || product.id)]) || product.recommendationType === 'bundle';
     const scoreResult = scoreCandidate(config.goal, {
       confidence: product._confidence,
       price,

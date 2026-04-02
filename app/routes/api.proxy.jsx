@@ -3,6 +3,10 @@ import crypto from "node:crypto";
 import { authenticate } from "../shopify.server";
 import { decideProductOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
+import { getSafetyMode } from "../../backend/services/safetyMode.js";
+
+// Pre-warm MongoDB at module load — eliminates cold-start delay on first request after server restart
+import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
 
 /**
  * Shopify App Proxy Handler
@@ -107,18 +111,160 @@ export const loader = async ({ request }) => {
 
     console.log(`🔍 Looking for product ID: ${productId} (type: ${typeof productId})`);
 
-    // Self-heal: if webhook missed, fetch product via Admin GraphQL and upsert
-    // In dev/local calls without a Shopify signature, appProxy auth will fail — skip in that case.
+    // ── Persistent response cache (survives server restarts) ─────────────────
+    // FRESH  (< 10 min) : return instantly, skip entire pipeline
+    // STALE  (10-60 min): return stale data immediately + refresh in background
+    // EXPIRED (> 60 min): run full pipeline, save new result to cache
+    const CACHE_FRESH_MS = 10 * 60 * 1000;
+    const CACHE_STALE_MS = 60 * 60 * 1000;
+    const _cacheHeaders = {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+    };
+
+    // Fetch cache + merchantConfig in parallel so offerDisplayMode filter applies to cached results too
     const hasSignature = Boolean(params.signature);
-    let admin = null;
-    if (hasSignature) {
-      try {
-        const authResult = await authenticate.public.appProxy(request);
-        admin = authResult?.admin || null;
-      } catch (authErr) {
-        console.error('⚠️ App proxy auth failed (continuing without admin):', authErr.message || authErr);
-      }
+
+    // Safety mode check — must run before cache so paused state is always respected
+    const safetyStatus = await getSafetyMode(shop).catch(() => null);
+    if (safetyStatus === true) {
+      return json(
+        { success: true, productId, shop, recommendations: [], count: 0, decision: { reason: 'safety_mode_active', status: 'safety_mode' } },
+        { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" } }
+      );
     }
+
+    const [cachedDoc, merchantConfig] = await Promise.all([
+      import("../../backend/database/mongodb.js")
+        .then(({ getDb }) => getDb().then(db =>
+          db.collection('upsell_response_cache').findOne(
+            { shopId: shop, productId },
+            { projection: { _id: 0, recommendations: 1, decision: 1, cachedAt: 1 } }
+          )
+        ))
+        .catch(() => null),
+      import("../../backend/database/mongodb.js")
+        .then(async ({ getDb, collections }) => {
+          const db = await getDb();
+          return db.collection(collections.merchantConfig).findOne({ shopId: shop });
+        })
+        .catch(() => null),
+    ]);
+
+    const cacheAge = cachedDoc ? Date.now() - new Date(cachedDoc.cachedAt).getTime() : Infinity;
+
+    // Helper to apply goal + offerDisplayMode filter to a recommendations array
+    function applyDisplayModeFilter(recs, goal, displayMode, decisionDiscountPercent = null) {
+      // Revenue per Visitor & Subscription Adoption: always addon_upsell, no bundles/volume
+      if (goal === 'revenue_per_visitor' || goal === 'subscription_adoption') {
+        return recs.map(r => ({ ...r, offerType: 'addon_upsell' }));
+      }
+      // AOV & Inventory Movement: apply merchant's display mode choice
+      if (displayMode === 'bundle') {
+        // When remapping to bundle, restore discountPercent if it was zeroed (e.g. was volume_discount in cache)
+        return recs.map(r => {
+          const missingDiscount = (r.discountPercent === 0 || r.discountPercent === null || r.discountPercent === undefined);
+          return {
+            ...r,
+            offerType: 'bundle',
+            discountPercent: missingDiscount && decisionDiscountPercent > 0 ? decisionDiscountPercent : r.discountPercent,
+          };
+        });
+      }
+      if (displayMode === 'volume_discount') {
+        return recs.map(r => ({ ...r, offerType: 'volume_discount' }));
+      }
+      // 'both': if volume_discount is present, convert bundle products to volume_discount
+      // so all products appear together in the "Buy More, Save More" grid instead of
+      // splitting between "Bundle & Save" and "Buy More, Save More" sections.
+      const hasVolume = recs.some(r => r.offerType === 'volume_discount');
+      if (hasVolume) {
+        return recs.map(r => r.offerType === 'bundle' ? { ...r, offerType: 'volume_discount' } : r);
+      }
+      return recs;
+    }
+
+    const cachedGoal = merchantConfig?.goal || 'increase_aov';
+    const cachedDisplayMode = merchantConfig?.offerDisplayMode || 'both';
+
+    // Skip cache if it stored a safety_mode response — so disabling safety mode takes effect immediately.
+    // Also skip if cached count is below the expected limit (e.g. was built before a guardrail fix)
+    // so the pipeline re-runs and replenishes to the full 4-product set.
+    const EXPECTED_MIN = 4;
+    const cachedCountLow = Array.isArray(cachedDoc?.recommendations) && cachedDoc.recommendations.length < EXPECTED_MIN;
+    if (cachedDoc && cacheAge < CACHE_FRESH_MS && cachedDoc.decision?.reason !== 'safety_mode_active' && !cachedCountLow) {
+      console.log(`⚡ Cache hit for product ${productId} (age: ${Math.round(cacheAge / 1000)}s)`);
+      const cachedDiscountPct = cachedDoc.decision?.discountPercent ?? null;
+      const filteredRecs = applyDisplayModeFilter(cachedDoc.recommendations, cachedGoal, cachedDisplayMode, cachedDiscountPct);
+      return json(
+        { success: true, productId, shop, recommendations: filteredRecs, count: filteredRecs.length, decision: cachedDoc.decision || null },
+        { headers: _cacheHeaders }
+      );
+    }
+
+    if (cachedDoc && cacheAge < CACHE_STALE_MS && !cachedCountLow) {
+      console.log(`⏱️ Stale cache for product ${productId} — serving stale, refreshing in background`);
+      // Background refresh — fire and forget, never blocks response
+      ;(async () => {
+        try {
+          const freshDecision = await decideProductOffers({ shopId: shop, productId, userId, limit: 4, placement: "product_page" });
+          const freshRecs = (freshDecision.offers || []).map(product => {
+            const recType = product.recommendationType || "similar";
+            const offerType = product.offerType || "addon_upsell";
+            const baseDiscount = product.discountPercent ?? freshDecision.meta?.discountPercent ?? null;
+            const discountPercent = (offerType === 'volume_discount' || offerType === 'subscription_upgrade') ? 0 : baseDiscount;
+            const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
+            const sellingPlanIdNumeric = product.sellingPlanIdNumeric || extractNumericId(sellingPlanId);
+            return {
+              id: product.productId, title: product.title, handle: product.handle,
+              price: product.aiData?.price || "0", compareAtPrice: product.aiData?.compareAtPrice || null,
+              image: product.images?.[0]?.src || product.image?.src || "",
+              reason: product.aiReason, confidence: product.confidence,
+              type: recType, offerType, discountPercent, sellingPlanId, sellingPlanIdNumeric,
+              decisionScore: product.decisionScore ?? null, decisionReason: product.decisionReason ?? null,
+              url: `/products/${product.handle}`,
+              availableForSale: product.status?.toUpperCase() === 'ACTIVE',
+              variantId: product.variants?.[0]?.id || null,
+              ...getOfferTypeExtras(offerType, baseDiscount),
+            };
+          });
+          const { getDb } = await import("../../backend/database/mongodb.js");
+          const db = await getDb();
+          await db.collection('upsell_response_cache').updateOne(
+            { shopId: shop, productId },
+            { $set: { recommendations: freshRecs, decision: freshDecision.meta || null, cachedAt: new Date() } },
+            { upsert: true }
+          );
+          console.log(`✅ Background cache refresh done for product ${productId}`);
+        } catch (bgErr) {
+          console.warn('⚠️ Background cache refresh failed:', bgErr.message);
+        }
+      })();
+      const staleDiscountPct = cachedDoc.decision?.discountPercent ?? null;
+      const filteredRecs = applyDisplayModeFilter(cachedDoc.recommendations, cachedGoal, cachedDisplayMode, staleDiscountPct);
+      return json(
+        { success: true, productId, shop, recommendations: filteredRecs, count: filteredRecs.length, decision: cachedDoc.decision || null },
+        { headers: _cacheHeaders }
+      );
+    }
+    // ── End cache check — falling through to full pipeline ───────────────────
+
+    // Run auth (merchantConfig already fetched above alongside cache)
+    const authResult = hasSignature
+      ? await authenticate.public.appProxy(request).catch(err => {
+          console.error('⚠️ App proxy auth failed (continuing without admin):', err.message || err);
+          return null;
+        })
+      : null;
+
+    const admin = authResult?.admin || null;
+    if (hasSignature && !admin) console.warn('⚠️ No admin client from appProxy auth');
+
+    let offerDisplayMode = merchantConfig?.offerDisplayMode || 'both';
+    let merchantGoal = merchantConfig?.goal || 'increase_aov';
+
+    // Self-heal: if webhook missed, fetch product via Admin GraphQL and upsert
     if (admin?.graphql) {
       const existing = await getProductById(shop, productId);
       const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
@@ -129,12 +275,10 @@ export const loader = async ({ request }) => {
           // Product not in DB yet — must wait before AI can find it
           await refreshPromise;
         } else {
-          // Product exists but stale — refresh in background, don't block AI
+          // Product exists but stale — refresh in background, don't block response
           refreshPromise.catch(err => console.warn('⚠️ Background product refresh failed:', err));
         }
       }
-    } else if (hasSignature) {
-      console.warn('⚠️ No admin client from appProxy auth');
     }
 
     // Run decision engine to select offers (pass userId for personalization)
@@ -145,7 +289,10 @@ export const loader = async ({ request }) => {
       limit: 4,
       placement: "product_page"
     });
-    const recommendations = decision.offers || [];
+    let recommendations = decision.offers || [];
+
+    // Apply goal-based offer type filter
+    recommendations = applyDisplayModeFilter(recommendations, merchantGoal, offerDisplayMode);
 
     // Use source product already fetched by AI engine — no extra DB query needed
     const sourceProductTitle = decision.sourceProduct?.title || `Product ${productId}`;
@@ -270,6 +417,17 @@ export const loader = async ({ request }) => {
       console.error('⚠️ Inventory enrichment failed:', invError.message);
     }
 
+    // Persist result to MongoDB cache for instant future loads (fire-and-forget)
+    import("../../backend/database/mongodb.js")
+      .then(({ getDb }) => getDb().then(db =>
+        db.collection('upsell_response_cache').updateOne(
+          { shopId: shop, productId },
+          { $set: { recommendations: formattedRecommendations, decision: decision.meta || null, cachedAt: new Date() } },
+          { upsert: true }
+        )
+      ))
+      .catch(() => {}); // never block the response
+
     // Return response in Liquid-compatible format
     return json({
       success: true,
@@ -282,7 +440,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
       }
     });
 

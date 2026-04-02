@@ -97,10 +97,19 @@ export const loader = async ({ request }) => {
 
     const rawOffers = decision.offers || [];
 
+    console.log(`📊 [Checkout API] CALL — shop: ${shop}, productIds: ${JSON.stringify(productIds)}`);
+    console.log(`📊 [Checkout API] decision.meta.discountPercent: ${decision.meta?.discountPercent}, offers count: ${rawOffers.length}`);
+    if (rawOffers[0]) {
+      console.log(`📊 [Checkout API] First offer - productId: ${rawOffers[0].productId}, product.discountPercent: ${rawOffers[0].discountPercent}`);
+    }
+
     const formattedOffers = rawOffers.map(product => {
       const price = String(product.aiData?.price || product.variants?.[0]?.price || "0");
+      const compareAtPrice = product.aiData?.compareAtPrice || product.variants?.[0]?.compareAtPrice || null;
       const offerType = product.offerType || "addon_upsell";
-      const baseDiscountPercent = product.discountPercent ?? 0;
+      console.log(`📊 [Checkout API] Product ${product.productId} - aiData.price: ${product.aiData?.price}, variant.price: ${product.variants?.[0]?.price}, compareAtPrice: ${compareAtPrice}`);
+      const baseDiscountPercent = product.discountPercent ?? decision.meta?.discountPercent ?? 0;
+      console.log(`📊 [Checkout API] Formatting product ${product.productId}: baseDiscountPercent=${baseDiscountPercent}`);
       const offerTypeExtras = getOfferTypeExtras(offerType, baseDiscountPercent);
       const discountPercent = (offerType === 'volume_discount' || offerType === 'subscription_upgrade') ? 0 : baseDiscountPercent;
       const sellingPlanId = product.sellingPlanId || product.sellingPlanIds?.[0] || null;
@@ -110,6 +119,7 @@ export const loader = async ({ request }) => {
         title: product.title,
         handle: product.handle,
         price,
+        compareAtPrice,
         image: product.images?.[0]?.src || product.image?.src || "",
         variantId: product.variants?.[0]?.id || product.variantId || null,
         reason: product.aiReason || null,
@@ -122,6 +132,8 @@ export const loader = async ({ request }) => {
         ...offerTypeExtras,
       };
     });
+
+    console.log(`📊 [Checkout API] Returning offer:`, formattedOffers[0] ? { id: formattedOffers[0].id, price: formattedOffers[0].price, compareAtPrice: formattedOffers[0].compareAtPrice, discountPercent: formattedOffers[0].discountPercent } : null);
 
     return json(
       {

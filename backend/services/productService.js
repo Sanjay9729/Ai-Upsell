@@ -260,7 +260,8 @@ export class ProductService {
       price: this.toNumber(variant.price, 0),
       compareAtPrice: this.toNumber(variant.compare_at_price, null),
       inventoryQuantity: this.toNumber(variant.inventory_quantity, null),
-      inventoryItemId: this.toNumber(variant.inventory_item_id, null)
+      inventoryItemId: this.toNumber(variant.inventory_item_id, null),
+      inventoryPolicy: variant.inventory_policy ? String(variant.inventory_policy).toUpperCase() : null
     }));
   }
 
@@ -270,7 +271,8 @@ export class ProductService {
       price: this.toNumber(node?.price, 0),
       compareAtPrice: this.toNumber(node?.compareAtPrice, null),
       inventoryQuantity: this.toNumber(node?.inventoryQuantity, null),
-      inventoryItemId: this.toNumber(this.extractNumericId(node?.inventoryItem?.id), null)
+      inventoryItemId: this.toNumber(this.extractNumericId(node?.inventoryItem?.id), null),
+      inventoryPolicy: node?.inventoryPolicy ? String(node.inventoryPolicy).toUpperCase() : null
     }));
   }
 

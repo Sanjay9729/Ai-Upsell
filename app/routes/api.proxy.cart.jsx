@@ -5,6 +5,9 @@ import { decideCartOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
 import { getSafetyMode } from "../../backend/services/safetyMode.js";
 
+// Pre-warm MongoDB at module load — eliminates cold-start delay on first request after server restart
+import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
+
 /**
  * Fetch live inventory using authenticated admin client from appProxy
  */
@@ -187,8 +190,15 @@ export const loader = async ({ request }) => {
 
     console.log(`🛒 Cart-based recommendations for ${productIds.length} products`);
 
-    // Block all offers if safety mode is active
-    const safetyActive = await getSafetyMode(shop).catch(() => false);
+    // Run safetyMode check + auth in parallel
+    const [safetyActive, authResult] = await Promise.all([
+      getSafetyMode(shop).catch(() => false),
+      authenticate.public.appProxy(request).catch(err => {
+        console.error('⚠️ Cart appProxy auth failed:', err.message);
+        return null;
+      }),
+    ]);
+
     if (safetyActive) {
       console.warn(`🛑 Safety mode active for ${shop} — blocking cart offers`);
       return json({
@@ -202,35 +212,49 @@ export const loader = async ({ request }) => {
         headers: {
           "Content-Type": "application/json",
           "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Cache-Control": "no-store",
         }
       });
     }
 
-    // Authenticate via app proxy to get admin client
-    let adminClient = null;
-    try {
-      const authResult = await authenticate.public.appProxy(request);
-      adminClient = authResult?.admin || null;
-    } catch (authErr) {
-      console.error('⚠️ Cart appProxy auth failed:', authErr.message);
-    }
+    const adminClient = authResult?.admin || null;
 
-    // Self-heal: sync any cart products missing from MongoDB (same as product page proxy)
+    // Self-heal: sync cart products missing from MongoDB — only block if product doesn't exist yet
     if (adminClient?.graphql) {
+      const missingRefreshes = [];
       await Promise.all(productIds.map(async (productId) => {
         try {
           const existing = await getProductById(shop, productId);
           const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
           const stale = !existing || (Date.now() - updatedAt > 10 * 60 * 1000);
           if (stale) {
-            await ensureProductFromAdminGraphQL(shop, adminClient.graphql, productId);
+            const refreshPromise = ensureProductFromAdminGraphQL(shop, adminClient.graphql, productId);
+            if (!existing) {
+              missingRefreshes.push(refreshPromise);
+            } else {
+              refreshPromise.catch(err => console.warn(`⚠️ Cart product background refresh failed for ${productId}:`, err.message));
+            }
           }
         } catch (syncErr) {
           console.warn(`⚠️ Cart product sync failed for ${productId}:`, syncErr.message);
         }
       }));
+      // Only wait for genuinely missing products
+      if (missingRefreshes.length > 0) {
+        await Promise.all(missingRefreshes).catch(() => {});
+      }
     }
+
+    // Load merchant config for offer display mode
+    let offerDisplayMode = 'both';
+    let merchantGoal = 'increase_aov';
+    try {
+      const { getDb, collections } = await import("../../backend/database/mongodb.js");
+      const db = await getDb();
+      const config = await db.collection(collections.merchantConfig).findOne({ shopId: shop });
+      offerDisplayMode = config?.offerDisplayMode || 'both';
+      merchantGoal = config?.goal || 'increase_aov';
+    } catch (_) {}
 
     const decision = await decideCartOffers({
       shopId: shop,
@@ -241,7 +265,26 @@ export const loader = async ({ request }) => {
     });
 
     // Use cart products already fetched by AI engine — no extra DB query needed
-    const recommendations = decision.offers || [];
+    let recommendations = decision.offers || [];
+
+    // Apply goal-based offer type filter
+    if (merchantGoal === 'revenue_per_visitor' || merchantGoal === 'subscription_adoption') {
+      // These goals: always addon_upsell only, no bundles/volume discounts
+      recommendations = recommendations.map(r => ({ ...r, offerType: 'addon_upsell' }));
+    } else if (offerDisplayMode === 'bundle') {
+      recommendations = recommendations.map(r => ({ ...r, offerType: 'bundle' }));
+    } else if (offerDisplayMode === 'volume_discount') {
+      recommendations = recommendations.map(r => ({ ...r, offerType: 'volume_discount' }));
+    } else {
+      // 'both': if volume_discount is present, convert bundle products to volume_discount
+      // so all products appear together in the "Buy More, Save More" grid.
+      const hasVolume = recommendations.some(r => r.offerType === 'volume_discount');
+      if (hasVolume) {
+        recommendations = recommendations.map(r =>
+          r.offerType === 'bundle' ? { ...r, offerType: 'volume_discount' } : r
+        );
+      }
+    }
     const validCartProducts = decision.cartProducts || [];
     const cartSourceTitle = validCartProducts.length > 0
       ? validCartProducts.map(p => p.title).join(', ')
@@ -302,7 +345,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
       }
     });
 

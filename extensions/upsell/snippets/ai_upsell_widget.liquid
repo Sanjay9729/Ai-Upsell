@@ -14,6 +14,102 @@
 {% endif %}{% endunless %}
 {% if request.page_type == 'cart' and cart.item_count > 0 %}
 <script>(function(){if(!window.__AI_CART_PREFETCH__){var ids=[{% for item in cart.items %}"gid://shopify/Product/{{ item.product_id }}"{% unless forloop.last %},{% endunless %}{% endfor %}];var uid=window.__AI_UPSELL_USER_ID__||'';var seg=window.__AI_UPSELL_SEGMENT__||'{{ customer_segment }}';window.__AI_CART_PREFETCH__=fetch('/apps/ai-upsell/cart?ids='+encodeURIComponent(JSON.stringify(ids))+(uid?'&userId='+encodeURIComponent(uid):'')+('&segment='+encodeURIComponent(seg)));}})();</script>
+<script>
+(function(){
+  var code = {{ cart.discount_code | json }};
+  if (!code) {
+    var attrCode = {{ cart.attributes.ai_discount_code | json }};
+    if (attrCode) code = attrCode;
+  }
+  if (!code) {
+    try {
+      var stored = sessionStorage.getItem('__ai_volume_target__');
+      if (stored) { var parsed = JSON.parse(stored); if (parsed && parsed.code) code = parsed.code; }
+    } catch (_) {}
+  }
+  if (!code) return;
+  try {
+    var redirectKey = '__ai_cart_discount_redirect__';
+    var last = parseInt(sessionStorage.getItem(redirectKey) || '0', 10);
+    var now = Date.now();
+    if (!{{ cart.discount_code | json }} && (!last || (now - last) > 15000)) {
+      sessionStorage.setItem(redirectKey, String(now));
+      var root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) ? window.Shopify.routes.root : '/';
+      if (root.charAt(0) !== '/') root = '/' + root;
+      if (root.charAt(root.length - 1) !== '/') root += '/';
+      var redir = root + 'cart';
+      if (redir.charAt(0) !== '/') redir = '/' + redir;
+      var url = root + 'discount/' + encodeURIComponent(code) + '?redirect=' + encodeURIComponent(redir);
+      if (url) { window.location.href = url; return; }
+    }
+  } catch (_) {}
+  function buildUrl(c, redirectPath){
+    if (!c) return null;
+    var root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) ? window.Shopify.routes.root : '/';
+    if (root.charAt(0) !== '/') root = '/' + root;
+    if (root.charAt(root.length - 1) !== '/') root += '/';
+    if (redirectPath === 'checkout') {
+      var checkout = root + 'checkout';
+      var joiner = checkout.indexOf('?') === -1 ? '?' : '&';
+      return checkout + joiner + 'discount=' + encodeURIComponent(c);
+    }
+    var clean = String(redirectPath || 'cart').replace(/^\/+/, '');
+    var redir = root + clean;
+    if (redir.charAt(0) !== '/') redir = '/' + redir;
+    return root + 'discount/' + encodeURIComponent(c) + '?redirect=' + encodeURIComponent(redir);
+  }
+  var applying = false;
+  async function applyDiscountAndCheckout(){
+    if (applying) return;
+    applying = true;
+    try {
+      await fetch('/cart/update.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ discount: code })
+      });
+    } catch (_) {}
+    try {
+      // Wait briefly for cart to reflect discount
+      for (var i = 0; i < 8; i++) {
+        var r = await fetch('/cart.js');
+        if (r && r.ok) {
+          var cart = await r.json();
+          if (cart && (cart.discount_code === code)) break;
+        }
+        await new Promise(function(res){ setTimeout(res, 150); });
+      }
+    } catch (_) {}
+    var url = buildUrl(code, 'checkout');
+    if (url) window.location.href = url;
+  }
+  function handleCheckout(e){
+    var el = e.target.closest('a[href*="/checkout"], button[name="checkout"], input[name="checkout"]');
+    if (!el) {
+      var submit = e.target.closest('button[type="submit"], input[type="submit"], button:not([type])');
+      if (submit) {
+        var form = submit.closest('form');
+        if (form && (form.action || '').indexOf('/checkout') !== -1) el = submit;
+      }
+    }
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    applyDiscountAndCheckout();
+  }
+  document.addEventListener('click', handleCheckout, true);
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if (!form || form.tagName !== 'FORM') return;
+    var action = form.action || form.getAttribute('action') || '';
+    if (action.indexOf('/checkout') === -1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    applyDiscountAndCheckout();
+  }, true);
+})();
+</script>
 {% endif %}
 
 {% assign upsell_settings = settings %}

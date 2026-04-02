@@ -1178,17 +1178,27 @@ MERCHANT STRATEGY CONTEXT (use as a soft preference, never override relevance or
     const threshold = Number(guardrails?.inventoryMinThreshold);
     if (Number.isFinite(threshold) && threshold > 0) {
       const variants = Array.isArray(product.variants) ? product.variants : [];
-      // Only include variants where inventory is explicitly tracked (non-null).
-      // null means tracking is disabled — don't block the product for those.
-      const quantities = variants
-        .filter(v => v?.inventoryQuantity != null)
-        .map(v => Number(v.inventoryQuantity))
-        .filter(qty => Number.isFinite(qty));
 
-      // If inventory is not tracked in the DB, don't block the product.
-      if (quantities.length > 0) {
-        const hasInventory = quantities.some(qty => qty >= threshold);
-        if (!hasInventory) return false;
+      // If any variant uses 'continue' inventory policy, it can be sold past zero —
+      // skip the threshold check for those products entirely.
+      // Also treat null/unknown policy leniently (pre-migration data without inventoryPolicy stored).
+      const hasContinueOrUnknownPolicy = variants.some(v => {
+        const policy = v?.inventoryPolicy ? String(v.inventoryPolicy).toUpperCase() : null;
+        return policy === 'CONTINUE' || policy === null;
+      });
+      if (!hasContinueOrUnknownPolicy) {
+        // All variants have explicit 'DENY' policy — apply the inventory threshold.
+        // Only include variants where inventory is explicitly tracked (non-null).
+        const quantities = variants
+          .filter(v => v?.inventoryQuantity != null)
+          .map(v => Number(v.inventoryQuantity))
+          .filter(qty => Number.isFinite(qty));
+
+        // If inventory is not tracked in the DB, don't block the product.
+        if (quantities.length > 0) {
+          const hasInventory = quantities.some(qty => qty >= threshold);
+          if (!hasInventory) return false;
+        }
       }
     }
 
