@@ -3039,6 +3039,38 @@
 
     var _drawerProducts = [];
 
+    async function buildDrawerProducts(cartItems, cartOverride) {
+      try {
+        var products = await fetchCartDrawerRecommendations(cartItems);
+        if (!products || products.length === 0) {
+          var fallbackId = cartItems[0] && cartItems[0].product_id;
+          if (fallbackId) products = await fetchShopifyRecommendations(fallbackId, DRAWER_MAX_PRODUCTS * 2);
+        }
+        if (!products || products.length === 0) return [];
+        products = uniqueSecondaryById(products);
+        products = await filterSecondaryAgainstCart(products, cartOverride);
+
+        if (products.length < DRAWER_MAX_PRODUCTS) {
+          var fallbackId2 = cartItems[0] && cartItems[0].product_id;
+          if (fallbackId2) {
+            var shopifyRecs = await fetchShopifyRecommendations(fallbackId2, DRAWER_MAX_PRODUCTS * 3);
+            if (shopifyRecs && shopifyRecs.length > 0) {
+              shopifyRecs = await filterSecondaryAgainstCart(uniqueSecondaryById(shopifyRecs), cartOverride);
+              var seen = new Set(products.map(function (p) { return String(p.id); }));
+              shopifyRecs.forEach(function (p) {
+                if (!seen.has(String(p.id)) && products.length < DRAWER_MAX_PRODUCTS) {
+                  seen.add(String(p.id));
+                  products.push(p);
+                }
+              });
+            }
+          }
+        }
+
+        return products;
+      } catch (_) { return []; }
+    }
+
     async function loadDrawerUpsellsFromCart(cartOverride) {
       var drawer = document.querySelector('cart-drawer');
       if (!drawer) return;
@@ -3050,14 +3082,8 @@
         if (!cart || !cart.items) { var cartRes = await fetch('/cart.js'); cart = await cartRes.json(); }
         var cartItems = cart.items || [];
         if (cartItems.length === 0) return;
-        var cartProductIds = new Set(cartItems.map(function (i) { return String(i.product_id); }));
-        var products = await fetchCartDrawerRecommendations(cartItems);
-        if (!products || products.length === 0) {
-          products = await fetchShopifyRecommendations(cartItems[0].product_id, DRAWER_MAX_PRODUCTS);
-        }
+        var products = await buildDrawerProducts(cartItems, cart);
         if (!products || products.length === 0) return;
-        products = products.filter(function (p) { return !cartProductIds.has(String(p.id)); });
-        if (products.length === 0) return;
         _drawerProducts = products.slice(0, DRAWER_MAX_PRODUCTS);
         secondaryAllProducts = _drawerProducts;
         placeInCartDrawer();
@@ -3077,14 +3103,8 @@
           var cartRes = await fetch('/cart.js'); var cart = await cartRes.json();
           var cartItems = cart.items || [];
           if (cartItems.length === 0) return;
-          var cartProductIds = new Set(cartItems.map(function (i) { return String(i.product_id); }));
-          var products = await fetchCartDrawerRecommendations(cartItems);
-          if (!products || products.length === 0) {
-            products = await fetchShopifyRecommendations(cartItems[0].product_id, DRAWER_MAX_PRODUCTS);
-          }
+          var products = await buildDrawerProducts(cartItems, cart);
           if (!products || products.length === 0) return;
-          products = products.filter(function (p) { return !cartProductIds.has(String(p.id)); });
-          if (products.length === 0) return;
           _drawerProducts = products.slice(0, DRAWER_MAX_PRODUCTS);
           secondaryAllProducts = _drawerProducts;
           placeInCartDrawer();
