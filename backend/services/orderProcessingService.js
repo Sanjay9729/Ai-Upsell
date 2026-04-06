@@ -29,24 +29,8 @@ export async function processPurchaseEvent(shopId, orderPayload) {
         ? orderPayload.line_items
         : [];
 
-    if (lineItems.length === 0) {
-      console.log(`⚠️ Order ${orderId} has no line items`);
-      return { upsellsAttributed: 0, purchases: [] };
-    }
-
     console.log('───────────────────────────────────────────────────────────');
     console.log(`🔄 [processPurchaseEvent] shopId=${shopId} orderId=${orderId} orderValue=${orderValue} lineItems=${lineItems.length}`);
-
-    // Log each line item for debugging
-    lineItems.forEach((li, idx) => {
-      console.log(`🔄 [processPurchaseEvent] LineItem[${idx}]:`, {
-        productId: li.productId || li.product_id || '(missing)',
-        variantId: li.variantId || li.variant_id || '(missing)',
-        title: li.title || '(no title)',
-        price: li.price,
-        quantity: li.quantity
-      });
-    });
 
     // Always store the raw order event so we have a record of every purchase
     try {
@@ -74,6 +58,12 @@ export async function processPurchaseEvent(shopId, orderPayload) {
       console.log(`📝 [processPurchaseEvent] Order ${orderId} stored in DB — upserted=${storeResult.upsertedCount > 0}, matched=${storeResult.matchedCount}`);
     } catch (storeErr) {
       console.error(`⚠️ [processPurchaseEvent] Failed to store raw order ${orderId}:`, storeErr.message);
+    }
+
+    // No line items — order recorded but nothing to attribute
+    if (lineItems.length === 0) {
+      console.log(`⚠️ Order ${orderId} has no line items — skipping attribution`);
+      return { upsellsAttributed: 0, purchases: [] };
     }
 
     // Check each line item against upsell events from the last 6 hours
