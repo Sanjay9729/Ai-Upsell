@@ -16,12 +16,20 @@ const BACKEND_URL = 'https://ai-upsell.onrender.com';
 export default extension('purchase.thank-you.block.render', async (root, api) => {
   const shop = api.shop.myshopifyDomain.current;
 
+  console.log('🚀 AI Upsell Post-Purchase Extension loaded. Shop:', shop);
+  console.log('🔍 api.order:', api.order);
+  console.log('🔍 api.order?.current:', api.order?.current);
+
   // Extract product IDs from order line items (best effort — may be empty)
-  const order = api.order?.current;
-  const lineItems = order?.lineItems ?? [];
+  const order = api.order?.current ?? api.order ?? null;
+  const lineItems = order?.lineItems?.nodes ?? order?.lineItems ?? [];
   const productIds = lineItems
     .map(li => li.variant?.product?.id?.split('/').pop())
     .filter(Boolean);
+
+  console.log('📋 Order:', order ? `ID=${order.id}` : 'null');
+  console.log('📋 Line items count:', lineItems.length);
+  console.log('📋 Product IDs:', productIds);
 
   // Fire-and-forget purchase tracking — Pillar 5
   if (lineItems.length > 0) {
