@@ -31,9 +31,9 @@ export const action = async ({ request }) => {
 
     console.log('[orders/created] Received:', { shopId, orderId, lineItemCount: lineItems?.length, lineItems: JSON.stringify(lineItems) });
 
-    if (!shopId || !orderId || !lineItems?.length) {
-      console.log('[orders/created] Missing fields:', { shopId, orderId, hasLineItems: !!lineItems?.length });
-      return json({ error: 'Missing required fields: shopId, orderId, lineItems' }, { status: 400 });
+    if (!shopId || !orderId) {
+      console.log('[orders/created] Missing fields:', { shopId, orderId });
+      return json({ error: 'Missing required fields: shopId, orderId' }, { status: 400 });
     }
 
     const orderPayload = {
