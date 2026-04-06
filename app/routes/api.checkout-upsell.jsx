@@ -55,21 +55,24 @@ export const loader = async ({ request }) => {
     const placement = url.searchParams.get("placement") || "checkout";
     const limitParam = url.searchParams.get("limit");
 
-    if (!shop || !idsParam) {
+    if (!shop) {
       return json({ offers: [], offer: null }, { status: 400, headers: corsHeaders });
     }
 
-    let productIds;
-    try {
-      const parsed = JSON.parse(idsParam);
-      productIds = (Array.isArray(parsed) ? parsed : [parsed])
-        .map(Number)
-        .filter(id => id > 0);
-    } catch {
-      return json({ offers: [], offer: null }, { status: 400, headers: corsHeaders });
+    let productIds = [];
+    if (idsParam) {
+      try {
+        const parsed = JSON.parse(idsParam);
+        productIds = (Array.isArray(parsed) ? parsed : [parsed])
+          .map(Number)
+          .filter(id => id > 0);
+      } catch {
+        return json({ offers: [], offer: null }, { status: 400, headers: corsHeaders });
+      }
     }
 
-    if (productIds.length === 0) {
+    // For post_purchase placement, allow fetching top products even without product IDs
+    if (productIds.length === 0 && placement !== 'post_purchase') {
       return json({ offers: [], offer: null }, { headers: corsHeaders });
     }
 

@@ -16,82 +16,42 @@ const BACKEND_URL = 'https://ai-upsell.onrender.com';
 export default extension('purchase.thank-you.block.render', async (root, api) => {
   const shop = api.shop.myshopifyDomain.current;
 
-  console.log('🚀 AI Upsell Post-Purchase Extension loaded. Shop:', shop);
-  console.log('🔍 api.order:', api.order);
-  console.log('🔍 api.order?.current:', api.order?.current);
-
-  // Extract product IDs from order line items (best effort — may be empty)
+  // Extract order data — try all known API shapes
   const order = api.order?.current ?? api.order ?? null;
   const lineItems = order?.lineItems?.nodes ?? order?.lineItems ?? [];
   const productIds = lineItems
     .map(li => li.variant?.product?.id?.split('/').pop())
     .filter(Boolean);
 
-  console.log('📋 Order:', order ? `ID=${order.id}` : 'null');
-  console.log('📋 Line items count:', lineItems.length);
-  console.log('📋 Product IDs:', productIds);
+  const orderId = order?.id?.split('/').pop() || order?.id || null;
+  const totalPrice = parseFloat(order?.totalPrice?.amount || 0);
 
-  // Fire-and-forget purchase tracking — Pillar 5
-  if (lineItems.length > 0) {
-    const orderId = order?.id?.split('/').pop() || order?.id;
-    const totalPrice = parseFloat(order?.totalPrice?.amount || 0);
-    
-    console.log('📦 PostPurchase Extension Debug:');
-    console.log('   Shop:', shop);
-    console.log('   Order ID:', orderId);
-    console.log('   Total Price:', totalPrice);
-    console.log('   Line Items:', lineItems.length);
-    
-    const trackItems = lineItems
-      .map((li, idx) => {
-        const item = {
-          variantId: li.variant?.id?.split('/').pop(),
-          productId: li.variant?.product?.id?.split('/').pop(),
-          title: li.title,
-          quantity: li.quantity || 1,
-          price: parseFloat(li.price?.amount || li.totalPrice?.amount || '0'),
-        };
-        console.log(`   Item ${idx}:`, item);
-        return item;
-      })
-      .filter(li => li.variantId && li.productId);
-    
-    console.log('   Filtered Items:', trackItems.length);
-    
-    if (trackItems.length > 0) {
-      const payload = { 
-        shopId: shop,
-        orderId, 
-        totalPrice,
-        lineItems: trackItems 
-      };
-      
-      console.log('📤 Sending to:', `${BACKEND_URL}/webhooks/orders/created`);
-      console.log('📋 Payload:', JSON.stringify(payload));
-      
-      fetch(`${BACKEND_URL}/webhooks/orders/created`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      .then(res => {
-        console.log('✅ Purchase tracking response:', res.status, res.statusText);
-        return res.json();
-      })
-      .then(data => {
-        console.log('✅ Purchase tracking result:', data);
-      })
-      .catch((err) => {
-        console.error('❌ Purchase tracking failed:', err);
-      });
-    } else {
-      console.warn('⚠️ No trackable items found');
-    }
-  } else {
-    console.warn('⚠️ No line items in order');
-  }
+  // Always fire tracking — store what we have, even if order data is partial
+  const trackItems = lineItems
+    .map(li => ({
+      variantId: li.variant?.id?.split('/').pop(),
+      productId: li.variant?.product?.id?.split('/').pop(),
+      title: li.title,
+      quantity: li.quantity || 1,
+      price: parseFloat(li.price?.amount || li.totalPrice?.amount || '0'),
+    }))
+    .filter(li => li.variantId && li.productId);
 
-  // Build the fetch URL — if no product IDs, skip the ids param
+  fetch(`${BACKEND_URL}/webhooks/orders/created`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      shopId: shop,
+      orderId: orderId || `ext-${Date.now()}`,
+      totalPrice,
+      lineItems: trackItems,
+    }),
+  })
+  .then(res => res.json())
+  .then(data => console.log('✅ Purchase tracked:', data))
+  .catch(err => console.error('❌ Purchase tracking failed:', err));
+
+  // Always fetch post-purchase offers — use product IDs if available, else fetch top products
   const idsParam = productIds.length > 0
     ? `&ids=${encodeURIComponent(JSON.stringify(productIds))}`
     : '';
