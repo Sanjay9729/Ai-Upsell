@@ -234,6 +234,83 @@ app.get('/api/merchant_intelligence', async (req, res) => {
 
 
 
+// Get post-purchase data from MongoDB
+// GET /api/post_purchase                          — all purchase_events
+// GET /api/post_purchase?shopId=store.myshopify.com  — filter by shop
+// GET /api/post_purchase?shopId=...&type=aov          — aov_impact records
+// GET /api/post_purchase?shopId=...&type=cart_adds    — thank-you page offer acceptances
+// GET /api/post_purchase?shopId=...&limit=50          — limit results (default 100)
+app.get('/api/post_purchase', async (req, res) => {
+  try {
+    await connectToMongoDB();
+    const { getDb } = await import('./backend/database/connection.js');
+    const db = await getDb();
+
+    const shopId = req.query.shopId;
+    const type = req.query.type || 'events';
+    const limit = Math.min(parseInt(req.query.limit || '100'), 500);
+    const shopFilter = shopId ? { shopId } : {};
+
+    if (type === 'aov') {
+      const docs = await db.collection('aov_impact')
+        .find(shopFilter)
+        .sort({ timestamp: -1 })
+        .limit(limit)
+        .toArray();
+
+      return res.json({
+        success: true,
+        type: 'aov_impact',
+        count: docs.length,
+        data: docs,
+        timestamp: new Date().toISOString(),
+        message: 'AOV impact records retrieved successfully from MongoDB'
+      });
+    }
+
+    if (type === 'cart_adds') {
+      const docs = await db.collection('upsell_events')
+        .find({ ...shopFilter, eventType: 'cart_add', 'metadata.location': 'post_purchase' })
+        .sort({ timestamp: -1 })
+        .limit(limit)
+        .toArray();
+
+      return res.json({
+        success: true,
+        type: 'post_purchase_cart_adds',
+        count: docs.length,
+        data: docs,
+        timestamp: new Date().toISOString(),
+        message: 'Post-purchase cart add events retrieved successfully from MongoDB'
+      });
+    }
+
+    // Default: purchase_events
+    const docs = await db.collection('purchase_events')
+      .find(shopFilter)
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .toArray();
+
+    res.json({
+      success: true,
+      type: 'purchase_events',
+      count: docs.length,
+      data: docs,
+      timestamp: new Date().toISOString(),
+      message: 'Post-purchase events retrieved successfully from MongoDB'
+    });
+  } catch (error) {
+    console.error('Error in post_purchase API:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch post-purchase data from MongoDB',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Sync products from Shopify to MongoDB (Step 1 of AI Upsell Flow)
 app.post('/api/products/sync', async (req, res) => {
   try {
