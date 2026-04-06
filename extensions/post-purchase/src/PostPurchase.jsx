@@ -16,27 +16,34 @@ const BACKEND_URL = 'https://ai-upsell.onrender.com';
 export default extension('purchase.thank-you.block.render', async (root, api) => {
   const shop = api.shop.myshopifyDomain.current;
 
-  // Extract order data — try all known API shapes
-  const order = api.order?.current ?? api.order ?? null;
-  const lineItems = order?.lineItems?.nodes ?? order?.lineItems ?? [];
-  const productIds = lineItems
-    .map(li => li.variant?.product?.id?.split('/').pop())
+  // ── Order ID via orderConfirmation (the correct API for thank-you page) ──
+  const orderConfirmation = api.orderConfirmation?.current;
+  const orderId = orderConfirmation?.order?.id?.split('/').pop() || null;
+
+  // ── Cart lines via api.lines (CartLine[]) ──
+  const cartLines = api.lines?.current ?? [];
+
+  // ── Total price via api.cost ──
+  const totalPrice = api.cost?.totalAmount?.current?.amount || 0;
+
+  // ── Product IDs for fetching upsell offers ──
+  const productIds = cartLines
+    .map(li => li.merchandise?.product?.id?.split('/').pop())
     .filter(Boolean);
 
-  const orderId = order?.id?.split('/').pop() || order?.id || null;
-  const totalPrice = parseFloat(order?.totalPrice?.amount || 0);
-
-  // Always fire tracking — store what we have, even if order data is partial
-  const trackItems = lineItems
+  // ── Track items to send to backend ──
+  // CartLine.merchandise is ProductVariant: { id, title, product: { id } }
+  const trackItems = cartLines
     .map(li => ({
-      variantId: li.variant?.id?.split('/').pop(),
-      productId: li.variant?.product?.id?.split('/').pop(),
-      title: li.title,
+      variantId: li.merchandise?.id?.split('/').pop(),
+      productId: li.merchandise?.product?.id?.split('/').pop() || null,
+      title: li.merchandise?.title || '',
       quantity: li.quantity || 1,
-      price: parseFloat(li.price?.amount || li.totalPrice?.amount || '0'),
+      price: li.cost?.totalAmount?.amount || 0,
     }))
-    .filter(li => li.variantId && li.productId);
+    .filter(li => li.variantId);
 
+  // Always fire tracking — store order even if some fields are partial
   fetch(`${BACKEND_URL}/webhooks/orders/created`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -47,11 +54,11 @@ export default extension('purchase.thank-you.block.render', async (root, api) =>
       lineItems: trackItems,
     }),
   })
-  .then(res => res.json())
-  .then(data => console.log('✅ Purchase tracked:', data))
-  .catch(err => console.error('❌ Purchase tracking failed:', err));
+    .then(res => res.json())
+    .then(data => console.log('✅ Purchase tracked:', data))
+    .catch(err => console.error('❌ Purchase tracking failed:', err));
 
-  // Always fetch post-purchase offers — use product IDs if available, else fetch top products
+  // ── Fetch post-purchase upsell offers ──
   const idsParam = productIds.length > 0
     ? `&ids=${encodeURIComponent(JSON.stringify(productIds))}`
     : '';
@@ -59,7 +66,7 @@ export default extension('purchase.thank-you.block.render', async (root, api) =>
   let offers = [];
   try {
     const res = await fetch(
-      `${BACKEND_URL}/api/checkout-upsell?shop=${shop}${idsParam}&placement=post_purchase&limit=2`
+      `${BACKEND_URL}/api/checkout-upsell?shop=${shop}${idsParam}&placement=post_purchase&limit=4`
     );
     if (!res.ok) return;
     const data = await res.json();
@@ -144,7 +151,7 @@ export default extension('purchase.thank-you.block.render', async (root, api) =>
             btn.updateProps({ loading: false, disabled: true });
             btn.replaceChildren('Added ✓');
 
-            // Track cart_add event for purchase attribution
+            // Track cart_add event
             fetch(`${BACKEND_URL}/api/proxy/analytics/track`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
