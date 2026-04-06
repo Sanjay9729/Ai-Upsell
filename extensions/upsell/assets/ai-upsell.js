@@ -2626,7 +2626,25 @@
         var products = null;
         try { products = await fetchAiRecommendations(currentProductId, MAX_PRODUCTS); } catch (fetchErr) { console.error('[AI Upsell] fetchAiRecommendations error:', fetchErr); }
         var _lastDecision = window.__AI_UPSELL_LAST_DECISION__;
-        if (!products && (!_lastDecision || _lastDecision.status !== 'safety_mode')) { try { products = await fetchShopifyRecommendations(currentProductId, MAX_PRODUCTS); } catch (fallbackErr) { console.error('[AI Upsell] fetchShopifyRecommendations error:', fallbackErr); } }
+        if ((!products || products.length < MAX_PRODUCTS) && (!_lastDecision || _lastDecision.status !== 'safety_mode')) {
+          try {
+            var shopifyFill = await fetchShopifyRecommendations(currentProductId, MAX_PRODUCTS * 2);
+            if (shopifyFill && shopifyFill.length > 0) {
+              if (!products || products.length === 0) {
+                products = shopifyFill.slice(0, MAX_PRODUCTS);
+              } else {
+                var _seenIds = new Set(products.map(function(p) { return String(p.id); }));
+                _seenIds.add(String(currentProductId));
+                shopifyFill.forEach(function(p) {
+                  if (!_seenIds.has(String(p.id)) && products.length < MAX_PRODUCTS) {
+                    _seenIds.add(String(p.id));
+                    products.push(p);
+                  }
+                });
+              }
+            }
+          } catch (fallbackErr) { console.error('[AI Upsell] fetchShopifyRecommendations error:', fallbackErr); }
+        }
         console.log('[AI Upsell] Products fetched:', products ? products.length : 0);
         if (products && products.length > 0) { console.log('[AI Upsell] First product:', JSON.stringify(products[0]).substring(0, 300)); }
         if (!products || products.length === 0) { clearLoadingFallback(widget); widget.__aiUpsellFetchInFlight = false; widget.style.display = 'none'; return; }

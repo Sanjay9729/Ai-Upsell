@@ -262,10 +262,16 @@ export class GroqAIEngine {
       const effectiveLimit = this.getEffectiveLimit(limit, guardrails, userId, shopId, contextKey);
       if (effectiveLimit <= 0) return [];
 
+      // Always fetch/cache at least 4 so a cached entry for limit=2 doesn't starve a later
+      // request for limit=4.  The caller still receives only effectiveLimit items.
+      const fetchLimit = Math.max(effectiveLimit, 4);
+
       // Check cache (sort IDs for consistent key, include userId for per-user caching)
       const cacheKey = getCacheKey('cart', shopId, `${sortedIds}:${userId || 'anon'}`);
       const cached = getFromCache(cacheKey);
-      if (cached) {
+      // Only use the cache if it contains at least as many items as requested; otherwise a stale
+      // entry from a smaller limit (e.g. 2) would silently under-serve a larger limit (e.g. 4).
+      if (cached && cached.length >= effectiveLimit) {
         console.log(`⚡ Cache hit for cart [${sortedIds}] userId=${userId || 'anon'}`);
         const excludedIds = new Set(cartProductIds.map(String));
         const filtered = this.applyGuardrailsToRecommendations(cached, guardrails, excludedIds, {
@@ -337,17 +343,17 @@ export class GroqAIEngine {
 
       let recommendations;
       try {
-        recommendations = await this.analyzeCartWithGroq(validCartProducts, otherProducts, effectiveLimit, userProfile, cartHistory, mergedContext);
+        recommendations = await this.analyzeCartWithGroq(validCartProducts, otherProducts, fetchLimit, userProfile, cartHistory, mergedContext);
         if (!recommendations || recommendations.length === 0) {
           console.warn(`⚠️ No AI cart recommendations; using fallback`);
-          recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, effectiveLimit);
+          recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, fetchLimit);
         }
       } catch (groqError) {
         console.warn(`⚠️ Groq failed for cart; using fallback`, groqError?.message || groqError);
-        recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, effectiveLimit);
+        recommendations = await this.fallbackCartRecommendations(shopId, cartProductIds, fetchLimit);
       }
 
-      const merged = this.mergeHistoryWithRecommendations(recommendations, historyCandidates, effectiveLimit);
+      const merged = this.mergeHistoryWithRecommendations(recommendations, historyCandidates, fetchLimit);
 
       // Apply engagement boost: re-rank by confidence + time-spent signal
       const boostMap = await this.getEngagementBoosts(shopId, merged.map(r => r.productId));
@@ -359,17 +365,18 @@ export class GroqAIEngine {
         cartProductIdSet,
         { goal: config?.goal }
       );
-      const filled = this.fillToLimit(filtered, otherProducts, effectiveLimit);
+      const filled = this.fillToLimit(filtered, otherProducts, fetchLimit);
 
       // Attach cart product info so callers don't need to re-fetch
       filled._cartProducts = validCartProducts;
 
       console.log(`✅ Groq AI found ${filled.length} cart upsell recommendations (engagement boost applied)`);
 
-      // Cache the result
+      // Cache up to fetchLimit items so future requests with higher limits can use this entry.
+      // Return only effectiveLimit items to the caller.
       setCache(cacheKey, filled);
 
-      return this.finalizeSessionLimit(filled, effectiveLimit, userId, shopId, contextKey);
+      return this.finalizeSessionLimit(filled.slice(0, effectiveLimit), effectiveLimit, userId, shopId, contextKey);
 
     } catch (error) {
       console.error('❌ Groq AI Engine error for cart:', error);
