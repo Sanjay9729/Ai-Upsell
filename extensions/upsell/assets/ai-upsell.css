@@ -562,3 +562,30 @@ cart-drawer.ai-has-upsell .drawer__footer > * {
   background: #9ca3af;
   cursor: not-allowed;
 }
+
+/* ── Skeleton Loaders ─────────────────────────────── */
+.ai-skeleton-header { width: 160px; height: 24px; background: #f0f0f0; border-radius: 4px; margin: 0 auto 24px; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-grid { display: grid; gap: var(--ai-grid-gap, 20px); grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; text-align: left; }
+@media (max-width: 990px) { .ai-skeleton-grid { grid-template-columns: repeat(2, 1fr); } .ai-skeleton-grid .hide-tablet { display: none; } }
+@media (max-width: 750px) { .ai-skeleton-grid { grid-template-columns: 1fr; } .ai-skeleton-grid .hide-mobile { display: none; } }
+.ai-skeleton-card { background: var(--ai-card-bg, #fff); border-radius: var(--ai-card-radius, 8px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); overflow: hidden; }
+.ai-skeleton-image { width: 100%; padding-top: 100%; background: #f5f5f5; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-info { padding: var(--ai-card-padding, 16px); }
+.ai-skeleton-text { background: #f0f0f0; border-radius: 4px; height: 14px; margin-bottom: 8px; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-text.line-1 { width: 85%; }
+.ai-skeleton-text.line-2 { width: 50%; margin-bottom: 16px; }
+.ai-skeleton-button { background: #f0f0f0; border-radius: 4px; height: 40px; width: 100%; animation: ai-pulse 1.5s ease-in-out infinite; margin-top: 8px; }
+
+.ai-skeleton-secondary-container { text-align: left; width: 100%; }
+.ai-skeleton-secondary-header { width: 200px; height: 24px; background: #f0f0f0; border-radius: 4px; margin: 0 0 16px 0; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-secondary-card { display: flex; gap: 12px; padding: 12px; border: 1px solid #f0f0f0; border-radius: 8px; background: #fff; }
+.ai-skeleton-image-small { width: 60px; height: 60px; background: #f5f5f5; border-radius: 6px; flex-shrink: 0; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-details { flex: 1; display: flex; flex-direction: column; }
+.ai-skeleton-details .ai-skeleton-text.line-1 { width: 70%; height: 14px; margin-bottom: 6px;}
+.ai-skeleton-details .ai-skeleton-text.line-2 { width: 40%; height: 14px; margin-bottom: auto;}
+.ai-skeleton-button-small { background: #f0f0f0; border-radius: 4px; height: 32px; width: 120px; margin-top: 8px; animation: ai-pulse 1.5s ease-in-out infinite; }
+
+@keyframes ai-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}

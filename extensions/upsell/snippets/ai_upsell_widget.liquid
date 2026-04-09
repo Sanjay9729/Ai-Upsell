@@ -117,13 +117,31 @@
 
 {% if request.page_type == 'product' %}
 <div class="ai-upsell-widget" data-product-id="{{ product.id }}" data-shop="{{ shop.permanent_domain }}" data-source="{{ source | default: 'block' }}">
-  <div class="ai-upsell-loading"><div class="ai-upsell-spinner"></div><p>{{ upsell_settings.loading_text }}</p></div>
+  <div class="ai-upsell-loading">
+    <div class="ai-skeleton-header"></div>
+    <div class="ai-skeleton-grid">
+      <div class="ai-skeleton-card"><div class="ai-skeleton-image"></div><div class="ai-skeleton-info"><div class="ai-skeleton-text line-1"></div><div class="ai-skeleton-text line-2"></div><div class="ai-skeleton-button"></div></div></div>
+      <div class="ai-skeleton-card hide-mobile"><div class="ai-skeleton-image"></div><div class="ai-skeleton-info"><div class="ai-skeleton-text line-1"></div><div class="ai-skeleton-text line-2"></div><div class="ai-skeleton-button"></div></div></div>
+      <div class="ai-skeleton-card hide-tablet"><div class="ai-skeleton-image"></div><div class="ai-skeleton-info"><div class="ai-skeleton-text line-1"></div><div class="ai-skeleton-text line-2"></div><div class="ai-skeleton-button"></div></div></div>
+      <div class="ai-skeleton-card hide-tablet"><div class="ai-skeleton-image"></div><div class="ai-skeleton-info"><div class="ai-skeleton-text line-1"></div><div class="ai-skeleton-text line-2"></div><div class="ai-skeleton-button"></div></div></div>
+    </div>
+  </div>
   <div class="ai-upsell-content" style="display:none;"></div>
 </div>
 {% endif %}
 
 <div class="ai-secondary-widget" data-shop="{{ shop.permanent_domain }}" data-source="{{ source | default: 'block' }}" style="display:none;">
-  <div class="ai-secondary-loading" style="display:none;"><div class="ai-secondary-spinner"></div><p>{{ upsell_settings.loading_text }}</p></div>
+  <div class="ai-secondary-loading ai-skeleton-secondary-container" style="display:none;">
+    <div class="ai-skeleton-secondary-header"></div>
+    <div class="ai-skeleton-secondary-card">
+      <div class="ai-skeleton-image-small"></div>
+      <div class="ai-skeleton-details">
+        <div class="ai-skeleton-text line-1"></div>
+        <div class="ai-skeleton-text line-2"></div>
+        <div class="ai-skeleton-button-small"></div>
+      </div>
+    </div>
+  </div>
   <div class="ai-secondary-content"></div>
 </div>
 

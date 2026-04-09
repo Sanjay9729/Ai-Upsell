@@ -2651,7 +2651,7 @@
         }
         console.log('[AI Upsell] HTML built, length=' + html.length + ', rendering now...');
         clearLoadingFallback(widget);
-        widget.__aiUpsellFetched = true; widget.__aiUpsellFetchInFlight = false;
+        widget.__aiUpsellFetched = true; widget.__aiUpsellFetchInFlight = false; widget.__aiUpsellLastFetchAt = Date.now();
         loadingEl.style.display = 'none'; contentEl.innerHTML = html; contentEl.style.display = 'block';
         console.log('[AI Upsell] ✅ Products rendered successfully');
         attachQtyListeners(contentEl); attachVariantListeners(contentEl); attachMultiBundleListeners(contentEl);
@@ -3013,13 +3013,20 @@
       init();
     }
 
-    function ensureProductFetch() {
+    function ensureProductFetch(force) {
       var isCartPage = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
       if (isCartPage) return;
       pickWidgets();
-      if (!widget || widget.__aiUpsellFetched || widget.__aiUpsellFetchInFlight) return;
+      if (!widget || widget.__aiUpsellFetchInFlight) return;
       var pid = resolveProductId();
       if (!pid) return;
+      if (force) {
+        var lastAt = widget.__aiUpsellLastFetchAt || 0;
+        if (Date.now() - lastAt < 2000) return;
+        widget.__aiUpsellFetched = false;
+      } else if (widget.__aiUpsellFetched) {
+        return;
+      }
       loadAIUpsells(pid);
     }
 
@@ -3040,7 +3047,7 @@
 
     startProductPlacement();
     setTimeout(ensureProductFetch, 800);
-    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') ensureProductFetch(); });
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') ensureProductFetch(true); });
 
     var _drawerProducts = [];
 
