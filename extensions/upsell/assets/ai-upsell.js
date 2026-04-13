@@ -425,7 +425,9 @@
         if (sectionWithForm) { insertAfter(sectionWithForm, getWidgetWrapper(widget)); return true; }
       }
       if (productForm && productForm.parentNode) { insertAfter(productForm, getWidgetWrapper(widget)); return true; }
-      return false;
+      var finalMain = document.querySelector('main, #MainContent, .content-for-layout, .page-width');
+      if (finalMain) { finalMain.appendChild(getWidgetWrapper(widget)); return true; }
+      return true;
     }
 
     function isPlacedInMainContent(node) {
@@ -865,7 +867,8 @@
             if (!isImmediateDiscountGoal(currentGoalD) && minQtyDrawer && totalQty < minQtyDrawer) discountPct = 0;
             allDiscountProductIds = Array.from(new Set(getCartProductIdList(cartDataD).concat([productId])));
           } else if (offerType === 'bundle') {
-            discountPct = 0;
+            // Do not clear the discount for bundle. The source item is already in the cart
+            // so we should pass the discount along to the upsell item.
           }
           discountPct = normalizeImmediateDiscount(offerType, productData, discountPct, currentGoalD);
           var gateResultD = await applyGoalDiscountGate(currentGoalD, discountPct, cartDataD, 1);
@@ -1013,6 +1016,7 @@
        var isCart = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart');
        setTimeout(function () {
          maybeClearExpiredVolumeDiscount(cartFromEvent);
+         maybeClearInvalidBundleProperties(cartFromEvent);
          if (isCart) {
            placeInCartPage();
            refreshSecondaryFromCart(cartFromEvent);
@@ -1039,7 +1043,58 @@
         await fetch(SHOPIFY_ROOT + 'cart/update.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ discount: null }) });
         window.__AI_UPSELL_DISCOUNT_CODE__ = null;
         try { sessionStorage.removeItem('__ai_volume_target__'); } catch (_) {}
-      } catch (_) {}
+      } catch (err) {
+        console.error('[AI Upsell] Error in maybeClearVolumeDiscountCode', err);
+      }
+    }
+
+    async function maybeClearInvalidBundleProperties(cartOverride) {
+      try {
+        var cart = cartOverride;
+        if (!cart || !cart.items) {
+          var res = await fetch(SHOPIFY_ROOT + 'cart.js');
+          if (!res.ok) return;
+          cart = await res.json();
+        }
+        var totalQty = getCartTotalQuantity(cart);
+        if (totalQty >= 2) return; // Cart has 2 or more items, bundle is likely valid
+        
+        var itemsToClean = cart.items.filter(function(item) {
+          return item.properties && 
+                 ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                  (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+        });
+        
+        if (itemsToClean.length === 0) return;
+
+        var changed = false;
+        for (var i = 0; i < itemsToClean.length; i++) {
+          var item = itemsToClean[i];
+          var newProps = Object.assign({}, item.properties);
+          newProps.Offer = '';
+          newProps.offer = '';
+          
+          await fetch(SHOPIFY_ROOT + 'cart/change.js', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: item.key,
+              quantity: item.quantity,
+              properties: newProps
+            })
+          });
+          changed = true;
+        }
+        
+        if (changed) {
+          // Trigger a refresh after cleansing
+          setTimeout(function() {
+            fetch(SHOPIFY_ROOT + 'cart.js').then(function(r) { return r.json(); }).then(function(finalCart) {
+              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: finalCart } }));
+            });
+          }, 500);
+        }
+      } catch (e) {}
     }
 
     function resolveProductId() {
@@ -1652,9 +1707,13 @@
     async function fetchCartDrawerRecommendations(cartItems) {
       try {
         var userId = window.__AI_UPSELL_USER_ID__ || '';
+        var segment = window.__AI_UPSELL_SEGMENT__ || _C.customerSegment || '';
+        var ts = Date.now();
         var gids = cartItems.map(function (i) { return 'gid://shopify/Product/' + i.product_id; });
         var url = '/apps/ai-upsell/cart?ids=' + encodeURIComponent(JSON.stringify(gids))
-          + (userId ? '&userId=' + encodeURIComponent(userId) : '');
+          + (userId ? '&userId=' + encodeURIComponent(userId) : '')
+          + (segment ? '&segment=' + encodeURIComponent(segment) : '')
+          + '&_t=' + ts;
         var res = await fetch(url);
         if (!res.ok) return null;
         var data = await res.json();
@@ -1665,7 +1724,9 @@
 
     async function fetchAiRecommendations(productId, maxProducts) {
       var userId = window.__AI_UPSELL_USER_ID__ || '';
-      var apiUrl = '/apps/ai-upsell?id=gid://shopify/Product/' + productId + (userId ? '&userId=' + encodeURIComponent(userId) : '');
+      var segment = window.__AI_UPSELL_SEGMENT__ || _C.customerSegment || '';
+      var ts = Date.now();
+      var apiUrl = '/apps/ai-upsell?id=gid://shopify/Product/' + productId + (userId ? '&userId=' + encodeURIComponent(userId) : '') + (segment ? '&segment=' + encodeURIComponent(segment) : '') + '&_t=' + ts;
       var fetchPromise = window.__AI_UPSELL_PREFETCH__;
       if (fetchPromise) {
         window.__AI_UPSELL_PREFETCH__ = null;
@@ -1718,12 +1779,21 @@
 
     async function fetchCartRecommendations(productGids, maxProducts) {
       var cartUserId = window.__AI_UPSELL_USER_ID__ || '';
-      var apiUrl = '/apps/ai-upsell/cart?ids=' + encodeURIComponent(JSON.stringify(productGids)) + (cartUserId ? '&userId=' + encodeURIComponent(cartUserId) : '');
+      var segment = window.__AI_UPSELL_SEGMENT__ || _C.customerSegment || '';
+      var ts = Date.now();
+      var apiUrl = '/apps/ai-upsell/cart?ids=' + encodeURIComponent(JSON.stringify(productGids)) + (cartUserId ? '&userId=' + encodeURIComponent(cartUserId) : '') + (segment ? '&segment=' + encodeURIComponent(segment) : '') + '&_t=' + ts;
       var fetchPromise = window.__AI_CART_PREFETCH__;
       if (fetchPromise) { window.__AI_CART_PREFETCH__ = null; } else { fetchPromise = fetch(apiUrl); }
       var response = await fetchPromise;
       if (!response.ok) return null;
-      var data = await response.json();
+      var data;
+      try {
+        data = await response.json();
+      } catch (e) {
+        var freshRes = await fetch(apiUrl);
+        if (!freshRes.ok) return null;
+        data = await freshRes.json();
+      }
       setDecisionMeta(data.decision);
       if (!data.success || !data.recommendations || data.recommendations.length === 0) return null;
       return data.recommendations.slice(0, maxProducts);
@@ -2567,7 +2637,7 @@
               if (!isImmediateDiscountGoal(currentGoalSecondary) && minQtySecondary && totalQtySecondary < minQtySecondary) effectiveDiscount = 0;
               allDiscountProductIds = Array.from(new Set(getCartProductIdList(cartDataVD1).concat([upsellProductId])));
             } else if (offerType === 'bundle' && !sourceVariantId) {
-              effectiveDiscount = 0;
+              // Intentionally removed clamping
             } else { effectiveDiscount = parseFloat(productData.discountPercent) || 0; }
             effectiveDiscount = normalizeImmediateDiscount(offerType, productData, effectiveDiscount, currentGoalSecondary);
             var gateResultSecondary = await applyGoalDiscountGate(currentGoalSecondary, effectiveDiscount, cartDataVD1, quantity + (sourceVariantId ? 1 : 0));
@@ -2652,6 +2722,7 @@
         console.log('[AI Upsell] HTML built, length=' + html.length + ', rendering now...');
         clearLoadingFallback(widget);
         widget.__aiUpsellFetched = true; widget.__aiUpsellFetchInFlight = false; widget.__aiUpsellLastFetchAt = Date.now();
+        widget.style.display = 'block';
         loadingEl.style.display = 'none'; contentEl.innerHTML = html; contentEl.style.display = 'block';
         console.log('[AI Upsell] ✅ Products rendered successfully');
         attachQtyListeners(contentEl); attachVariantListeners(contentEl); attachMultiBundleListeners(contentEl);
@@ -2713,7 +2784,7 @@
               if (!isImmediateDiscountGoal(currentGoalPdp) && minQty && totalQty < minQty) effectiveDiscount = 0;
               allDiscountProductIds = Array.from(new Set(getCartProductIdList(cartData).concat([upsellProductId])));
             } else if (offerType === 'bundle' && !sourceVariantId) {
-              effectiveDiscount = 0;
+              // Intentionally removed clamping
             } else { effectiveDiscount = parseFloat(discountPercent) || parseFloat(productData.discountPercent) || 0; }
             effectiveDiscount = normalizeImmediateDiscount(offerType, productData, effectiveDiscount, currentGoalPdp);
             var gateResultPdp = await applyGoalDiscountGate(currentGoalPdp, effectiveDiscount, cartData, quantity + (sourceVariantId ? 1 : 0));
@@ -2828,7 +2899,7 @@
               if (!isImmediateDiscountGoal(currentGoalCartPage) && minQty2 && totalQty2 < minQty2) effectiveDiscount = 0;
               allDiscountProductIds = Array.from(new Set(getCartProductIdList(cartData2).concat([upsellProductId])));
             } else if (offerType === 'bundle' && !sourceVariantId) {
-              effectiveDiscount = 0;
+              // Intentionally removed clamping
             } else { effectiveDiscount = parseFloat(productData.discountPercent) || 0; }
             effectiveDiscount = normalizeImmediateDiscount(offerType, productData, effectiveDiscount, currentGoalCartPage);
             var gateResultCartPage = await applyGoalDiscountGate(currentGoalCartPage, effectiveDiscount, cartData2, quantity + (sourceVariantId ? 1 : 0));
@@ -2901,7 +2972,9 @@
       try {
         var productGids = productIds.map(function (id) { return 'gid://shopify/Product/' + id; });
         var cartUid = window.__AI_UPSELL_USER_ID__ || '';
-        var apiUrl = '/apps/ai-upsell/cart?ids=' + encodeURIComponent(JSON.stringify(productGids)) + (cartUid ? '&userId=' + encodeURIComponent(cartUid) : '');
+        var segment = window.__AI_UPSELL_SEGMENT__ || _C.customerSegment || '';
+        var ts = Date.now();
+        var apiUrl = '/apps/ai-upsell/cart?ids=' + encodeURIComponent(JSON.stringify(productGids)) + (cartUid ? '&userId=' + encodeURIComponent(cartUid) : '') + (segment ? '&segment=' + encodeURIComponent(segment) : '') + '&_t=' + ts;
         var fetchPromise = window.__AI_CART_PREFETCH__;
         if (fetchPromise) window.__AI_CART_PREFETCH__ = null; else fetchPromise = fetch(apiUrl);
         var response = await fetchPromise;
