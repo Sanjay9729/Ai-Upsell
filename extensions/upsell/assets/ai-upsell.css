@@ -222,6 +222,15 @@
 .ai-multi-bundle-btn:hover { background: #15803d; }
 .ai-multi-bundle-btn:disabled { opacity: 0.7; cursor: not-allowed; }
 
+.ai-cart-fallback-items { display: block; padding: 16px 0 0; border-top: 1px solid #e5e5e5; }
+.ai-cart-fallback-row { position: relative; display: grid; grid-template-columns: 64px minmax(0, 1fr) 24px; gap: 16px; align-items: start; min-height: 96px; padding: 14px 24px 14px 0; border-bottom: 1px solid #e5e5e5; }
+.ai-cart-fallback-media img { width: 64px; height: 64px; object-fit: cover; display: block; background: #f6f6f6; }
+.ai-cart-fallback-details { min-width: 0; padding-top: 2px; }
+.ai-cart-fallback-title { font-size: 13px; font-weight: 700; color: #111; line-height: 1.35; margin-bottom: 5px; overflow-wrap: anywhere; }
+.ai-cart-fallback-meta, .ai-cart-fallback-qty { font-size: 12px; color: #5f5f5f; line-height: 1.45; margin-top: 1px; }
+.ai-cart-fallback-remove { align-self: start; width: 24px; height: 24px; border: 0; background: transparent; color: #333; font-size: 18px; line-height: 1; padding: 0; cursor: pointer; text-decoration: none; }
+.ai-cart-fallback-remove:hover { color: #000; }
+
 .ai-upsell-reason {
   font-size: var(--ai-reason-size, 13px);
   color: var(--ai-reason-color, #666);
