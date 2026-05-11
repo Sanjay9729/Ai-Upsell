@@ -1275,45 +1275,46 @@
             var addRes = await fetch('/cart/add.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cartPayload) });
             var addData = addRes.ok ? await addRes.json() : {};
             if (discountCode) {
-              try { window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode; syncCheckoutLinks(discountCode); sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ productId: productId, minQty: getMinVolumeQuantity(productData) || 1, code: discountCode })); await applyDiscountCodeToCart(discountCode, 'cart'); } catch (_) {}
+              window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode;
+              syncCheckoutLinks(discountCode);
+              try { sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ productId: productId, minQty: getMinVolumeQuantity(productData) || 1, code: discountCode })); } catch (_) {}
+              applyDiscountCodeToCart(discountCode, 'cart').catch(function() {});
             }
             btn.textContent = '✓'; btn.style.background = '#333';
             // Remove this product from future "You may also like" suggestions
             secondaryAllProducts = secondaryAllProducts.filter(function (p) { return String(p.id) !== String(productId); });
-            // Refresh cart drawer so new item appears
+            // Refresh cart drawer so new item appears immediately
             try {
               var cartRes = await fetch(SHOPIFY_ROOT + 'cart.js');
               var cartData = await cartRes.json();
-              // Prefer sections returned inline by cart/add.js (Dawn theme), else fetch separately
+              // Use inline sections from /cart/add.js if available, else fetch separately.
+              // NOTE: we always use safelyUpdateDrawerFromSection instead of renderContents —
+              // renderContents relies on Dawn's internal section ID format which may not match
+              // the 'cart-drawer' key Shopify returns, causing it to silently fail or clear
+              // the drawer, leaving stale content until a page refresh.
               var sectionsData = (addData && addData.sections) ? addData.sections : null;
               if (!sectionsData) {
                 var sectionsRes = await fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble');
                 sectionsData = await sectionsRes.json();
               }
-              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cartData, source: 'ai-upsell' } }));
               updateCartCountBubble(cartData.item_count);
               var drawerEl = document.querySelector('cart-drawer');
-              // Try Dawn theme's native renderContents if available (most reliable)
-              if (drawerEl && typeof drawerEl.renderContents === 'function' && addData && addData.sections) {
-                drawerEl.renderContents(addData);
-              } else if (drawerEl && sectionsData && sectionsData['cart-drawer']) {
+              if (drawerEl && sectionsData && sectionsData['cart-drawer']) {
                 safelyUpdateDrawerFromSection(sectionsData['cart-drawer'], cartData, { allowFullReplace: true });
-                var activeDrawer = document.querySelector('cart-drawer');
-                if (activeDrawer) {
-                  var scrollEl = activeDrawer.querySelector('cart-drawer-items, #CartDrawer-CartItems, .cart-drawer__items, .drawer__contents .cart-items, .drawer__contents [data-cart-items]');
-                  if (scrollEl) scrollEl.scrollTop = 0;
-                  else activeDrawer.scrollTop = 0;
-                }
+                keepDrawerOpen(drawerEl, cartData);
+                var scrollEl = drawerEl.querySelector('cart-drawer-items, #CartDrawer-CartItems, .cart-drawer__items, .drawer__contents .cart-items, .drawer__contents [data-cart-items]');
+                if (scrollEl) scrollEl.scrollTop = 0;
+                else drawerEl.scrollTop = 0;
               }
               if (sectionsData && sectionsData['cart-icon-bubble']) {
                 var iconEl = document.getElementById('cart-icon-bubble');
                 if (iconEl) { var tmp2 = document.createElement('div'); tmp2.innerHTML = sectionsData['cart-icon-bubble']; var newIcon = tmp2.querySelector('#cart-icon-bubble'); if (newIcon) { iconEl.replaceWith(newIcon); updateCartCountBubble(cartData.item_count); } }
               }
               updateLineItemDiscountedPrices(cartData);
-              // After drawer re-render, update checkout links with discount URL
               if (window.__AI_UPSELL_DISCOUNT_CODE__) syncCheckoutLinks(window.__AI_UPSELL_DISCOUNT_CODE__);
+              // Dispatch after our DOM writes so the theme reacts to already-updated content
+              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cartData, source: 'ai-upsell' } }));
             } catch (_) {
-              // Fallback: event-based refresh
               fetch('/cart.js').then(function (r) { return r.json(); }).then(function (cart) {
                 document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart } }));
                 updateCartCountBubble(cart.item_count);
@@ -1460,10 +1461,11 @@
         }
         
         if (changed) {
-          // Trigger a refresh after cleansing
+          // Trigger a refresh after cleansing — source flag prevents the theme from
+          // responding with its own concurrent cart AJAX calls and showing an error.
           setTimeout(function() {
             fetch(SHOPIFY_ROOT + 'cart.js').then(function(r) { return r.json(); }).then(function(finalCart) {
-              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: finalCart } }));
+              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: finalCart, source: 'ai-upsell' } }));
             });
           }, 500);
         }
@@ -1725,7 +1727,7 @@
         if (Array.isArray(product.tiers) && product.tiers.length > 0) {
           tiersHtml = '<div class="ai-volume-tiers">' + product.tiers.map(function (t) { return '<span class="ai-volume-tier">Buy ' + t.quantity + '+ items &mdash; ' + t.discountPercent + '% off</span>'; }).join('') + '</div>';
         }
-        return '<div class="ai-offer-type-badge ai-offer-type-volume">Buy More, Save More' + tiersHtml + '</div>';
+        return '<div class="ai-offer-type-badge ai-offer-type-volume">' + tiersHtml + '</div>';
       }
       if (type === 'subscription_upgrade') return '<div class="ai-offer-type-badge ai-offer-type-subscription">Subscribe &amp; Save</div>';
       return '';
@@ -2324,18 +2326,15 @@
       var addData = {};
       try { addData = await response.json(); } catch (_) {}
       if (discountCode) {
-        try {
-          console.log('[AI Upsell] Applying discount code:', discountCode);
-          window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode;
-          syncCheckoutLinks(discountCode);
-          // Persist so it survives navigation to cart page / checkout click
-          try { sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ code: discountCode })); } catch (_) {}
-          var applied = await applyDiscountCodeToCart(discountCode, 'cart');
-          console.log('[AI Upsell] Discount application success:', applied);
-          if (!applied) {
-            console.warn('[AI Upsell] Failed to apply discount code to cart');
-          }
-        } catch (err) { console.error('[AI Upsell] Error applying discount:', err.message); }
+        console.log('[AI Upsell] Applying discount code (background):', discountCode);
+        window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode;
+        syncCheckoutLinks(discountCode);
+        try { sessionStorage.setItem('__ai_volume_target__', JSON.stringify({ code: discountCode })); } catch (_) {}
+        // Fire-and-forget: don't block the cart add on discount application
+        applyDiscountCodeToCart(discountCode, 'cart').then(function(applied) {
+          if (!applied) console.warn('[AI Upsell] Failed to apply discount code to cart');
+          else console.log('[AI Upsell] Discount application success');
+        }).catch(function(err) { console.error('[AI Upsell] Error applying discount:', err && err.message ? err.message : err); });
       } else {
         console.warn('[AI Upsell] No discount code to apply');
       }
@@ -3805,7 +3804,25 @@
         event.preventDefault();
         event.stopPropagation();
         if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
-        removeAiCartLineByControl(control).catch(function (err) {
+        removeAiCartLineByControl(control).then(function(removed) {
+          if (removed) return;
+          // Fallback: our item-matching failed, but we already stopped the event.
+          // Attempt removal directly using the key or line index from the DOM element
+          // so the item doesn't get silently stuck in the cart.
+          var fallbackKey = getCartItemKeyFromControl(control);
+          var fallbackLine = getLineIndexFromCartControl(control, row);
+          if (!fallbackKey && !fallbackLine) return;
+          var payload = fallbackKey ? { id: fallbackKey, quantity: 0 } : { line: fallbackLine, quantity: 0 };
+          fetch(SHOPIFY_ROOT + 'cart/change.js', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }).then(function(r) { return r.json(); }).then(function(updatedCart) {
+            var inlineSections = updatedCart.sections || null;
+            if (inlineSections) delete updatedCart.sections;
+            refreshDrawerAfterAiCartChange(updatedCart, inlineSections);
+          }).catch(function() {});
+        }).catch(function (err) {
           console.error('[AI Upsell] AI cart remove handler error:', err && err.message ? err.message : err);
         });
       }, true);
