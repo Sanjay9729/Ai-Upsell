@@ -496,6 +496,23 @@
     var __AI_UPSELL_PATCH_SUPPRESS_UNTIL__ = 0;
     // Serializes concurrent cart-add calls so Shopify never sees two writes at once.
     var _aiCartAddQueue = Promise.resolve();
+    
+    // Initialize bundle count from current cart on page load
+    (async function initializeBundleCount() {
+      try {
+        var res = await fetch(SHOPIFY_ROOT + 'cart.js');
+        if (res.ok) {
+          var cart = await res.json();
+          var bundleCount = (cart.items || []).filter(function(item) {
+            return item.properties && ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) || (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+          }).length;
+          window.__AI_UPSELL_BUNDLE_ITEM_COUNT__ = bundleCount;
+          console.log('[AI Upsell] 🔧 Initialized bundle count:', bundleCount);
+        }
+      } catch (err) {
+        console.error('[AI Upsell] Error initializing bundle count:', err);
+      }
+    })();
 
     function suppressCartPatchObservers(ms) {
       var until = Date.now() + Math.max(0, Number(ms || 0));
@@ -742,6 +759,34 @@
       frag.innerHTML = patchCartSectionHtml(sectionHtml, cart);
       var nextDrawer = frag.querySelector('cart-drawer');
       if (!nextDrawer) return false;
+      
+      // Check if bundle was just cleared (no bundle items in cart but HTML might still have offer text)
+      var hasBundleItems = cart && cart.items && cart.items.some(function(item) {
+        return item.properties && 
+               ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+      });
+      
+      // If no bundle items, aggressively remove all offer-related text from the HTML
+      if (!hasBundleItems) {
+        var allElements = nextDrawer.querySelectorAll('*');
+        allElements.forEach(function(el) {
+          if (el.textContent) {
+            var text = el.textContent.trim();
+            // Remove elements that contain only offer text
+            if ((text.indexOf('Bundle') !== -1 || text.indexOf('Offer') !== -1) && 
+                text.length < 100) { // Likely an offer label, not main content
+              // Check if this is a property/offer label element
+              if (el.className && (el.className.indexOf('property') !== -1 || 
+                                   el.className.indexOf('offer') !== -1 ||
+                                   el.className.indexOf('label') !== -1)) {
+                el.style.display = 'none';
+              }
+            }
+          }
+        });
+      }
+      
       // When cart is empty, skip narrow replace and always do a full innerHTML swap.
       // replaceDrawerContentsInPlace only updates cart-drawer-items (a child element),
       // so it never adds is-empty to the parent cart-drawer — meaning Dawn's CSS keeps
@@ -776,17 +821,44 @@
       var sections = inlineSections || null;
       if (!sections) {
         var reqSections = isCart ? 'cart-drawer,cart-icon-bubble,main-cart-items' : 'cart-drawer,cart-icon-bubble';
-        var sectionsRes = await fetch(SHOPIFY_ROOT + '?sections=' + reqSections);
+        // Cache-bust so Shopify always returns fresh section HTML after property changes.
+        var sectionsRes = await fetch(SHOPIFY_ROOT + '?sections=' + reqSections + '&_t=' + Date.now());
         if (!sectionsRes.ok) return;
         sections = await sectionsRes.json();
       }
       if (sections['cart-drawer']) {
-        var drawerEl = document.querySelector('cart-drawer');
-        if (!isCart && drawerEl && typeof drawerEl.renderContents === 'function') {
-          drawerEl.renderContents({ sections: sections });
-        } else {
-          safelyUpdateDrawerFromSection(sections['cart-drawer'], cart, { allowFullReplace: true });
+        // CRITICAL: Check if bundle is incomplete BEFORE updating drawer
+        var hasBundleItems = cart && cart.items && cart.items.some(function(item) {
+          return item.properties && 
+                 ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                  (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+        });
+        
+        var hasIncompleteBundles = false;
+        if (hasBundleItems) {
+          cart.items.forEach(function(item) {
+            if (item.properties && ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) || (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0))) {
+              var bundleProductIds = item.properties._bundle_product_ids;
+              if (bundleProductIds) {
+                var expectedIds = bundleProductIds.split(',');
+                var cartProductIds = cart.items.map(function(cartItem) { return String(cartItem.variant_id); });
+                var allPresent = expectedIds.every(function(expectedId) {
+                  return cartProductIds.indexOf(expectedId) !== -1;
+                });
+                if (!allPresent) {
+                  hasIncompleteBundles = true;
+                  console.log('[AI Upsell] 🛑 Incomplete bundle detected in refreshDrawerAfterAiCartChange - will skip initial price patching');
+                }
+              }
+            }
+          });
         }
+        
+        // Always use safelyUpdateDrawerFromSection — renderContents() relies on Dawn's
+        // internal section ID format which may not match the 'cart-drawer' key returned
+        // by Shopify's sections API, causing it to silently fail and leave stale content
+        // (Bundle offer labels, discount prices) visible until the next page refresh.
+        safelyUpdateDrawerFromSection(sections['cart-drawer'], cart, { allowFullReplace: true, skipPricePatching: hasIncompleteBundles });
       }
       if (sections['cart-icon-bubble']) {
         var bubble = document.getElementById('cart-icon-bubble');
@@ -818,7 +890,21 @@
         }, 100);
         placeInCartPage(); refreshSecondaryFromCart(cart);
       }
-      updateLineItemDiscountedPrices(cart);
+      
+      // Check if bundle was just broken (bundle count decreased)
+      var currentBundleCount = (cart && cart.items || []).filter(function(item) {
+        return item.properties && ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) || (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+      }).length;
+      var prevBundleCount = window.__AI_UPSELL_BUNDLE_ITEM_COUNT__ || 0;
+      var bundleBroke = currentBundleCount > 0 && prevBundleCount > 0 && currentBundleCount < prevBundleCount;
+      
+      // Only apply price patches if bundle didn't just break
+      if (!bundleBroke) {
+        updateLineItemDiscountedPrices(cart);
+      } else {
+        console.log('[AI Upsell] 🔴 Bundle broke - skipping price patch, will clear properties');
+      }
+      
       ensureDrawerShowsCartItems(cart);
       // After any render path, if cart is empty ensure is-empty is on cart-drawer
       // and drawer__inner-empty is visible (renderContents may not always set it
@@ -844,7 +930,7 @@
       if (!item || !cartItemHasAiOffer(item)) return false;
       var isCart = isCartPage();
       var reqSections = isCart ? 'cart-drawer,cart-icon-bubble,main-cart-items' : 'cart-drawer,cart-icon-bubble';
-      var sectionsPayload = { sections: reqSections, sections_url: window.location.pathname || '/' };
+      var sectionsPayload = { sections: reqSections };
       var changeRes = await fetch(SHOPIFY_ROOT + 'cart/change.js', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -869,6 +955,65 @@
       var updatedCart = await changeRes.json();
       var inlineSections = updatedCart.sections || null;
       if (inlineSections) delete updatedCart.sections;
+      
+      var bundleWasIncomplete = cartHasIncompleteBundle(updatedCart);
+
+      if (bundleWasIncomplete) {
+        console.log('[AI Upsell] 🔴 Bundle became incomplete during remove - clearing properties and discount');
+        bundleWasIncomplete = true;
+        window.__AI_UPSELL_SKIP_PRICE_PATCH__ = true;
+        
+        // Clear properties via API calls
+        await maybeClearInvalidBundleProperties(updatedCart, true);
+        
+        // CRITICAL: Wait longer for server to process property changes and propagate to cart.js
+        // The API calls complete, but the cart state may not be immediately updated
+        // We need to poll until the Offer properties are actually cleared
+        var maxRetries = 10;
+        var retryCount = 0;
+        var cartHasOldOffers = true;
+        
+        while (cartHasOldOffers && retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+          retryCount++;
+          
+          try {
+            var checkRes = await fetch(SHOPIFY_ROOT + 'cart.js?t=' + Date.now());
+            if (checkRes.ok) {
+              var checkCart = await checkRes.json();
+              var stillHasOffers = checkCart.items.some(function(item) {
+                return item.properties && 
+                       ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                        (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+              });
+              
+              if (!stillHasOffers) {
+                console.log('[AI Upsell] ✅ Bundle offers cleared on server after', retryCount, 'retries');
+                updatedCart = checkCart;
+                cartHasOldOffers = false;
+              } else {
+                console.log('[AI Upsell] ⏳ Bundle offers still present, retrying... (attempt', retryCount, ')');
+              }
+            }
+          } catch (err) {
+            console.error('[AI Upsell] ❌ Error checking cart state:', err);
+          }
+        }
+        
+        if (cartHasOldOffers) {
+          console.warn('[AI Upsell] ⚠️ Bundle offers still present after max retries, proceeding anyway');
+        }
+        
+        window.__AI_UPSELL_SKIP_PRICE_PATCH__ = false;
+        
+        // CRITICAL: Do NOT use inline sections when bundle was incomplete
+        // The inline sections contain old prices with discounts
+        // Force a fresh fetch of sections instead
+        inlineSections = null;
+        console.log('[AI Upsell] 🛑 Discarding inline sections - forcing fresh fetch due to bundle clearing');
+      }
+      
+      // Now refresh drawer with the correct cart state
       await refreshDrawerAfterAiCartChange(updatedCart, inlineSections);
       return true;
     }
@@ -1372,7 +1517,18 @@
        var cartFromEvent = event && event.detail && event.detail.cart;
        console.log('[AI Upsell] 🛒 handleCartUpdated fired, source:', event && event.detail && event.detail.source);
        if (cartFromEvent && cartFromEvent.items) {
-         setTimeout(function () { console.log('[AI Upsell] handleCartUpdated: calling updateLineItemDiscountedPrices'); updateLineItemDiscountedPrices(cartFromEvent); }, 80);
+         // Check if a bundle item was just removed — if so, skip patching to avoid
+         // flashing the wrong discounted price while maybeClearInvalidBundleProperties clears it.
+         var bundleCount = cartFromEvent.items.filter(function(item) {
+           return item.properties && ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) || (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+         }).length;
+         var prevBundleCount = window.__AI_UPSELL_BUNDLE_ITEM_COUNT__ || 0;
+         var bundleBroke = bundleCount > 0 && prevBundleCount > 0 && bundleCount < prevBundleCount;
+         if (!bundleBroke) {
+           setTimeout(function () { console.log('[AI Upsell] handleCartUpdated: calling updateLineItemDiscountedPrices'); updateLineItemDiscountedPrices(cartFromEvent); }, 80);
+         } else {
+           console.log('[AI Upsell] 🔴 Bundle broke (count went from', prevBundleCount, 'to', bundleCount, ') - skipping price patch, will clear bundle properties');
+         }
        } else {
          console.log('[AI Upsell] handleCartUpdated: calling patchCartDrawerPricesFromAPI');
          patchCartDrawerPricesFromAPI();
@@ -1422,7 +1578,59 @@
       }
     }
 
-    async function maybeClearInvalidBundleProperties(cartOverride) {
+    function getBundleOfferItems(cart) {
+      if (!cart || !Array.isArray(cart.items)) return [];
+      return cart.items.filter(function(item) {
+        return item.properties &&
+               ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+      });
+    }
+
+    function isBundleItemIncomplete(item, cart) {
+      if (!item || !item.properties || !cart || !Array.isArray(cart.items)) return false;
+      var bundleProductIds = item.properties._bundle_product_ids;
+      if (!bundleProductIds) return true;
+      var expectedIds = String(bundleProductIds).split(',').map(function(id) { return String(id).trim(); }).filter(Boolean);
+      if (!expectedIds.length) return true;
+      var cartVariantIds = cart.items.map(function(cartItem) { return String(cartItem.variant_id); });
+      return !expectedIds.every(function(expectedId) {
+        return cartVariantIds.indexOf(expectedId) !== -1;
+      });
+    }
+
+    function cartHasIncompleteBundle(cart) {
+      return getBundleOfferItems(cart).some(function(item) {
+        return isBundleItemIncomplete(item, cart);
+      });
+    }
+
+    async function clearAiDiscountCodeFromCart() {
+      try {
+        await fetch(SHOPIFY_ROOT + 'cart/update.js', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ discount: '', attributes: { ai_discount_code: '' } })
+        });
+        console.log('[AI Upsell] ✅ AI discount code cleared from cart');
+      } catch (_) {}
+      window.__AI_UPSELL_DISCOUNT_CODE__ = null;
+      try { sessionStorage.removeItem('__ai_volume_target__'); } catch (_) {}
+      try {
+        document.querySelectorAll('a[href*="/discount/"]').forEach(function(link) {
+          var h = link.getAttribute('href') || '';
+          if (/\/discount\/(AIUS-|UPSELL-)/i.test(h)) {
+            link.setAttribute('href', (SHOPIFY_ROOT || '/') + 'checkout');
+          }
+        });
+      } catch (_) {}
+    }
+
+    async function maybeClearInvalidBundleProperties(cartOverride, skipDrawerRefresh) {
+      if (window.__AI_UPSELL_BUNDLE_CLEARING__) {
+        console.log('[AI Upsell] ⏸️ Bundle clearing already in progress, skipping');
+        return;
+      }
       try {
         var cart = cartOverride;
         if (!cart || !cart.items) {
@@ -1430,25 +1638,51 @@
           if (!res.ok) return;
           cart = await res.json();
         }
-        var totalQty = getCartTotalQuantity(cart);
-        if (totalQty >= 2) return; // Cart has 2 or more items, bundle is likely valid
-        
-        var itemsToClean = cart.items.filter(function(item) {
-          return item.properties && 
-                 ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
-                  (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
-        });
-        
-        if (itemsToClean.length === 0) return;
 
-        var changed = false;
-        for (var i = 0; i < itemsToClean.length; i++) {
-          var item = itemsToClean[i];
+        var itemsToClean = getBundleOfferItems(cart);
+
+        var currentBundleCount = itemsToClean.length;
+        var prevBundleCount = window.__AI_UPSELL_BUNDLE_ITEM_COUNT__ || 0;
+        var hasIncompleteBundle = cartHasIncompleteBundle(cart);
+
+        console.log('[AI Upsell] 📊 Bundle check: current=' + currentBundleCount + ', prev=' + prevBundleCount + ', incomplete=' + hasIncompleteBundle);
+
+        if (currentBundleCount === 0) {
+          console.log('[AI Upsell] ✅ No bundle items in cart');
+          window.__AI_UPSELL_BUNDLE_ITEM_COUNT__ = 0;
+          return;
+        }
+
+        // Bundle grew or stayed the same and every expected variant is present.
+        if (!hasIncompleteBundle && currentBundleCount >= prevBundleCount) {
+          console.log('[AI Upsell] ✅ Bundle intact or grew, recording count');
+          window.__AI_UPSELL_BUNDLE_ITEM_COUNT__ = currentBundleCount;
+          return;
+        }
+
+        // Bundle is incomplete — a bundle item was removed; clear discounts from all remaining bundle items.
+        console.log('[AI Upsell] 🔴 Bundle incomplete! Clearing properties from', itemsToClean.length, 'items');
+        window.__AI_UPSELL_BUNDLE_ITEM_COUNT__ = 0;
+        window.__AI_UPSELL_BUNDLE_CLEARING__ = true;
+        // Suppress price patching immediately so cart:updated events fired by the
+        // property-clearing API calls below cannot re-apply discounts mid-clear.
+        window.__AI_UPSELL_SKIP_PRICE_PATCH__ = true;
+
+        // CRITICAL: Stop the persistent watcher BEFORE clearing to prevent re-applying discounts
+        if (_patchPersistentTimer) {
+          clearInterval(_patchPersistentTimer);
+          _patchPersistentTimer = null;
+          console.log('[AI Upsell] ⏹️ Stopped persistent patch watcher before bundle clearing');
+        }
+
+        // Build all API calls in parallel using Promise.all() instead of sequential awaits
+        var apiCalls = itemsToClean.map(function(item) {
           var newProps = Object.assign({}, item.properties);
+          console.log('[AI Upsell] 🧹 Clearing properties for item:', item.title, 'key:', item.key, 'old Offer:', newProps.Offer);
           newProps.Offer = '';
           newProps.offer = '';
-          
-          await fetch(SHOPIFY_ROOT + 'cart/change.js', {
+
+          return fetch(SHOPIFY_ROOT + 'cart/change.js', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1456,20 +1690,98 @@
               quantity: item.quantity,
               properties: newProps
             })
+          }).then(function(res) {
+            console.log('[AI Upsell] ✅ API call completed for item', item.key, 'status:', res.status);
+            return res;
+          }).catch(function(err) {
+            console.error('[AI Upsell] ❌ Failed to clear bundle properties for item', item.key, ':', err);
+            return null;
           });
-          changed = true;
+        });
+
+        // Wait for ALL API calls to complete before refreshing drawer
+        try {
+          await Promise.all(apiCalls);
+          console.log('[AI Upsell] ✅ All bundle property-clearing API calls completed');
+        } catch (err) {
+          console.error('[AI Upsell] ❌ Error waiting for bundle property-clearing API calls:', err);
         }
-        
-        if (changed) {
-          // Trigger a refresh after cleansing — source flag prevents the theme from
-          // responding with its own concurrent cart AJAX calls and showing an error.
-          setTimeout(function() {
-            fetch(SHOPIFY_ROOT + 'cart.js').then(function(r) { return r.json(); }).then(function(finalCart) {
-              document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: finalCart, source: 'ai-upsell' } }));
-            });
-          }, 500);
+
+        // Bundle is broken — remove the Shopify discount code from the cart so the
+        // remaining items are no longer discounted at checkout.
+        await clearAiDiscountCodeFromCart();
+
+        window.__AI_UPSELL_BUNDLE_CLEARING__ = false;
+
+        // Remove all AI discount patches from the DOM
+        console.log('[AI Upsell] 🧹 Removing AI discount patches from DOM');
+        var patchedWrappers = document.querySelectorAll('[data-ai-price-patched="true"]');
+        console.log('[AI Upsell] Found', patchedWrappers.length, 'patched wrappers');
+        patchedWrappers.forEach(function(wrapper) {
+          // Remove the discounted price element
+          var discountedNode = wrapper.querySelector('[data-ai-discounted-node="true"]');
+          if (discountedNode) {
+            console.log('[AI Upsell] Removing discounted node');
+            discountedNode.remove();
+          }
+          
+          // Remove strikethrough from original price
+          var priceNodes = wrapper.querySelectorAll('[data-ai-hidden-duplicate-price="true"]');
+          priceNodes.forEach(function(node) {
+            node.style.display = '';
+            node.removeAttribute('data-ai-hidden-duplicate-price');
+          });
+          
+          // Restore first price node styling
+          var firstPrice = wrapper.querySelector('span');
+          if (firstPrice) {
+            firstPrice.style.textDecoration = '';
+            firstPrice.style.color = '';
+            firstPrice.style.fontWeight = '';
+          }
+          
+          wrapper.style.display = '';
+          wrapper.style.flexDirection = '';
+          wrapper.style.alignItems = '';
+          wrapper.style.gap = '';
+          wrapper.removeAttribute('data-ai-price-patched');
+        });
+
+        // Hide the Offer property text in the cart drawer
+        console.log('[AI Upsell] 🧹 Hiding Offer property text in cart drawer');
+        var cartDrawer = document.querySelector('cart-drawer');
+        if (cartDrawer) {
+          var allPropertyElements = cartDrawer.querySelectorAll('[data-cart-item-property], .cart-item__property, .properties');
+          allPropertyElements.forEach(function(el) {
+            if (el.textContent && (el.textContent.indexOf('Bundle') !== -1 || el.textContent.indexOf('Offer') !== -1)) {
+              console.log('[AI Upsell] Hiding property element:', el.textContent);
+              el.style.display = 'none';
+            }
+          });
         }
-      } catch (e) {}
+
+        // Only refresh drawer if not skipped (e.g., when called from remove item flow where drawer is already being refreshed)
+        if (!skipDrawerRefresh) {
+          // Fetch fresh cart state and refresh drawer immediately after all API calls complete
+          // Add cache-busting parameter to ensure fresh data
+          try {
+            var cachebustedUrl = SHOPIFY_ROOT + 'cart.js?t=' + Date.now();
+            var finalRes = await fetch(cachebustedUrl);
+            if (finalRes.ok) {
+              var finalCart = await finalRes.json();
+              console.log('[AI Upsell] 🔄 Refreshing drawer with fresh cart state after bundle clearing');
+              await refreshDrawerAfterAiCartChange(finalCart, null);
+            }
+          } catch (err) {
+            console.error('[AI Upsell] ❌ Error fetching fresh cart after bundle clearing:', err);
+          }
+        }
+        window.__AI_UPSELL_SKIP_PRICE_PATCH__ = false;
+      } catch (e) {
+        console.error('[AI Upsell] ❌ Error in maybeClearInvalidBundleProperties:', e);
+        window.__AI_UPSELL_BUNDLE_CLEARING__ = false;
+        window.__AI_UPSELL_SKIP_PRICE_PATCH__ = false;
+      }
     }
 
     function resolveProductId() {
@@ -1907,7 +2219,7 @@
           console.warn('[AI Upsell] Bundle item has no valid variant ID:', { productId: d.productId, handle: d.handle, fallbackVid: d.fallbackVid, resolvedVid: resolvedVids[i] });
           return null;
         }
-        return { id: Number(resolvedId), quantity: d.qty, properties: { _source: 'ai-bundle', Offer: offerProp } };
+        return { id: Number(resolvedId), quantity: d.qty, properties: { _source: 'ai-bundle', Offer: offerProp, _bundle_product_ids: resolvedVids.join(',') } };
       }).filter(Boolean);
       if (items.length === 0) {
         console.error('[AI Upsell] No valid bundle variants could be added to cart');
@@ -1924,8 +2236,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             items: items,
-            sections: 'cart-drawer,cart-icon-bubble',
-            sections_url: window.location.pathname || '/'
+            sections: 'cart-drawer,cart-icon-bubble'
           })
         });
         var addSections = null;
@@ -1942,8 +2253,7 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 items: [items[ii]],
-                sections: 'cart-drawer,cart-icon-bubble',
-                sections_url: window.location.pathname || '/'
+                sections: 'cart-drawer,cart-icon-bubble'
               })
             });
             if (itemResp.ok) {
@@ -2807,9 +3117,94 @@
     }
 
     function updateLineItemDiscountedPrices(cart) {
+      if (window.__AI_UPSELL_SKIP_PRICE_PATCH__) {
+        console.log('[AI Upsell] ⏭️ Skipping price patch - bundle clearing in progress');
+        return false;
+      }
       if (!cart || !Array.isArray(cart.items)) { console.log('[AI Upsell] ❌ updateLineItemDiscountedPrices: no cart or items'); return false; }
       suppressCartPatchObservers(400);
       console.log('[AI Upsell] 📊 updateLineItemDiscountedPrices called with', cart.items.length, 'items');
+      
+      // CRITICAL: For bundle discounts, validate that ALL bundle items are still in cart FIRST
+      // Check each bundle item to see if its complete bundle is still present
+      var bundleItems = cart.items.filter(function(item) {
+        return item.properties && ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) || (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+      });
+      
+      // For each bundle item, validate its complete bundle is present
+      var incompleteBundleIndices = [];
+      var clearedAnyBundleProperties = false;
+      bundleItems.forEach(function(bundleItem) {
+        var bundleProductIds = bundleItem.properties && bundleItem.properties._bundle_product_ids;
+        if (bundleProductIds) {
+          var expectedIds = bundleProductIds.split(',');
+          var cartProductIds = cart.items.map(function(cartItem) { return String(cartItem.variant_id); });
+          var allPresent = expectedIds.every(function(expectedId) {
+            return cartProductIds.indexOf(expectedId) !== -1;
+          });
+          if (!allPresent) {
+            console.log('[AI Upsell] 🔴 Bundle is incomplete! Expected:', expectedIds, 'Found:', cartProductIds);
+            incompleteBundleIndices.push(cart.items.indexOf(bundleItem));
+            clearedAnyBundleProperties = true;
+            // Mark this bundle as invalid by clearing its Offer property
+            bundleItem.properties.Offer = '';
+            bundleItem.properties.offer = '';
+            
+            // CRITICAL: Remove existing price patches from the DOM for this item
+            var container = findCartLineContainer(document, bundleItem, cart.items.indexOf(bundleItem));
+            if (container) {
+              var discountedNode = container.querySelector('[data-ai-discounted-node="true"]');
+              if (discountedNode) {
+                console.log('[AI Upsell] Removing discounted price patch for incomplete bundle item');
+                discountedNode.remove();
+              }
+              
+              // CRITICAL: Remove all offer-related text from the DOM to prevent patchVisibleCartPricesFromDOM from finding it
+              var allElements = container.querySelectorAll('*');
+              allElements.forEach(function(el) {
+                if (el.textContent) {
+                  var text = el.textContent.trim();
+                  if ((text.indexOf('Bundle') !== -1 || text.indexOf('Offer') !== -1) && text.length < 100) {
+                    el.style.display = 'none';
+                  }
+                }
+              });
+            }
+          }
+        } else {
+          // If no _bundle_product_ids property, check if Offer property exists
+          // If it does, it means the bundle was cleared on the backend
+          if (bundleItem.properties.Offer || bundleItem.properties.offer) {
+            console.log('[AI Upsell] 🔴 Bundle item has Offer but no _bundle_product_ids - clearing');
+            incompleteBundleIndices.push(cart.items.indexOf(bundleItem));
+            clearedAnyBundleProperties = true;
+            bundleItem.properties.Offer = '';
+            bundleItem.properties.offer = '';
+            
+            // CRITICAL: Remove existing price patches from the DOM
+            var container = findCartLineContainer(document, bundleItem, cart.items.indexOf(bundleItem));
+            if (container) {
+              var discountedNode = container.querySelector('[data-ai-discounted-node="true"]');
+              if (discountedNode) {
+                console.log('[AI Upsell] Removing discounted price patch for cleared bundle item');
+                discountedNode.remove();
+              }
+              
+              // CRITICAL: Remove all offer-related text from the DOM
+              var allElements = container.querySelectorAll('*');
+              allElements.forEach(function(el) {
+                if (el.textContent) {
+                  var text = el.textContent.trim();
+                  if ((text.indexOf('Bundle') !== -1 || text.indexOf('Offer') !== -1) && text.length < 100) {
+                    el.style.display = 'none';
+                  }
+                }
+              });
+            }
+          }
+        }
+      });
+      
       var anyPatched = false;
       cart.items.forEach(function (item, index) {
         // Read discount % from the Offer line-item property
@@ -2821,7 +3216,29 @@
           if (discountMatch) discountPct = parseFloat(discountMatch[1]);
         }
         console.log('[AI Upsell] Item', index, '- Discount %:', discountPct);
-        if (discountPct <= 0) { console.log('[AI Upsell] Item', index, '- No discount, skipping'); return; }
+        if (discountPct <= 0) { 
+          console.log('[AI Upsell] Item', index, '- No discount, skipping'); 
+          return; 
+        }
+        
+        // CRITICAL: If this is a bundle item but the bundle is incomplete, skip patching
+        var isBundleItem = item.properties && ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) || (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+        if (isBundleItem) {
+          var bundleProductIds = item.properties._bundle_product_ids;
+          if (!bundleProductIds) {
+            console.log('[AI Upsell] Item', index, '- Bundle item with no _bundle_product_ids, skipping patch');
+            return;
+          }
+          var expectedIds = bundleProductIds.split(',');
+          var cartProductIds = cart.items.map(function(cartItem) { return String(cartItem.variant_id); });
+          var allPresent = expectedIds.every(function(expectedId) {
+            return cartProductIds.indexOf(expectedId) !== -1;
+          });
+          if (!allPresent) {
+            console.log('[AI Upsell] Item', index, '- Bundle is incomplete, skipping patch');
+            return;
+          }
+        }
 
         // Always treat the current selling price as the base for discounts (ignore compare_at_price).
         var storedOriginalCents = getStoredOriginalPriceCents(item.properties);
@@ -2892,8 +3309,22 @@
       hideAiDiscountApplicationNodes(document);
 
       // If we didn't patch via the API-derived cart data, fall back to detecting
-      // discounts directly in the DOM.
-      if (!anyPatched) anyPatched = patchVisibleCartPricesFromDOM(document);
+      // discounts directly in the DOM - BUT ONLY if we didn't clear any bundle properties
+      var hasBundleItems = cart.items.some(function(item) {
+        return item.properties && 
+               ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+      });
+      
+      // CRITICAL: If we cleared any bundle properties, don't call patchVisibleCartPricesFromDOM
+      // because the DOM still has the old offer text from the server-rendered HTML
+      if (!anyPatched && !hasBundleItems && !clearedAnyBundleProperties) {
+        anyPatched = patchVisibleCartPricesFromDOM(document);
+      } else if (clearedAnyBundleProperties) {
+        console.log('[AI Upsell] 🛑 Skipping patchVisibleCartPricesFromDOM - cleared bundle properties, DOM still has old offer text');
+        clearAiDiscountCodeFromCart().catch(function () {});
+        maybeClearInvalidBundleProperties(null).catch(function () {});
+      }
 
       // If we applied any patches and we have cart data, start a persistent watcher
       // to reapply them in case the theme re-renders the cart layout later.
@@ -2920,6 +3351,23 @@
             if (m) discountPct = parseFloat(m[1]);
           }
           if (discountPct <= 0) return;
+
+          // CRITICAL: Check if this is a bundle item and if the bundle is complete
+          var isBundleItem = item.properties && ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) || (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+          if (isBundleItem) {
+            var bundleProductIds = item.properties._bundle_product_ids;
+            if (bundleProductIds) {
+              var expectedIds = bundleProductIds.split(',');
+              var cartProductIds = cart.items.map(function(cartItem) { return String(cartItem.variant_id); });
+              var allPresent = expectedIds.every(function(expectedId) {
+                return cartProductIds.indexOf(expectedId) !== -1;
+              });
+              if (!allPresent) {
+                console.log('[AI Upsell] 🛑 patchCartSectionHtml: Bundle is incomplete, skipping price patch for item', index);
+                return; // Skip patching incomplete bundles
+              }
+            }
+          }
 
           var storedOriginalCents3 = getStoredOriginalPriceCents(item.properties);
           var unitCents = storedOriginalCents3 || item.original_price || item.price;
@@ -3029,21 +3477,110 @@
       var checksWithoutPatches = 0;
       _patchWatcherConsecutiveSuccess = 0;
       _patchPersistentTimer = setInterval(function () {
-        if (_patchWatcherInFlight) return; // Prevent re-entry
+        // Skip if another patch is in-flight, bundle clearing is in progress, or patches are suppressed.
+        if (_patchWatcherInFlight || window.__AI_UPSELL_SKIP_PRICE_PATCH__ || window.__AI_UPSELL_BUNDLE_CLEARING__) return;
+        
+        // CRITICAL: Check if bundle is incomplete - if so, stop the watcher immediately
+        var bundleItems = document.querySelectorAll('[data-ai-discounted-node="true"]');
+        if (bundleItems.length > 0) {
+          // Check if any of these items are part of an incomplete bundle
+          var hasBundleInCart = cart && cart.items && cart.items.some(function(item) {
+            return item.properties && 
+                   ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                    (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+          });
+          
+          if (hasBundleInCart) {
+            // Fetch fresh cart to check if bundle is still complete
+            fetch(SHOPIFY_ROOT + 'cart.js')
+              .then(function(r) { return r.json(); })
+              .then(function(freshCart) {
+                var bundleItems = freshCart.items.filter(function(item) {
+                  return item.properties && 
+                         ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                          (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+                });
+                
+                // If bundle is incomplete, stop the watcher
+                if (bundleItems.length > 0) {
+                  bundleItems.forEach(function(bundleItem) {
+                    var bundleProductIds = bundleItem.properties && bundleItem.properties._bundle_product_ids;
+                    if (bundleProductIds) {
+                      var expectedIds = bundleProductIds.split(',');
+                      var cartProductIds = freshCart.items.map(function(cartItem) { return String(cartItem.variant_id); });
+                      var allPresent = expectedIds.every(function(expectedId) {
+                        return cartProductIds.indexOf(expectedId) !== -1;
+                      });
+                      
+                      if (!allPresent) {
+                        console.log('[AI Upsell] 🛑 Bundle is incomplete - stopping persistent watcher to prevent re-patching');
+                        clearInterval(_patchPersistentTimer);
+                        _patchPersistentTimer = null;
+                        return;
+                      }
+                    }
+                  });
+                }
+              })
+              .catch(function() {});
+          }
+        }
+        
         var hasAiPatch = document.querySelector('[data-ai-discounted-node="true"]');
         if (!hasAiPatch) {
           checksWithoutPatches++;
           _patchWatcherConsecutiveSuccess = 0;
           if (checksWithoutPatches < 5) {
             console.log('[AI Upsell] ⚠️  AI patch missing! Reapplying... (check', checksWithoutPatches, ')');
-            if (cart) {
-              _patchWatcherInFlight = true;
-              updateLineItemDiscountedPrices(cart);
-              setTimeout(function () { _patchWatcherInFlight = false; }, 600);
-            }
+            _patchWatcherInFlight = true;
+            // Always fetch fresh cart data so the bundle-completeness check reflects the
+            // real cart state. Using the stale closure cart would re-apply discounts to
+            // the remaining items after one bundle product is deleted from the drawer.
+            fetch(SHOPIFY_ROOT + 'cart.js')
+              .then(function(r) { return r.json(); })
+              .then(function(freshCart) {
+                if (!window.__AI_UPSELL_SKIP_PRICE_PATCH__ && !window.__AI_UPSELL_BUNDLE_CLEARING__) {
+                  var patched = updateLineItemDiscountedPrices(freshCart);
+                  
+                  // CRITICAL: Check if bundle is incomplete before calling patchVisibleCartPricesFromDOM
+                  if (!patched) {
+                    var hasIncompleteBundles = false;
+                    var bundleItems = freshCart.items.filter(function(item) {
+                      return item.properties && 
+                             ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                              (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0));
+                    });
+                    
+                    bundleItems.forEach(function(bundleItem) {
+                      var bundleProductIds = bundleItem.properties && bundleItem.properties._bundle_product_ids;
+                      if (bundleProductIds) {
+                        var expectedIds = bundleProductIds.split(',');
+                        var cartProductIds = freshCart.items.map(function(cartItem) { return String(cartItem.variant_id); });
+                        var allPresent = expectedIds.every(function(expectedId) {
+                          return cartProductIds.indexOf(expectedId) !== -1;
+                        });
+                        if (!allPresent) {
+                          hasIncompleteBundles = true;
+                        }
+                      }
+                    });
+                    
+                    if (!hasIncompleteBundles) {
+                      patchVisibleCartPricesFromDOM(document);
+                    } else {
+                      console.log('[AI Upsell] 🛑 Incomplete bundles detected - skipping patchVisibleCartPricesFromDOM');
+                    }
+                  }
+                }
+              })
+              .catch(function() {})
+              .finally(function() {
+                setTimeout(function() { _patchWatcherInFlight = false; }, 600);
+              });
           } else {
             console.log('[AI Upsell] ⏰ Stopping persistent watcher - no patches detected after 5 checks');
             clearInterval(_patchPersistentTimer);
+            _patchPersistentTimer = null;
           }
         } else {
           checksWithoutPatches = 0;
@@ -3051,6 +3588,7 @@
           if (_patchWatcherConsecutiveSuccess >= 2) {
             console.log('[AI Upsell] ⏰ Patch confirmed stable - stopping persistent watcher');
             clearInterval(_patchPersistentTimer);
+            _patchPersistentTimer = null;
           }
         }
       }, 500);
@@ -3372,7 +3910,6 @@
               if (sellingPlanId && offerType === 'subscription_upgrade' && !sourceVariantId) cartPayload.selling_plan = sellingPlanId;
               // Request inline sections so Shopify returns fresh cart-drawer HTML atomically
               cartPayload.sections = 'cart-drawer,cart-icon-bubble';
-              cartPayload.sections_url = window.location.pathname || '/';
               // Serialize against any concurrent cart add (prevents Shopify cart conflicts)
               var addData = await (_aiCartAddQueue = _aiCartAddQueue.catch(function() {}).then(function() {
                 return addToCartAndRefresh(variantId, quantity, cartPayload, discountCode);
@@ -3783,7 +4320,7 @@
         if (!control) return;
         var row = findCartRowFromControl(control);
         if (!row || !rowLooksLikeAiOffer(row)) {
-          // Non-AI row removed by theme — check after theme finishes its AJAX whether cart is now empty
+          // Non-AI row removed by theme — check after theme finishes its AJAX
           setTimeout(function () {
             fetch(SHOPIFY_ROOT + 'cart.js').then(function (r) { return r.json(); }).then(function (cart) {
               if (cart && cart.item_count === 0) {
@@ -3797,8 +4334,10 @@
                   if (emptyEl) emptyEl.style.display = '';
                 }
               }
+              // If a bundle item was removed, clear the bundle discount from remaining items.
+              maybeClearInvalidBundleProperties(cart).catch(function () {});
             }).catch(function () {});
-          }, 400);
+          }, 500);
           return;
         }
         event.preventDefault();
@@ -3820,6 +4359,21 @@
           }).then(function(r) { return r.json(); }).then(function(updatedCart) {
             var inlineSections = updatedCart.sections || null;
             if (inlineSections) delete updatedCart.sections;
+            if (cartHasIncompleteBundle(updatedCart)) {
+              window.__AI_UPSELL_SKIP_PRICE_PATCH__ = true;
+              maybeClearInvalidBundleProperties(updatedCart, true).then(function() {
+                return fetch(SHOPIFY_ROOT + 'cart.js?t=' + Date.now());
+              }).then(function(res) {
+                return res && res.ok ? res.json() : updatedCart;
+              }).then(function(freshCart) {
+                window.__AI_UPSELL_SKIP_PRICE_PATCH__ = false;
+                refreshDrawerAfterAiCartChange(freshCart, null);
+              }).catch(function() {
+                window.__AI_UPSELL_SKIP_PRICE_PATCH__ = false;
+                refreshDrawerAfterAiCartChange(updatedCart, null);
+              });
+              return;
+            }
             refreshDrawerAfterAiCartChange(updatedCart, inlineSections);
           }).catch(function() {});
         }).catch(function (err) {
