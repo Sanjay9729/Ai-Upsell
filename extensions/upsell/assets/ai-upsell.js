@@ -153,7 +153,26 @@
       if (cartDrawerToggle) {
         setTimeout(function () { safeLoadDrawerUpsells(); }, 120);
       }
-      if (!code) return;
+      if (!code) {
+        if (window.__AI_UPSELL_FORCE_CLEAR_DISCOUNT__) {
+          var _checkoutEl = e.target.closest('a[href*="/checkout"], button[name="checkout"], input[name="checkout"]');
+          if (!_checkoutEl) {
+            var _submitEl = e.target.closest('button[type="submit"], input[type="submit"], button:not([type])');
+            if (_submitEl) {
+              var _parentForm = _submitEl.closest('form');
+              if (_parentForm && (_parentForm.action || '').indexOf('/checkout') !== -1) _checkoutEl = _submitEl;
+            }
+          }
+          if (_checkoutEl) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+            window.location.href = (SHOPIFY_ROOT || '/') + 'checkout?clear_discount=1';
+            return;
+          }
+        }
+        return;
+      }
       // Broad checkout button detection: named buttons, links, and submit buttons inside checkout forms
       var _checkoutEl = e.target.closest('a[href*="/checkout"], button[name="checkout"], input[name="checkout"]');
       if (!_checkoutEl) {
@@ -193,7 +212,14 @@
       var action = form.action || form.getAttribute('action') || '';
       if (action.indexOf('/checkout') === -1) return;
       var code = window.__AI_UPSELL_DISCOUNT_CODE__;
-      if (!code) return;
+      if (!code) {
+        if (window.__AI_UPSELL_FORCE_CLEAR_DISCOUNT__) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.location.href = (SHOPIFY_ROOT || '/') + 'checkout?clear_discount=1';
+        }
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       if (typeof redirectToCheckoutWithDiscount === 'function') {
@@ -1612,15 +1638,36 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ discount: '', attributes: { ai_discount_code: '' } })
         });
-        console.log('[AI Upsell] ✅ AI discount code cleared from cart');
+        console.log('[AI Upsell] ✅ AI discount code cleared from cart update');
       } catch (_) {}
+
+      // Force clear the Shopify discount session cookie to prevent it from persisting to checkout
+      try {
+        await fetch(SHOPIFY_ROOT + 'discount/CLEAR', {
+          method: 'GET',
+          credentials: 'same-origin',
+          redirect: 'follow'
+        });
+        console.log('[AI Upsell] ✅ AI discount session cookie cleared');
+      } catch (_) {}
+
+      // Aggressively clear the checkout session discount directly
+      try {
+        await fetch(SHOPIFY_ROOT + 'checkout?clear_discount=1', {
+          method: 'GET',
+          credentials: 'same-origin'
+        });
+        console.log('[AI Upsell] ✅ AI discount cleared from checkout session');
+      } catch (_) {}
+
       window.__AI_UPSELL_DISCOUNT_CODE__ = null;
+      window.__AI_UPSELL_FORCE_CLEAR_DISCOUNT__ = true;
       try { sessionStorage.removeItem('__ai_volume_target__'); } catch (_) {}
       try {
         document.querySelectorAll('a[href*="/discount/"]').forEach(function(link) {
           var h = link.getAttribute('href') || '';
           if (/\/discount\/(AIUS-|UPSELL-)/i.test(h)) {
-            link.setAttribute('href', (SHOPIFY_ROOT || '/') + 'checkout');
+            link.setAttribute('href', (SHOPIFY_ROOT || '/') + 'checkout?clear_discount=1');
           }
         });
       } catch (_) {}
@@ -1675,37 +1722,30 @@
           console.log('[AI Upsell] ⏹️ Stopped persistent patch watcher before bundle clearing');
         }
 
-        // Build all API calls in parallel using Promise.all() instead of sequential awaits
-        var apiCalls = itemsToClean.map(function(item) {
+        // Execute API calls sequentially to prevent Shopify cart state race conditions
+        for (var i = 0; i < itemsToClean.length; i++) {
+          var item = itemsToClean[i];
           var newProps = Object.assign({}, item.properties);
           console.log('[AI Upsell] 🧹 Clearing properties for item:', item.title, 'key:', item.key, 'old Offer:', newProps.Offer);
           newProps.Offer = '';
           newProps.offer = '';
 
-          return fetch(SHOPIFY_ROOT + 'cart/change.js', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: item.key,
-              quantity: item.quantity,
-              properties: newProps
-            })
-          }).then(function(res) {
+          try {
+            var res = await fetch(SHOPIFY_ROOT + 'cart/change.js', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: item.key,
+                quantity: item.quantity,
+                properties: newProps
+              })
+            });
             console.log('[AI Upsell] ✅ API call completed for item', item.key, 'status:', res.status);
-            return res;
-          }).catch(function(err) {
+          } catch (err) {
             console.error('[AI Upsell] ❌ Failed to clear bundle properties for item', item.key, ':', err);
-            return null;
-          });
-        });
-
-        // Wait for ALL API calls to complete before refreshing drawer
-        try {
-          await Promise.all(apiCalls);
-          console.log('[AI Upsell] ✅ All bundle property-clearing API calls completed');
-        } catch (err) {
-          console.error('[AI Upsell] ❌ Error waiting for bundle property-clearing API calls:', err);
+          }
         }
+        console.log('[AI Upsell] ✅ All bundle property-clearing API calls completed sequentially');
 
         // Bundle is broken — remove the Shopify discount code from the cart so the
         // remaining items are no longer discounted at checkout.
