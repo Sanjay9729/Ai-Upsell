@@ -846,13 +846,14 @@
       updateCartCountBubble(cart && cart.item_count);
       var sections = inlineSections || null;
       if (!sections) {
-        var reqSections = isCart ? 'cart-drawer,cart-icon-bubble,main-cart-items' : 'cart-drawer,cart-icon-bubble';
+        // On the cart page, skip cart-drawer — updating it triggers the theme to open the drawer.
+        var reqSections = isCart ? 'cart-icon-bubble,main-cart-items' : 'cart-drawer,cart-icon-bubble';
         // Cache-bust so Shopify always returns fresh section HTML after property changes.
         var sectionsRes = await fetch(SHOPIFY_ROOT + '?sections=' + reqSections + '&_t=' + Date.now());
         if (!sectionsRes.ok) return;
         sections = await sectionsRes.json();
       }
-      if (sections['cart-drawer']) {
+      if (!isCart && sections['cart-drawer']) {
         // CRITICAL: Check if bundle is incomplete BEFORE updating drawer
         var hasBundleItems = cart && cart.items && cart.items.some(function(item) {
           return item.properties && 
@@ -955,7 +956,8 @@
       var item = findAiCartItemForRow(cart, row, control);
       if (!item || !cartItemHasAiOffer(item)) return false;
       var isCart = isCartPage();
-      var reqSections = isCart ? 'cart-drawer,cart-icon-bubble,main-cart-items' : 'cart-drawer,cart-icon-bubble';
+      // On the cart page, skip cart-drawer — updating it triggers the theme to open the drawer.
+      var reqSections = isCart ? 'cart-icon-bubble,main-cart-items' : 'cart-drawer,cart-icon-bubble';
       var sectionsPayload = { sections: reqSections };
       var changeRes = await fetch(SHOPIFY_ROOT + 'cart/change.js', {
         method: 'POST',
@@ -2312,68 +2314,85 @@
           updateCartCountBubble(cart.item_count);
           // Use the inline sections returned by cart/add.js — these are atomically fresh
           // (same server response as the add) so no race condition with cached section renders.
-          var sectionsPromise = addSections
-            ? Promise.resolve(addSections)
-            : fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble&_t=' + Date.now()).then(function(r) { return r.json(); });
+          var _bundleIsCartPage = window.location.pathname === '/cart' || window.location.pathname.startsWith('/cart/');
+          // On the cart page always fetch fresh sections — addSections only has cart-drawer/cart-icon-bubble,
+          // not main-cart-items, so it cannot be reused to update the cart page UI.
+          var sectionsPromise = _bundleIsCartPage
+            ? fetch(SHOPIFY_ROOT + '?sections=cart-icon-bubble,main-cart-items&_t=' + Date.now()).then(function(r) { return r.json(); })
+            : (addSections
+                ? Promise.resolve(addSections)
+                : fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble&_t=' + Date.now()).then(function(r) { return r.json(); }));
           sectionsPromise.then(function(sections) {
-            if (sections['cart-drawer']) safelyUpdateDrawerFromSection(sections['cart-drawer'], cart, { allowFullReplace: true });
             if (sections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = sections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
-            // Open the drawer visually WITHOUT calling CartDrawer.open() / renderContents().
-            // Clicking the cart icon triggers renderContents(), which fires a new sections
-            // fetch that can return a stale/empty-cart cached response and overwrite the
-            // correct content we just inserted. Instead we set the CSS state directly.
-            setTimeout(function() {
-              var drawer = document.querySelector('cart-drawer');
-              if (drawer) {
-                if (drawer.classList) { drawer.classList.add('active', 'animate'); drawer.classList.remove('is-empty'); }
-                drawer.setAttribute('aria-hidden', 'false');
-                drawer.removeAttribute('inert');
-                document.body.classList.add('overflow-hidden');
-                // Hide empty-state elements and force the items area visible.
-                var emptyEls = drawer.querySelectorAll('.drawer__inner-empty, .cart__empty-text, [data-cart-empty], .cart-drawer__warnings');
-                Array.prototype.slice.call(emptyEls).forEach(function(el) { el.style.display = 'none'; });
-                // Remove is-empty from both cart-drawer and cart-drawer-items so Dawn's
-                // CSS no longer hides .js-contents or the items form inside.
-                var itemsEl = drawer.querySelector('cart-drawer-items');
-                if (itemsEl) {
-                  itemsEl.classList.remove('is-empty');
-                  // Make the items form/list visible in case it was hidden inline.
-                  var itemsForm = itemsEl.querySelector('form, .cart-items, ul.cart-items, [id$="-CartItems"]');
-                  if (itemsForm) itemsForm.style.display = '';
+            if (_bundleIsCartPage) {
+              if (sections['main-cart-items']) { var el3 = document.querySelector('cart-items'); if (el3) { var f3 = document.createElement('div'); f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart); var n3 = f3.querySelector('cart-items'); if (n3) el3.replaceWith(n3); } }
+              restoreCartFooterVisibility();
+              setTimeout(function() {
+                updateLineItemDiscountedPrices(cart);
+                restoreCartFooterVisibility();
+                placeInCartPage();
+                document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
+                setTimeout(function() { restoreCartFooterVisibility(); }, 400);
+              }, 100);
+            } else {
+              if (sections['cart-drawer']) safelyUpdateDrawerFromSection(sections['cart-drawer'], cart, { allowFullReplace: true });
+              // Open the drawer visually WITHOUT calling CartDrawer.open() / renderContents().
+              // Clicking the cart icon triggers renderContents(), which fires a new sections
+              // fetch that can return a stale/empty-cart cached response and overwrite the
+              // correct content we just inserted. Instead we set the CSS state directly.
+              setTimeout(function() {
+                var drawer = document.querySelector('cart-drawer');
+                if (drawer) {
+                  if (drawer.classList) { drawer.classList.add('active', 'animate'); drawer.classList.remove('is-empty'); }
+                  drawer.setAttribute('aria-hidden', 'false');
+                  drawer.removeAttribute('inert');
+                  document.body.classList.add('overflow-hidden');
+                  // Hide empty-state elements and force the items area visible.
+                  var emptyEls = drawer.querySelectorAll('.drawer__inner-empty, .cart__empty-text, [data-cart-empty], .cart-drawer__warnings');
+                  Array.prototype.slice.call(emptyEls).forEach(function(el) { el.style.display = 'none'; });
+                  // Remove is-empty from both cart-drawer and cart-drawer-items so Dawn's
+                  // CSS no longer hides .js-contents or the items form inside.
+                  var itemsEl = drawer.querySelector('cart-drawer-items');
+                  if (itemsEl) {
+                    itemsEl.classList.remove('is-empty');
+                    // Make the items form/list visible in case it was hidden inline.
+                    var itemsForm = itemsEl.querySelector('form, .cart-items, ul.cart-items, [id$="-CartItems"]');
+                    if (itemsForm) itemsForm.style.display = '';
+                  }
+                  var jsContents = drawer.querySelector('.js-contents');
+                  if (jsContents) jsContents.style.display = '';
+                  // Re-enable the checkout button — Dawn may have left it disabled
+                  // while the cart was in a "loading/updating" state that we bypassed.
+                  var checkoutBtns = drawer.querySelectorAll(
+                    'button[name="checkout"], button[type="submit"], ' +
+                    '.cart__checkout-button, a[href*="/checkout"], button.cart__checkout, ' +
+                    '[id*="CartDrawer-Checkout"], [id*="checkout-button"]'
+                  );
+                  Array.prototype.slice.call(checkoutBtns).forEach(function(btn) {
+                    btn.removeAttribute('disabled');
+                    btn.removeAttribute('aria-disabled');
+                    btn.classList.remove('loading', 'is-loading', 'btn--loading', 'cart__checkout-button--loading', 'button--loading');
+                    btn.style.pointerEvents = '';
+                    btn.style.opacity = '';
+                  });
+                  // Also clear any loading state on the footer/form.
+                  var drawerForm = drawer.querySelector('form#CartDrawer-Form, form[id*="CartDrawer"]');
+                  if (drawerForm) {
+                    drawerForm.classList.remove('loading', 'is-loading');
+                    drawerForm.removeAttribute('disabled');
+                  }
+                  var drawerFooter = drawer.querySelector('.cart-drawer__footer, .drawer__footer, [id*="CartDrawer-Footer"]');
+                  if (drawerFooter) drawerFooter.classList.remove('loading', 'is-loading', 'cart-drawer__footer--loading');
+                } else {
+                  var cartIcon = document.querySelector('#cart-icon-bubble, summary[aria-controls="cart-drawer"], button[aria-controls="cart-drawer"]');
+                  if (cartIcon) cartIcon.click();
                 }
-                var jsContents = drawer.querySelector('.js-contents');
-                if (jsContents) jsContents.style.display = '';
-                // Re-enable the checkout button — Dawn may have left it disabled
-                // while the cart was in a "loading/updating" state that we bypassed.
-                var checkoutBtns = drawer.querySelectorAll(
-                  'button[name="checkout"], button[type="submit"], ' +
-                  '.cart__checkout-button, a[href*="/checkout"], button.cart__checkout, ' +
-                  '[id*="CartDrawer-Checkout"], [id*="checkout-button"]'
-                );
-                Array.prototype.slice.call(checkoutBtns).forEach(function(btn) {
-                  btn.removeAttribute('disabled');
-                  btn.removeAttribute('aria-disabled');
-                  btn.classList.remove('loading', 'is-loading', 'btn--loading', 'cart__checkout-button--loading', 'button--loading');
-                  btn.style.pointerEvents = '';
-                  btn.style.opacity = '';
-                });
-                // Also clear any loading state on the footer/form.
-                var drawerForm = drawer.querySelector('form#CartDrawer-Form, form[id*="CartDrawer"]');
-                if (drawerForm) {
-                  drawerForm.classList.remove('loading', 'is-loading');
-                  drawerForm.removeAttribute('disabled');
-                }
-                var drawerFooter = drawer.querySelector('.cart-drawer__footer, .drawer__footer, [id*="CartDrawer-Footer"]');
-                if (drawerFooter) drawerFooter.classList.remove('loading', 'is-loading', 'cart-drawer__footer--loading');
-              } else {
-                var cartIcon = document.querySelector('#cart-icon-bubble, summary[aria-controls="cart-drawer"], button[aria-controls="cart-drawer"]');
-                if (cartIcon) cartIcon.click();
-              }
-              updateLineItemDiscountedPrices(cart);
-              startPersistentPatchWatcher(cart);
-              setTimeout(function() { updateLineItemDiscountedPrices(cart); restoreCartFooterVisibility(); }, 400);
-              setTimeout(function() { updateLineItemDiscountedPrices(cart); restoreCartFooterVisibility(); }, 800);
-            }, 100);
+                updateLineItemDiscountedPrices(cart);
+                startPersistentPatchWatcher(cart);
+                setTimeout(function() { updateLineItemDiscountedPrices(cart); restoreCartFooterVisibility(); }, 400);
+                setTimeout(function() { updateLineItemDiscountedPrices(cart); restoreCartFooterVisibility(); }, 800);
+              }, 100);
+            }
           });
         });
         if (discountPct > 0) {
@@ -3021,6 +3040,52 @@
       return rows[index] || null;
     }
 
+    function findAllCartLineContainers(root, item, index) {
+      if (!root || !root.querySelectorAll) { return []; }
+      var oneBased = index + 1;
+      var selectors = [
+        '[data-cart-item-key="' + item.key + '"]',
+        '[data-key="' + item.key + '"]',
+        '[data-line-item-key="' + item.key + '"]',
+        '#CartItem-' + oneBased,
+        '#CartDrawer-Item-' + oneBased,
+        '[data-index="' + oneBased + '"]'
+      ];
+      var foundContainers = [];
+      for (var i = 0; i < selectors.length; i++) {
+        var elements = root.querySelectorAll(selectors[i]);
+        if (elements.length > 0) {
+          for (var j = 0; j < elements.length; j++) {
+            if (foundContainers.indexOf(elements[j]) === -1) {
+              foundContainers.push(elements[j]);
+            }
+          }
+        }
+      }
+      if (foundContainers.length > 0) {
+        return foundContainers;
+      }
+      
+      var rows = root.querySelectorAll(
+        'cart-drawer-items .cart-item, cart-items .cart-item, [id^="CartItem-"], ' +
+        '.drawer-cart-item, .cart-drawer-item, [data-cart-item], [data-line-item]'
+      );
+      var cartDrawerItems = [];
+      var mainCartItems = [];
+      for (var k = 0; k < rows.length; k++) {
+        if (rows[k].closest('cart-drawer, #cart-drawer, .drawer, #cart-drawer-items, .cart-drawer')) {
+          cartDrawerItems.push(rows[k]);
+        } else {
+          mainCartItems.push(rows[k]);
+        }
+      }
+      
+      var fallbacks = [];
+      if (cartDrawerItems[index]) fallbacks.push(cartDrawerItems[index]);
+      if (mainCartItems[index] && fallbacks.indexOf(mainCartItems[index]) === -1) fallbacks.push(mainCartItems[index]);
+      return fallbacks;
+    }
+
     function patchLineItemPriceDisplay(container, discountedCents, cart, docLike, originalLineCents, originalUnitCents) {
       if (!container) { console.log('[AI Upsell] patchLineItemPriceDisplay: no container'); return false; }
       var wrappers = getCartLineWrappers(container);
@@ -3191,8 +3256,8 @@
             bundleItem.properties.offer = '';
             
             // CRITICAL: Remove existing price patches from the DOM for this item
-            var container = findCartLineContainer(document, bundleItem, cart.items.indexOf(bundleItem));
-            if (container) {
+            var containers = findAllCartLineContainers(document, bundleItem, cart.items.indexOf(bundleItem));
+            containers.forEach(function(container) {
               var discountedNode = container.querySelector('[data-ai-discounted-node="true"]');
               if (discountedNode) {
                 console.log('[AI Upsell] Removing discounted price patch for incomplete bundle item');
@@ -3209,7 +3274,7 @@
                   }
                 }
               });
-            }
+            });
           }
         } else {
           // If no _bundle_product_ids property, check if Offer property exists
@@ -3222,8 +3287,8 @@
             bundleItem.properties.offer = '';
             
             // CRITICAL: Remove existing price patches from the DOM
-            var container = findCartLineContainer(document, bundleItem, cart.items.indexOf(bundleItem));
-            if (container) {
+            var containers = findAllCartLineContainers(document, bundleItem, cart.items.indexOf(bundleItem));
+            containers.forEach(function(container) {
               var discountedNode = container.querySelector('[data-ai-discounted-node="true"]');
               if (discountedNode) {
                 console.log('[AI Upsell] Removing discounted price patch for cleared bundle item');
@@ -3240,7 +3305,7 @@
                   }
                 }
               });
-            }
+            });
           }
         }
       });
@@ -3290,20 +3355,22 @@
         var originalUnitCents = baseUnitCents;
         var discountedLineCents = Math.round(baseUnitCents * (1 - discountPct / 100)) * quantity;
         console.log('[AI Upsell] Item', index, '- storedOriginal:', storedOriginalCents, 'unitCents:', unitCents, 'compareAt:', compareAtCents, 'base:', baseUnitCents, 'qty:', quantity, 'discountedLine:', discountedLineCents);
-        var container = findCartLineContainer(document, item, index);
-        console.log('[AI Upsell] Item', index, '- container found:', !!container);
-        if (container) console.log('[AI Upsell] Item', index, '- container HTML:', container.outerHTML.substring(0, 200));
-        if (patchLineItemPriceDisplay(container, discountedLineCents, cart, document, originalLineCents, originalUnitCents)) { console.log('[AI Upsell] Item', index, '- ✅ patched'); anyPatched = true; } else { console.log('[AI Upsell] Item', index, '- ❌ patch failed'); }
-        var detailCandidates = [
-          item.original_price,
-          item.price,
-          item.final_price,
-          quantity > 0 ? Math.round((item.original_line_price || 0) / quantity) : 0,
-          quantity > 0 ? Math.round((item.final_line_price || 0) / quantity) : 0
-        ].filter(function (value) { return isFinite(value) && value > 0 && value !== baseUnitCents; });
-        if (hideDetailUnitPriceNodes(container, detailCandidates)) anyPatched = true;
-        if (hideDuplicateOfferNodes(container)) anyPatched = true;
-        if (hideInternalOfferNodes(container || document)) anyPatched = true;
+        var containers = findAllCartLineContainers(document, item, index);
+        console.log('[AI Upsell] Item', index, '- containers found:', containers.length);
+        containers.forEach(function(container) {
+          if (container) console.log('[AI Upsell] Item', index, '- container HTML:', container.outerHTML.substring(0, 200));
+          if (patchLineItemPriceDisplay(container, discountedLineCents, cart, document, originalLineCents, originalUnitCents)) { console.log('[AI Upsell] Item', index, '- ✅ patched'); anyPatched = true; } else { console.log('[AI Upsell] Item', index, '- ❌ patch failed'); }
+          var detailCandidates = [
+            item.original_price,
+            item.price,
+            item.final_price,
+            quantity > 0 ? Math.round((item.original_line_price || 0) / quantity) : 0,
+            quantity > 0 ? Math.round((item.final_line_price || 0) / quantity) : 0
+          ].filter(function (value) { return isFinite(value) && value > 0 && value !== baseUnitCents; });
+          if (hideDetailUnitPriceNodes(container, detailCandidates)) anyPatched = true;
+          if (hideDuplicateOfferNodes(container)) anyPatched = true;
+          if (hideInternalOfferNodes(container || document)) anyPatched = true;
+        });
       });
 
       // ── Patch subtotal / estimated total ───────────────────────────────────
@@ -3417,18 +3484,20 @@
           var originalLineCents = baseCents * qty;
           var originalUnitCents = baseCents;
           var discLineCents = Math.round(baseCents * (1 - discountPct / 100)) * qty;
-          var itemEl = findCartLineContainer(doc, item, index);
-          if (patchLineItemPriceDisplay(itemEl, discLineCents, cart, doc, originalLineCents, originalUnitCents)) modified = true;
-          var detailCandidates = [
-            item.original_price,
-            item.price,
-            item.final_price,
-            qty > 0 ? Math.round((item.original_line_price || 0) / qty) : 0,
-            qty > 0 ? Math.round((item.final_line_price || 0) / qty) : 0
-          ].filter(function (value) { return isFinite(value) && value > 0 && value !== baseCents; });
-          if (hideDetailUnitPriceNodes(itemEl, detailCandidates)) modified = true;
-          if (hideDuplicateOfferNodes(itemEl)) modified = true;
-          if (hideInternalOfferNodes(itemEl || doc)) modified = true;
+          var containers = findAllCartLineContainers(doc, item, index);
+          containers.forEach(function(itemEl) {
+            if (patchLineItemPriceDisplay(itemEl, discLineCents, cart, doc, originalLineCents, originalUnitCents)) modified = true;
+            var detailCandidates = [
+              item.original_price,
+              item.price,
+              item.final_price,
+              qty > 0 ? Math.round((item.original_line_price || 0) / qty) : 0,
+              qty > 0 ? Math.round((item.final_line_price || 0) / qty) : 0
+            ].filter(function (value) { return isFinite(value) && value > 0 && value !== baseCents; });
+            if (hideDetailUnitPriceNodes(itemEl, detailCandidates)) modified = true;
+            if (hideDuplicateOfferNodes(itemEl)) modified = true;
+            if (hideInternalOfferNodes(itemEl || doc)) modified = true;
+          });
         });
 
         if (!modified) return sectionHtml;
