@@ -16,10 +16,54 @@ function parsePercentFromAttribute(attr, upperAttr) {
   return 0;
 }
 
+function getOfferText(line) {
+  return String(line?.offer?.value || line?.offerUpper?.value || "");
+}
+
+function isBundleOffer(line) {
+  return /^bundle\b/i.test(getOfferText(line).trim());
+}
+
+function normalizeId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.includes("/") ? raw.split("/").pop() : raw;
+}
+
+function parseBundleVariantIds(line) {
+  const value = line?.bundleProductIds?.value;
+  if (!value) return [];
+  return String(value)
+    .split(",")
+    .map(normalizeId)
+    .filter(Boolean);
+}
+
+function getLineVariantId(line) {
+  return normalizeId(line?.merchandise?.id);
+}
+
+function getCartVariantIds(cart) {
+  const ids = new Set();
+  for (const line of cart?.lines || []) {
+    const id = getLineVariantId(line);
+    if (id && (line?.quantity || 0) > 0) ids.add(id);
+  }
+  return ids;
+}
+
+function isBundleComplete(line, cartVariantIds) {
+  if (!isBundleOffer(line)) return true;
+  const expectedIds = parseBundleVariantIds(line);
+  if (!expectedIds.length) return false;
+  return expectedIds.every((id) => cartVariantIds.has(id));
+}
+
 export const run = shopifyFunction(({ input }) => {
   const cart = input.cart;
   const goal = getGoal(cart);
   const totalQty = cart.lines.reduce((sum, line) => sum + (line?.quantity || 0), 0);
+  const cartVariantIds = getCartVariantIds(cart);
   const discounts = [];
 
   if (BUY2_GOALS.has(goal) && totalQty < 2) {
@@ -30,6 +74,7 @@ export const run = shopifyFunction(({ input }) => {
     // Line attributes now fetched one-by-one via attribute(key: "offer")
     const pct = parsePercentFromAttribute(line.offer, line.offerUpper);
     if (!pct) continue;
+    if (!isBundleComplete(line, cartVariantIds)) continue;
 
     let pctToApply = pct;
     if (BUY2_GOALS.has(goal)) {

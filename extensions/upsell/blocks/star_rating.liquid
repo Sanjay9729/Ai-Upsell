@@ -4,7 +4,7 @@
 </span>
 {% if avg_rating >= 4 %}
   <br>
-  <img src="{{ "thumbs-up.png" | asset_img_url: '15x' }}" height="15" width="15" loading="lazy">
+  <img src="{{ "thumbs-up.png" | asset_url }}" height="15" width="15" loading="lazy">
   {{ 'ratings.home.recommendationText' | t }}
 {% endif %}
 

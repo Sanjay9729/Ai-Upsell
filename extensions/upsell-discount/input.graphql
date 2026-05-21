@@ -15,6 +15,10 @@ query Input {
         key
         value
       }
+      bundleProductIds: attribute(key: "_bundle_product_ids") {
+        key
+        value
+      }
       cost {
         amountPerQuantity {
           amount

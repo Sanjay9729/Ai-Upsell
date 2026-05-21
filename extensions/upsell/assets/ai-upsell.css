@@ -222,6 +222,15 @@
 .ai-multi-bundle-btn:hover { background: #15803d; }
 .ai-multi-bundle-btn:disabled { opacity: 0.7; cursor: not-allowed; }
 
+.ai-cart-fallback-items { display: block; padding: 16px 0 0; border-top: 1px solid #e5e5e5; }
+.ai-cart-fallback-row { position: relative; display: grid; grid-template-columns: 64px minmax(0, 1fr) 24px; gap: 16px; align-items: start; min-height: 96px; padding: 14px 24px 14px 0; border-bottom: 1px solid #e5e5e5; }
+.ai-cart-fallback-media img { width: 64px; height: 64px; object-fit: cover; display: block; background: #f6f6f6; }
+.ai-cart-fallback-details { min-width: 0; padding-top: 2px; }
+.ai-cart-fallback-title { font-size: 13px; font-weight: 700; color: #111; line-height: 1.35; margin-bottom: 5px; overflow-wrap: anywhere; }
+.ai-cart-fallback-meta, .ai-cart-fallback-qty { font-size: 12px; color: #5f5f5f; line-height: 1.45; margin-top: 1px; }
+.ai-cart-fallback-remove { align-self: start; width: 24px; height: 24px; border: 0; background: transparent; color: #333; font-size: 18px; line-height: 1; padding: 0; cursor: pointer; text-decoration: none; }
+.ai-cart-fallback-remove:hover { color: #000; }
+
 .ai-upsell-reason {
   font-size: var(--ai-reason-size, 13px);
   color: var(--ai-reason-color, #666);
@@ -539,8 +548,16 @@ cart-drawer.ai-has-upsell .drawer__footer > * {
 }
 .ai-dc-tiers {
   font-size: 10px;
-  color: #6b7280;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-weight: 600;
   line-height: 1.3;
+  margin-top: auto;
+  margin-bottom: 5px;
+  text-align: center;
 }
 .ai-drawer-add-btn {
   width: 100%;
@@ -561,4 +578,31 @@ cart-drawer.ai-has-upsell .drawer__footer > * {
 .ai-drawer-add-btn:disabled {
   background: #9ca3af;
   cursor: not-allowed;
+}
+
+/* ── Skeleton Loaders ─────────────────────────────── */
+.ai-skeleton-header { width: 160px; height: 24px; background: #f0f0f0; border-radius: 4px; margin: 0 auto 24px; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-grid { display: grid; gap: var(--ai-grid-gap, 20px); grid-template-columns: repeat(4, 1fr); margin-bottom: 20px; text-align: left; }
+@media (max-width: 990px) { .ai-skeleton-grid { grid-template-columns: repeat(2, 1fr); } .ai-skeleton-grid .hide-tablet { display: none; } }
+@media (max-width: 750px) { .ai-skeleton-grid { grid-template-columns: 1fr; } .ai-skeleton-grid .hide-mobile { display: none; } }
+.ai-skeleton-card { background: var(--ai-card-bg, #fff); border-radius: var(--ai-card-radius, 8px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); overflow: hidden; }
+.ai-skeleton-image { width: 100%; padding-top: 100%; background: #f5f5f5; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-info { padding: var(--ai-card-padding, 16px); }
+.ai-skeleton-text { background: #f0f0f0; border-radius: 4px; height: 14px; margin-bottom: 8px; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-text.line-1 { width: 85%; }
+.ai-skeleton-text.line-2 { width: 50%; margin-bottom: 16px; }
+.ai-skeleton-button { background: #f0f0f0; border-radius: 4px; height: 40px; width: 100%; animation: ai-pulse 1.5s ease-in-out infinite; margin-top: 8px; }
+
+.ai-skeleton-secondary-container { text-align: left; width: 100%; }
+.ai-skeleton-secondary-header { width: 200px; height: 24px; background: #f0f0f0; border-radius: 4px; margin: 0 0 16px 0; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-secondary-card { display: flex; gap: 12px; padding: 12px; border: 1px solid #f0f0f0; border-radius: 8px; background: #fff; }
+.ai-skeleton-image-small { width: 60px; height: 60px; background: #f5f5f5; border-radius: 6px; flex-shrink: 0; animation: ai-pulse 1.5s ease-in-out infinite; }
+.ai-skeleton-details { flex: 1; display: flex; flex-direction: column; }
+.ai-skeleton-details .ai-skeleton-text.line-1 { width: 70%; height: 14px; margin-bottom: 6px;}
+.ai-skeleton-details .ai-skeleton-text.line-2 { width: 40%; height: 14px; margin-bottom: auto;}
+.ai-skeleton-button-small { background: #f0f0f0; border-radius: 4px; height: 32px; width: 120px; margin-top: 8px; animation: ai-pulse 1.5s ease-in-out infinite; }
+
+@keyframes ai-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }

@@ -193,7 +193,14 @@ export const loader = async ({ request }) => {
     // so the pipeline re-runs and replenishes to the full 4-product set.
     const EXPECTED_MIN = 4;
     const cachedCountLow = Array.isArray(cachedDoc?.recommendations) && cachedDoc.recommendations.length < EXPECTED_MIN;
-    if (cachedDoc && cacheAge < CACHE_FRESH_MS && cachedDoc.decision?.reason !== 'safety_mode_active' && !cachedCountLow) {
+    const cachedBundleVariantRisk = Array.isArray(cachedDoc?.recommendations) && cachedDoc.recommendations.some((rec) => {
+      if (rec?.offerType !== 'bundle') return false;
+      const variantId = rec?.variantId ? String(rec.variantId).split('/').pop() : '';
+      const productIdStr = rec?.id ? String(rec.id) : '';
+      const hasVariants = Array.isArray(rec?.variants) && rec.variants.length > 0;
+      return !rec?.handle || (!hasVariants && (!variantId || variantId === productIdStr));
+    });
+    if (cachedDoc && cacheAge < CACHE_FRESH_MS && cachedDoc.decision?.reason !== 'safety_mode_active' && !cachedCountLow && !cachedBundleVariantRisk) {
       console.log(`⚡ Cache hit for product ${productId} (age: ${Math.round(cacheAge / 1000)}s)`);
       const cachedDiscountPct = cachedDoc.decision?.discountPercent ?? null;
       const filteredRecs = applyDisplayModeFilter(cachedDoc.recommendations, cachedGoal, cachedDisplayMode, cachedDiscountPct);
@@ -203,7 +210,7 @@ export const loader = async ({ request }) => {
       );
     }
 
-    if (cachedDoc && cacheAge < CACHE_STALE_MS && !cachedCountLow) {
+    if (cachedDoc && cacheAge < CACHE_STALE_MS && !cachedCountLow && !cachedBundleVariantRisk) {
       console.log(`⏱️ Stale cache for product ${productId} — serving stale, refreshing in background`);
       // Background refresh — fire and forget, never blocks response
       ;(async () => {
@@ -225,7 +232,7 @@ export const loader = async ({ request }) => {
               decisionScore: product.decisionScore ?? null, decisionReason: product.decisionReason ?? null,
               url: `/products/${product.handle}`,
               availableForSale: product.status?.toUpperCase() === 'ACTIVE',
-              variantId: product.variants?.[0]?.id || null,
+              variantId: (product.variants || []).find(v => v?.inventoryPolicy === 'CONTINUE' || Number(v?.inventoryQuantity || 0) > 0)?.variantId || product.variants?.[0]?.variantId || null,
               ...getOfferTypeExtras(offerType, baseDiscount),
             };
           });
@@ -325,7 +332,7 @@ export const loader = async ({ request }) => {
       decisionReason: product.decisionReason ?? null,
       url: `/products/${product.handle}`,
       availableForSale: product.status?.toUpperCase() === 'ACTIVE',
-      variantId: product.variants?.[0]?.id || null,
+      variantId: (product.variants || []).find(v => v?.inventoryPolicy === 'CONTINUE' || Number(v?.inventoryQuantity || 0) > 0)?.variantId || product.variants?.[0]?.variantId || null,
       ...offerTypeExtras,
     })});
 
@@ -368,10 +375,14 @@ export const loader = async ({ request }) => {
           if (!node || !node.id) continue;
           const numericId = node.id.match(/Product\/(\d+)/)?.[1];
           if (numericId) {
-            const variant = node.variants?.edges?.[0]?.node;
+            const variantEdges = node.variants?.edges || [];
+            const variant = (variantEdges.find(e => {
+              const v = e.node;
+              return v && (v.inventoryQuantity > 0 || v.inventoryPolicy !== 'DENY');
+            }) || variantEdges[0])?.node;
             const policy = variant?.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
             const totalInv = node.totalInventory ?? variant?.inventoryQuantity ?? 0;
-            const allVariants = (node.variants?.edges || []).map(e => {
+            const allVariants = variantEdges.map(e => {
               const v = e.node;
               const vPolicy = v.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
               return {
@@ -386,7 +397,7 @@ export const loader = async ({ request }) => {
               availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
               inventoryQuantity: totalInv,
               inventoryPolicy: policy,
-              variantId: variant?.id || null,
+              variantId: variant?.id ? variant.id.split('/').pop() : null,
               compareAtPrice: variant?.compareAtPrice || null,
               variants: allVariants
             };
