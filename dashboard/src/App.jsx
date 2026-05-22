@@ -8,19 +8,21 @@ import Settings from './pages/Settings'
 import ActivityLogs from './pages/ActivityLogs'
 import Guardrails from './pages/Guardrails'
 import Optimization from './pages/Optimization'
+import GoalGuardrails from './pages/GoalGuardrails'
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<Navigate to="/goals" replace />} />
+        <Route index element={<Navigate to="/guardrails" replace />} />
+        <Route path="goal-guardrails" element={<GoalGuardrails />} />
+        <Route path="guardrails" element={<GoalGuardrails />} />
         <Route path="goals" element={<Goals />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="recommendations" element={<Recommendations />} />
         <Route path="bundles" element={<Bundles />} />
         <Route path="settings" element={<Settings />} />
         <Route path="activity-logs" element={<ActivityLogs />} />
-        <Route path="guardrails" element={<Guardrails />} />
         <Route path="optimization" element={<Optimization />} />
       </Route>
     </Routes>
