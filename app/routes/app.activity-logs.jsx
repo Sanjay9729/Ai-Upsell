@@ -1,3 +1,4 @@
+import { RedirectToDashboard } from "../components/RedirectToDashboard";
 import { useLoaderData } from "@remix-run/react";
 import {
   Badge,
@@ -32,60 +33,7 @@ export const loader = async ({ request }) => {
   }
 };
 
+
 export default function ActivityLogsPage() {
-  const { recentConversions } = useLoaderData();
-
-  const rows = recentConversions.map((conv) => {
-    let locationLabel = "Unknown";
-    let locationTone = "subdued";
-    if (conv.metadata?.location === "product_detail_page") {
-      locationLabel = "Product Detail Page";
-      locationTone = "info";
-    } else if (conv.metadata?.location === "cart_page" || conv.metadata?.location === "cart_page_secondary") {
-      locationLabel = "Cart Page";
-      locationTone = "success";
-    }
-    return [
-      <Text as="span" variant="bodyMd" fontWeight="semibold">
-        {conv.upsellProductName || "Unknown Product"}
-      </Text>,
-      conv.quantity,
-      <Badge tone={locationTone}>{locationLabel}</Badge>,
-      <BlockStack gap="0">
-        <Text as="span" variant="bodySm">{new Date(conv.timestamp).toLocaleDateString()}</Text>
-        <Text as="span" variant="bodySm" tone="subdued">
-          {new Date(conv.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-        </Text>
-      </BlockStack>,
-    ];
-  });
-
-  return (
-    <Page title="Activity Logs">
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">Recent Upsell Conversions</Text>
-              <Divider />
-              {recentConversions.length === 0 ? (
-                <Box padding="800" background="bg-surface-secondary" borderRadius="200">
-                  <BlockStack gap="100">
-                    <Text as="p" variant="bodyMd" tone="subdued" alignment="center">No conversions yet</Text>
-                    <Text as="p" variant="bodySm" tone="subdued" alignment="center">Upsell products to see them appear here!</Text>
-                  </BlockStack>
-                </Box>
-              ) : (
-                <DataTable
-                  columnContentTypes={["text", "numeric", "text", "text"]}
-                  headings={["Upsell Product", "Qty", "Location", "Date Added"]}
-                  rows={rows}
-                />
-              )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-      </Layout>
-    </Page>
-  );
+  return <RedirectToDashboard path="/activity-logs" />;
 }

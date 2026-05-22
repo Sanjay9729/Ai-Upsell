@@ -6,8 +6,6 @@ import { authenticate } from "../shopify.server";
 // Pre-warm MongoDB connection at module load so first admin request doesn't cold-start
 import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
 
-const DASHBOARD_BASE = "https://upselldashboard.netlify.app";
-
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   // eslint-disable-next-line no-undef
@@ -16,19 +14,23 @@ export const loader = async ({ request }) => {
 
 export default function App() {
   const { apiKey, shop } = useLoaderData();
-  const dash = (path) => `${DASHBOARD_BASE}${path}?shop=${shop}`;
+
+  // Store shop so child route redirect components can read it
+  if (typeof sessionStorage !== "undefined" && shop) {
+    sessionStorage.setItem("shopify_shop", shop);
+  }
 
   return (
     <AppProvider embedded apiKey={apiKey}>
       <s-app-nav>
-        <s-link href={dash("/")}>Home</s-link>
-        <s-link href={dash("/goals")}>Goal &amp; Guardrails</s-link>
-        <s-link href={dash("/analytics")}>Analytics</s-link>
-        <s-link href={dash("/activity-logs")}>Activity Logs</s-link>
-        <s-link href={dash("/optimization")}>Optimization &amp; Bundles</s-link>
-        <s-link href={dash("/guardrails")}>Guardrail Monitor</s-link>
-        <s-link href={dash("/recommendations")}>Recommendations</s-link>
-        <s-link href={dash("/settings")}>Settings</s-link>
+        <s-link href="/app">Home</s-link>
+        <s-link href="/app/goal-setup">Goal &amp; Guardrails</s-link>
+        <s-link href="/app/analytics">Analytics</s-link>
+        <s-link href="/app/activity-logs">Activity Logs</s-link>
+        <s-link href="/app/optimization">Optimization &amp; Bundles</s-link>
+        <s-link href="/app/guardrail-monitor">Guardrail Monitor</s-link>
+        <s-link href="/app/recommendations">Recommendations</s-link>
+        <s-link href="/app/settings">Settings</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>
