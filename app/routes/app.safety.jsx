@@ -1,252 +1,222 @@
-import { json } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
+import {
+  Badge,
+  Banner,
+  BlockStack,
+  Box,
+  Button,
+  Card,
+  DataTable,
+  Divider,
+  InlineStack,
+  Layout,
+  Page,
+  Text,
+  TextField,
+} from "@shopify/polaris";
+import { useState } from "react";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopId = session.shop;
-
   const { getSafetyStatus } = await import("../../backend/services/safetyMode.js");
   const status = await getSafetyStatus(shopId);
-
-  return json({ shopId, status });
+  return Response.json({ shopId, status });
 };
 
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shopId = session.shop;
-
   const formData = await request.formData();
   const intent = formData.get("intent");
-
   const { setSafetyMode, snapshotConfig, restoreConfig } = await import("../../backend/services/safetyMode.js");
 
   if (intent === "enable_safety") {
     const reason = formData.get("reason") || "Manually enabled by merchant";
     const result = await setSafetyMode(shopId, true, reason);
-    return json({ success: result.success, error: result.error || null, intent });
+    return Response.json({ success: result.success, error: result.error || null, intent });
   }
-
   if (intent === "disable_safety") {
     const result = await setSafetyMode(shopId, false, "Manually disabled by merchant");
-    return json({ success: result.success, error: result.error || null, intent });
+    return Response.json({ success: result.success, error: result.error || null, intent });
   }
-
   if (intent === "snapshot") {
     const result = await snapshotConfig(shopId, "manual");
-    return json({ success: result.success, error: result.error || null, intent });
+    return Response.json({ success: result.success, error: result.error || null, intent });
   }
-
   if (intent === "restore") {
     const result = await restoreConfig(shopId);
-    return json({
-      success: result.success,
-      error: result.error || null,
-      restoredFrom: result.restoredFrom || null,
-      intent
-    });
+    return Response.json({ success: result.success, error: result.error || null, restoredFrom: result.restoredFrom || null, intent });
   }
-
-  return json({ success: false, error: "Unknown intent", intent }, { status: 400 });
+  return Response.json({ success: false, error: "Unknown intent", intent }, { status: 400 });
 };
 
 export default function SafetyPage() {
   const { status } = useLoaderData();
   const fetcher = useFetcher();
-
+  const [reason, setReason] = useState("");
   const isActive = status?.active === true;
 
-  const fontFamily = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  const snapshotRows = (status?.snapshots || []).map((snap) => [
+    <Text as="span" variant="bodyMd" fontWeight="semibold">{snap.label}</Text>,
+    new Date(snap.createdAt).toLocaleString(),
+  ]);
 
-  const btnStyle = (variant = "default") => ({
-    appearance: "none",
-    border: "1px solid",
-    borderRadius: "6px",
-    padding: "8px 16px",
-    fontSize: "13px",
-    fontWeight: 600,
-    cursor: "pointer",
-    fontFamily,
-    ...(variant === "danger" ? {
-      background: "#b42318", borderColor: "#b42318", color: "#fff"
-    } : variant === "success" ? {
-      background: "#008060", borderColor: "#007a5c", color: "#fff"
-    } : variant === "warning" ? {
-      background: "#f59e0b", borderColor: "#d97706", color: "#fff"
-    } : {
-      background: "#f6f6f7", borderColor: "#c9cccf", color: "#202223"
-    })
-  });
+  const auditRows = (status?.log || []).map((entry) => [
+    <Badge tone={entry.action === "enabled" ? "critical" : "success"}>
+      {entry.action === "enabled" ? "Enabled" : "Disabled"}
+    </Badge>,
+    entry.reason || "—",
+    new Date(entry.timestamp).toLocaleString(),
+  ]);
 
   return (
-    <s-page heading="Safety Mode & Rollback">
-      <style>{`* { font-family: ${fontFamily} !important; }`}</style>
+    <Page title="Safety Mode & Rollback">
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="500">
 
-      {/* Status Banner */}
-      <s-section>
-        <div style={{
-          padding: "20px",
-          borderRadius: "10px",
-          background: isActive ? "#fff4f4" : "#f0faf6",
-          border: `2px solid ${isActive ? "#b42318" : "#008060"}`,
-          marginBottom: "16px"
-        }}>
-          <div style={{ fontSize: "18px", fontWeight: 700, color: isActive ? "#b42318" : "#008060", marginBottom: "6px" }}>
-            {isActive ? "🛑 Safety Mode is ACTIVE" : "✅ System is Running Normally"}
-          </div>
-          <div style={{ fontSize: "13px", color: "#6d7175" }}>
-            {isActive
-              ? `All upsell offers are paused. Reason: ${status?.reason || "No reason specified"}`
-              : "The AI decision engine is active and serving offers normally."}
-          </div>
-          {status?.updatedAt && (
-            <div style={{ fontSize: "12px", color: "#8c9196", marginTop: "6px" }}>
-              Last changed: {new Date(status.updatedAt).toLocaleString()}
-            </div>
-          )}
-        </div>
+            {/* Status & Controls */}
+            <Card>
+              <BlockStack gap="400">
+                <Banner tone={isActive ? "critical" : "success"}>
+                  <Text as="p" variant="bodyMd">
+                    <strong>{isActive ? "Safety Mode is ACTIVE" : "System is Running Normally"}</strong>
+                    <br />
+                    {isActive
+                      ? `All upsell offers are paused. Reason: ${status?.reason || "No reason specified"}`
+                      : "The AI decision engine is active and serving offers normally."}
+                    {status?.updatedAt && (
+                      <><br /><Text as="span" variant="bodySm" tone="subdued">Last changed: {new Date(status.updatedAt).toLocaleString()}</Text></>
+                    )}
+                  </Text>
+                </Banner>
 
-        {/* Manual Snapshot — shown before safety toggle so merchant saves config first */}
-        {!isActive && (
-          <div style={{ marginBottom: "16px" }}>
-            <div style={{ fontSize: "13px", color: "#6d7175", marginBottom: "10px" }}>
-              Save a snapshot of your current config before making changes. You can restore to any snapshot if something goes wrong.
-            </div>
-            <fetcher.Form method="post">
-              <input type="hidden" name="intent" value="snapshot" />
-              <button type="submit" style={btnStyle()}>
-                📸 Save Current Config Snapshot
-              </button>
-              {fetcher.data?.success && fetcher.data.intent === "snapshot" && (
-                <span style={{ marginLeft: "12px", fontSize: "12px", color: "#008060" }}>Snapshot saved</span>
-              )}
-            </fetcher.Form>
-          </div>
-        )}
+                {fetcher.data?.error && (
+                  <Banner tone="critical">
+                    <Text as="p" variant="bodyMd">Error: {fetcher.data.error}</Text>
+                  </Banner>
+                )}
+                {fetcher.data?.success && fetcher.data.intent === "restore" && fetcher.data.restoredFrom && (
+                  <Banner tone="success">
+                    <Text as="p" variant="bodyMd">
+                      Config restored from snapshot: {fetcher.data.restoredFrom.label} ({new Date(fetcher.data.restoredFrom.createdAt).toLocaleString()})
+                    </Text>
+                  </Banner>
+                )}
 
-        {/* Toggle Controls */}
-        {isActive ? (
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-            <fetcher.Form method="post">
-              <input type="hidden" name="intent" value="disable_safety" />
-              <button type="submit" style={btnStyle("success")}>
-                ▶ Resume Offers
-              </button>
-            </fetcher.Form>
-            <fetcher.Form method="post">
-              <input type="hidden" name="intent" value="restore" />
-              <button type="submit" style={btnStyle("warning")}>
-                ↩ Restore Last Config Snapshot
-              </button>
-            </fetcher.Form>
-          </div>
-        ) : (
-          <fetcher.Form method="post" style={{ display: "flex", flexDirection: "column", gap: "10px", maxWidth: "480px" }}>
-            <input type="hidden" name="intent" value="enable_safety" />
-            <label style={{ fontSize: "12px", fontWeight: 600, color: "#303030" }}>
-              Reason (optional)
-              <input
-                type="text"
-                name="reason"
-                placeholder="e.g. High discount rate detected, reviewing offers"
-                style={{
-                  display: "block", marginTop: "6px", width: "100%",
-                  padding: "8px 10px", borderRadius: "6px",
-                  border: "1px solid #c9cccf", fontSize: "13px"
-                }}
-              />
-            </label>
-            <div>
-              <button type="submit" style={btnStyle("danger")}>
-                🛑 Enable Safety Mode (Pause All Offers)
-              </button>
-            </div>
-          </fetcher.Form>
-        )}
+                <Divider />
 
-        {fetcher.data?.error && (
-          <div style={{ marginTop: "12px", color: "#b42318", fontSize: "13px" }}>
-            Error: {fetcher.data.error}
-          </div>
-        )}
-        {fetcher.data?.success && fetcher.data.intent === "restore" && fetcher.data.restoredFrom && (
-          <div style={{ marginTop: "12px", color: "#008060", fontSize: "13px" }}>
-            ✅ Config restored from snapshot: {fetcher.data.restoredFrom.label} ({new Date(fetcher.data.restoredFrom.createdAt).toLocaleString()})
-          </div>
-        )}
-      </s-section>
+                {/* Snapshot button (shown before safety toggle when system is running) */}
+                {!isActive && (
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Save a snapshot of your current config before making changes. You can restore to any snapshot if something goes wrong.
+                    </Text>
+                    <fetcher.Form method="post">
+                      <input type="hidden" name="intent" value="snapshot" />
+                      <InlineStack gap="300" blockAlign="center">
+                        <Button submit>Save Current Config Snapshot</Button>
+                        {fetcher.data?.success && fetcher.data.intent === "snapshot" && (
+                          <Text as="span" variant="bodySm" tone="success">Snapshot saved</Text>
+                        )}
+                      </InlineStack>
+                    </fetcher.Form>
+                  </BlockStack>
+                )}
 
-      {/* Snapshots Table */}
-      <s-section heading="Config Snapshots">
-        {isActive && (
-          <fetcher.Form method="post" style={{ marginBottom: "20px" }}>
-            <input type="hidden" name="intent" value="snapshot" />
-            <button type="submit" style={btnStyle()}>
-              📸 Save Current Config Snapshot
-            </button>
-            {fetcher.data?.success && fetcher.data.intent === "snapshot" && (
-              <span style={{ marginLeft: "12px", fontSize: "12px", color: "#008060" }}>Snapshot saved</span>
-            )}
-          </fetcher.Form>
-        )}
+                {/* Toggle controls */}
+                {isActive ? (
+                  <InlineStack gap="300">
+                    <fetcher.Form method="post">
+                      <input type="hidden" name="intent" value="disable_safety" />
+                      <Button tone="success" submit>Resume Offers</Button>
+                    </fetcher.Form>
+                    <fetcher.Form method="post">
+                      <input type="hidden" name="intent" value="restore" />
+                      <Button submit>Restore Last Config Snapshot</Button>
+                    </fetcher.Form>
+                  </InlineStack>
+                ) : (
+                  <fetcher.Form method="post">
+                    <input type="hidden" name="intent" value="enable_safety" />
+                    <BlockStack gap="300">
+                      <TextField
+                        label="Reason (optional)"
+                        value={reason}
+                        onChange={setReason}
+                        name="reason"
+                        placeholder="e.g. High discount rate detected, reviewing offers"
+                        autoComplete="off"
+                      />
+                      <Box>
+                        <Button tone="critical" submit>Enable Safety Mode (Pause All Offers)</Button>
+                      </Box>
+                    </BlockStack>
+                  </fetcher.Form>
+                )}
 
-        {status?.snapshots?.length > 0 ? (
-          <div style={{ border: "1px solid #e1e3e5", borderRadius: "8px", overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-              <thead style={{ background: "#f7f7f8" }}>
-                <tr style={{ borderBottom: "1px solid #e1e3e5", textAlign: "left" }}>
-                  <th style={{ padding: "10px 14px" }}>Label</th>
-                  <th style={{ padding: "10px 14px" }}>Saved At</th>
-                </tr>
-              </thead>
-              <tbody>
-                {status.snapshots.map((snap, idx) => (
-                  <tr key={idx} style={{ borderBottom: "1px solid #f1f2f3" }}>
-                    <td style={{ padding: "10px 14px", fontWeight: 600 }}>{snap.label}</td>
-                    <td style={{ padding: "10px 14px", color: "#6d7175" }}>{new Date(snap.createdAt).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div style={{ padding: "16px", color: "#6d7175", background: "#f9fafb", borderRadius: "8px", border: "1px dashed #e1e3e5" }}>
-            No snapshots yet. Save your first snapshot above.
-          </div>
-        )}
-      </s-section>
+                {/* Snapshot button (shown when safety is active) */}
+                {isActive && (
+                  <fetcher.Form method="post">
+                    <input type="hidden" name="intent" value="snapshot" />
+                    <InlineStack gap="300" blockAlign="center">
+                      <Button submit>Save Current Config Snapshot</Button>
+                      {fetcher.data?.success && fetcher.data.intent === "snapshot" && (
+                        <Text as="span" variant="bodySm" tone="success">Snapshot saved</Text>
+                      )}
+                    </InlineStack>
+                  </fetcher.Form>
+                )}
+              </BlockStack>
+            </Card>
 
-      {/* Audit Log */}
-      <s-section heading="Safety Mode Audit Log">
-        {status?.log?.length > 0 ? (
-          <div style={{ border: "1px solid #e1e3e5", borderRadius: "8px", overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-              <thead style={{ background: "#f7f7f8" }}>
-                <tr style={{ borderBottom: "1px solid #e1e3e5", textAlign: "left" }}>
-                  <th style={{ padding: "10px 14px" }}>Action</th>
-                  <th style={{ padding: "10px 14px" }}>Reason</th>
-                  <th style={{ padding: "10px 14px" }}>Timestamp</th>
-                </tr>
-              </thead>
-              <tbody>
-                {status.log.map((entry, idx) => (
-                  <tr key={idx} style={{ borderBottom: "1px solid #f1f2f3" }}>
-                    <td style={{ padding: "10px 14px", fontWeight: 600, color: entry.action === "enabled" ? "#b42318" : "#008060" }}>
-                      {entry.action === "enabled" ? "🛑 Enabled" : "✅ Disabled"}
-                    </td>
-                    <td style={{ padding: "10px 14px", color: "#6d7175" }}>{entry.reason || "—"}</td>
-                    <td style={{ padding: "10px 14px", color: "#6d7175" }}>{new Date(entry.timestamp).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div style={{ padding: "16px", color: "#6d7175", background: "#f9fafb", borderRadius: "8px", border: "1px dashed #e1e3e5" }}>
-            No safety mode events yet.
-          </div>
-        )}
-      </s-section>
-    </s-page>
+            {/* Config Snapshots */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Config Snapshots</Text>
+                <Divider />
+                {(status?.snapshots || []).length === 0 ? (
+                  <Box padding="600" background="bg-surface-secondary" borderRadius="200">
+                    <Text as="p" variant="bodyMd" tone="subdued" alignment="center">
+                      No snapshots yet. Save your first snapshot above.
+                    </Text>
+                  </Box>
+                ) : (
+                  <DataTable
+                    columnContentTypes={["text", "text"]}
+                    headings={["Label", "Saved At"]}
+                    rows={snapshotRows}
+                  />
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Audit Log */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Safety Mode Audit Log</Text>
+                <Divider />
+                {(status?.log || []).length === 0 ? (
+                  <Box padding="600" background="bg-surface-secondary" borderRadius="200">
+                    <Text as="p" variant="bodyMd" tone="subdued" alignment="center">
+                      No safety mode events yet.
+                    </Text>
+                  </Box>
+                ) : (
+                  <DataTable
+                    columnContentTypes={["text", "text", "text"]}
+                    headings={["Action", "Reason", "Timestamp"]}
+                    rows={auditRows}
+                  />
+                )}
+              </BlockStack>
+            </Card>
+
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+    </Page>
   );
 }

@@ -3,6 +3,19 @@ import { json } from '@remix-run/node';
 import { useLoaderData, useFetcher } from '@remix-run/react';
 import { authenticate } from '../shopify.server';
 import { GOAL_MAPPING, RISK_MAPPING } from '../shared/merchantConfig.shared.js';
+import {
+  Page,
+  Card,
+  BlockStack,
+  InlineStack,
+  InlineGrid,
+  Text,
+  Button,
+  Banner,
+  Box,
+  Divider,
+  Badge,
+} from '@shopify/polaris';
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -101,138 +114,117 @@ export default function GoalsPage() {
 
   const currentGoal = goals.find(g => g.id === selectedGoal);
   const currentRisk = risks.find(r => r.id === selectedRisk);
+  const isSaving = fetcher.state !== 'idle';
 
   return (
-    <div style={{ padding: '24px', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto' }}>
-      <div style={{ marginBottom: '32px' }}>
-        <h1 style={{ fontSize: '28px', fontWeight: '600', marginBottom: '8px' }}>🎯 Goals & Risk</h1>
-        <p style={{ color: '#666', fontSize: '14px' }}>
-          Define your primary objective and risk tolerance. The engine will adjust offer prioritization accordingly.
-        </p>
-      </div>
+    <Page
+      title="Goals & Risk"
+      subtitle="Define your primary objective and risk tolerance. The engine will adjust offer prioritization accordingly."
+    >
+      <BlockStack gap="500">
+        {saved && (
+          <Banner tone="success" title="Settings saved successfully" />
+        )}
 
-      {saved && (
-        <div style={{
-          padding: '12px 16px',
-          backgroundColor: '#dff2bf',
-          border: '1px solid #9ccc65',
-          borderRadius: '4px',
-          marginBottom: '24px',
-          fontSize: '14px',
-          color: '#33691e'
-        }}>
-          ✓ Settings saved
-        </div>
-      )}
+        <InlineGrid columns={{ xs: 1, md: 2 }} gap="500">
+          {/* Goal Selection */}
+          <Card>
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Primary Goal</Text>
+              <BlockStack gap="300">
+                {goals.map(goal => (
+                  <Box
+                    key={goal.id}
+                    as="button"
+                    onClick={() => setSelectedGoal(goal.id)}
+                    padding="400"
+                    borderWidth="025"
+                    borderColor={selectedGoal === goal.id ? "border-focus" : "border"}
+                    borderRadius="200"
+                    background={selectedGoal === goal.id ? "bg-surface-selected" : "bg-surface"}
+                    style={{ cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                  >
+                    <BlockStack gap="100">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text variant="bodyMd" fontWeight="semibold">{goal.label}</Text>
+                        {selectedGoal === goal.id && <Badge tone="success">Selected</Badge>}
+                      </InlineStack>
+                      <Text variant="bodySm" tone="subdued">{goal.description}</Text>
+                      {goal.metrics?.length > 0 && (
+                        <Text variant="bodySm" tone="subdued">
+                          Metrics: {goal.metrics.join(', ')}
+                        </Text>
+                      )}
+                    </BlockStack>
+                  </Box>
+                ))}
+              </BlockStack>
+            </BlockStack>
+          </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px', maxWidth: '1200px' }}>
-        {/* Goal Selection */}
-        <div>
-          <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px' }}>Primary Goal</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {goals.map(goal => (
-              <button
-                key={goal.id}
-                onClick={() => setSelectedGoal(goal.id)}
-                style={{
-                  padding: '16px',
-                  border: selectedGoal === goal.id ? '2px solid #007bff' : '1px solid #ddd',
-                  borderRadius: '8px',
-                  backgroundColor: selectedGoal === goal.id ? '#f0f7ff' : '#fff',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  transition: 'all 0.2s'
-                }}
-              >
-                <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '4px' }}>
-                  {goal.label}
-                </div>
-                <div style={{ fontSize: '13px', color: '#666' }}>
-                  {goal.description}
-                </div>
-                {goal.metrics?.length > 0 && (
-                  <div style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
-                    📊 {goal.metrics.join(', ')}
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
+          {/* Risk Selection */}
+          <Card>
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Risk Tolerance</Text>
+              <BlockStack gap="300">
+                {risks.map(risk => (
+                  <Box
+                    key={risk.id}
+                    as="button"
+                    onClick={() => setSelectedRisk(risk.id)}
+                    padding="400"
+                    borderWidth="025"
+                    borderColor={selectedRisk === risk.id ? "border-focus" : "border"}
+                    borderRadius="200"
+                    background={selectedRisk === risk.id ? "bg-surface-selected" : "bg-surface"}
+                    style={{ cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                  >
+                    <BlockStack gap="100">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text variant="bodyMd" fontWeight="semibold">{risk.label}</Text>
+                        {selectedRisk === risk.id && <Badge tone="success">Selected</Badge>}
+                      </InlineStack>
+                      <Text variant="bodySm" tone="subdued">{risk.description}</Text>
+                    </BlockStack>
+                  </Box>
+                ))}
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        </InlineGrid>
 
-        {/* Risk Selection */}
-        <div>
-          <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px' }}>Risk Tolerance</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {risks.map(risk => (
-              <button
-                key={risk.id}
-                onClick={() => setSelectedRisk(risk.id)}
-                style={{
-                  padding: '16px',
-                  border: selectedRisk === risk.id ? '2px solid #007bff' : '1px solid #ddd',
-                  borderRadius: '8px',
-                  backgroundColor: selectedRisk === risk.id ? '#f0f7ff' : '#fff',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  transition: 'all 0.2s'
-                }}
-              >
-                <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '4px' }}>
-                  {risk.label}
-                </div>
-                <div style={{ fontSize: '13px', color: '#666' }}>
-                  {risk.description}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+        {/* Current Configuration Summary */}
+        {currentGoal && currentRisk && (
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">Current Configuration</Text>
+              <Divider />
+              <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Goal</Text>
+                  <Text variant="bodyMd" fontWeight="semibold">{currentGoal.label}</Text>
+                </BlockStack>
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Risk Tolerance</Text>
+                  <Text variant="bodyMd" fontWeight="semibold">{currentRisk.label}</Text>
+                </BlockStack>
+              </InlineGrid>
+            </BlockStack>
+          </Card>
+        )}
 
-      {/* Summary */}
-      {currentGoal && currentRisk && (
-        <div style={{
-          marginTop: '32px',
-          padding: '16px',
-          backgroundColor: '#f5f5f5',
-          borderRadius: '8px',
-          maxWidth: '1200px'
-        }}>
-          <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>Current Configuration</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', fontSize: '14px' }}>
-            <div>
-              <span style={{ color: '#666' }}>Goal:</span>{' '}
-              <span style={{ fontWeight: '600' }}>{currentGoal.label}</span>
-            </div>
-            <div>
-              <span style={{ color: '#666' }}>Risk Tolerance:</span>{' '}
-              <span style={{ fontWeight: '600' }}>{currentRisk.label}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Save Button */}
-      <div style={{ marginTop: '32px' }}>
-        <button
-          onClick={handleSave}
-          disabled={fetcher.state !== 'idle'}
-          style={{
-            padding: '12px 24px',
-            backgroundColor: '#007bff',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '6px',
-            fontSize: '14px',
-            fontWeight: '600',
-            cursor: fetcher.state === 'idle' ? 'pointer' : 'not-allowed',
-            opacity: fetcher.state === 'idle' ? 1 : 0.7
-          }}
-        >
-          {fetcher.state === 'idle' ? '💾 Save Configuration' : 'Saving...'}
-        </button>
-      </div>
-    </div>
+        {/* Save */}
+        <InlineStack>
+          <Button
+            variant="primary"
+            loading={isSaving}
+            disabled={isSaving}
+            onClick={handleSave}
+          >
+            {isSaving ? 'Saving...' : 'Save Configuration'}
+          </Button>
+        </InlineStack>
+      </BlockStack>
+    </Page>
   );
 }
