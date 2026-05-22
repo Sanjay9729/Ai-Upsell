@@ -7,7 +7,7 @@
 export const loader = async () => {
   try {
     // Check database connection
-    const { getDb } = await import("../backend/database/mongodb.js");
+    const { getDb } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
 
     // Run a simple query to verify connection
