@@ -1,3 +1,4 @@
+import { RedirectToDashboard } from "../components/RedirectToDashboard";
 import { useLoaderData } from "@remix-run/react";
 import {
   BlockStack,
@@ -114,106 +115,7 @@ function EmptyBox({ message, sub }) {
   );
 }
 
+
 export default function AnalyticsPage() {
-  const { topTimeProducts, cartTimeStats, recentCartTime } = useLoaderData();
-
-  const formatMoney = (cents) => {
-    if (cents == null || isNaN(cents)) return "—";
-    return `$${(Number(cents) / 100).toFixed(2)}`;
-  };
-
-  const productRows = topTimeProducts.map((row) => [
-    <BlockStack gap="0">
-      <Text as="span" variant="bodyMd" fontWeight="semibold">{row.productTitle || `Product ${row._id}`}</Text>
-      <Text as="span" variant="bodySm" tone="subdued">ID: {row._id}</Text>
-    </BlockStack>,
-    row.totalSessions,
-    fmtTime(Math.round(row.avgTimeSeconds)),
-    fmtTime(row.totalTimeSeconds),
-  ]);
-
-  const cartRows = (recentCartTime || []).map((row) => {
-    const userId = row._id || "";
-    const isCustomer = userId.startsWith("customer_");
-    const customerId = isCustomer ? userId.replace("customer_", "") : null;
-    const userLabel = isCustomer ? (row.customerName || `Customer #${customerId}`) : userId ? `Guest (${userId.slice(0, 10)}…)` : "Unknown";
-    const userSub = isCustomer ? (row.customerName ? `Customer #${customerId}` : "Logged in") : "Anonymous";
-    return [
-      <BlockStack gap="0">
-        <Text as="span" variant="bodyMd" fontWeight="semibold">{userLabel}</Text>
-        <Text as="span" variant="bodySm" tone="subdued">{userSub}</Text>
-      </BlockStack>,
-      row.sessions,
-      row.avgCartItemCount != null ? Math.round(row.avgCartItemCount) : "—",
-      fmtTime(Math.round(row.avgTimeSeconds || 0)),
-      formatMoney(row.avgCartTotalPrice),
-      <BlockStack gap="0">
-        <Text as="span" variant="bodySm">{new Date(row.lastVisit).toLocaleDateString()}</Text>
-        <Text as="span" variant="bodySm" tone="subdued">
-          {new Date(row.lastVisit).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-        </Text>
-      </BlockStack>,
-    ];
-  });
-
-  return (
-    <Page title="Upsell Analytics">
-      <Layout>
-        <Layout.Section>
-          <BlockStack gap="500">
-
-            <Card>
-              <BlockStack gap="400">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">Product Page Analytics</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">Time spent on product pages (last 30 days)</Text>
-                </BlockStack>
-                <Divider />
-                {topTimeProducts.length === 0 ? (
-                  <EmptyBox message="No time data yet" sub="Data will appear once customers visit product pages." />
-                ) : (
-                  <DataTable
-                    columnContentTypes={["text", "numeric", "text", "text"]}
-                    headings={["Product", "Sessions", "Avg Time", "Total Time"]}
-                    rows={productRows}
-                  />
-                )}
-              </BlockStack>
-            </Card>
-
-            <Card>
-              <BlockStack gap="400">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">Cart Page Analytics</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">Time spent on cart pages (last 30 days)</Text>
-                </BlockStack>
-                <Divider />
-                {!cartTimeStats || cartTimeStats.totalSessions === 0 ? (
-                  <EmptyBox message="No cart time data yet" sub="Open the cart page to start collecting analytics." />
-                ) : (
-                  <BlockStack gap="400">
-                    <Grid columns={{ xs: 2, sm: 5 }} gap="300">
-                      <StatCard label="Avg Time" value={fmtTime(Math.round(cartTimeStats.avgTimeSeconds || 0))} />
-                      <StatCard label="Total Time" value={fmtTime(Math.round(cartTimeStats.totalTimeSeconds || 0))} />
-                      <StatCard label="Sessions" value={cartTimeStats.totalSessions || 0} />
-                      <StatCard label="Avg Items" value={cartTimeStats.avgItemCount != null ? Math.round(cartTimeStats.avgItemCount) : "—"} />
-                      <StatCard label="Avg Cart Value" value={formatMoney(cartTimeStats.avgCartTotalPrice)} />
-                    </Grid>
-                    {recentCartTime && recentCartTime.length > 0 && (
-                      <DataTable
-                        columnContentTypes={["text", "numeric", "numeric", "text", "text", "text"]}
-                        headings={["User", "Sessions", "Avg Items", "Avg Time", "Avg Cart Value", "Last Visit"]}
-                        rows={cartRows}
-                      />
-                    )}
-                  </BlockStack>
-                )}
-              </BlockStack>
-            </Card>
-
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
-    </Page>
-  );
+  return <RedirectToDashboard path="/analytics" />;
 }
