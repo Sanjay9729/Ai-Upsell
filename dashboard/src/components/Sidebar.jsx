@@ -1,12 +1,11 @@
 import { NavLink } from 'react-router-dom'
 
 const navItems = [
-  { to: '/goals', label: 'Goals' },
+  { to: '/guardrails', label: 'Goal & Guardrails' },
   { to: '/analytics', label: 'Analytics' },
   { to: '/recommendations', label: 'Recommendations' },
   { to: '/bundles', label: 'Bundles' },
   { to: '/optimization', label: 'Optimization' },
-  { to: '/guardrails', label: 'Guardrails' },
   { to: '/activity-logs', label: 'Activity Logs' },
   { to: '/settings', label: 'Settings' },
 ]
