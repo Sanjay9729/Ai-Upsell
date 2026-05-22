@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "AI Upsell Shopify App - Unified MCP Configuration (SOURCE OF TRUTH)",
+  "version": "1.0.0",
+  "lastUpdated": "2026-05-01",
+  "projectName": "AI Upsell - Autonomous Upsell & Cross-sell Platform",
+  "projectStatus": "Phase 1 Complete - MVP Ready",
+
+  "mcpServers": {
+    "shopify-dev-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@shopify/dev-mcp@latest"],
+      "env": {
+        "POLARIS_UNIFIED": "true",
+        "LIQUID": "true"
+      },
+      "description": "Shopify Development MCP - Handles Polaris components, Liquid templates, and Shopify CLI integration"
+    }
+  },
+
+  "developmentConfig": {
+    "framework": "Remix.js",
+    "uiLibrary": "Shopify Polaris (v13.9.5)",
+    "backend": "Express.js + MongoDB",
+    "aiEngine": "Groq API",
+    "devServer": "http://localhost:3000",
+    "backendServer": "http://localhost:3001",
+    "httpsRequired": true,
+    "watchMode": true
+  },
+
+  "requiredEnvironmentVariables": {
+    "MONGODB_URI": {
+      "description": "MongoDB Atlas connection string",
+      "example": "mongodb+srv://username:password@cluster.mongodb.net/ai-upsell"
+    },
+    "SHOPIFY_API_KEY": {
+      "description": "Shopify app API key from Partners dashboard",
+      "sensitive": true
+    },
+    "SHOPIFY_API_SECRET": {
+      "description": "Shopify app API secret from Partners dashboard",
+      "sensitive": true
+    },
+    "SHOPIFY_ACCESS_TOKEN": {
+      "description": "Auto-populated after OAuth - don't set manually",
+      "sensitive": true
+    },
+    "SHOP_CUSTOM_DOMAIN": {
+      "description": "Test store domain (e.g., mystore.myshopify.com)"
+    },
+    "GROQ_API_KEY": {
+      "description": "Groq LLM API key",
+      "sensitive": true
+    },
+    "SCOPES": {
+      "description": "Shopify OAuth scopes",
+      "default": "write_products,read_products,read_inventory,write_discounts,read_orders,write_script_tags"
+    }
+  },
+
+  "routes": {
+    "dashboard": "/app",
+    "configuration": "/app/goal-setup",
+    "bundles": "/app/bundles",
+    "settings": "/app/settings",
+    "safety": "/app/safety"
+  },
+
+  "mongodbCollections": {
+    "merchant_config": "Merchant goal/risk/guardrail settings",
+    "products": "Synced product catalog",
+    "bundles": "Bundle definitions (manual + AI-generated)",
+    "upsell_events": "User interactions with offers",
+    "safety_mode": "Safety mode state & snapshots",
+    "guardrail_violations": "Detected violations log"
+  },
+
+  "npmScripts": {
+    "dev": "npm run dev → Start dev server (Remix + Shopify CLI)",
+    "dev:alt": "npm run dev:alt → Alt backend on port 3001",
+    "build": "npm run build → Production build",
+    "lint": "npm run lint → ESLint check",
+    "sync": "npm run sync → Sync products from Shopify to MongoDB",
+    "seed": "npm run seed → Seed test products to store",
+    "test:ai": "npm run test:ai → Test AI/Groq integration"
+  },
+
+  "configurationNotes": {
+    "singleSourceOfTruth": "This file (.mcp.json) is the authoritative configuration",
+    "ideSpecificConfigs": [
+      ".cursor/mcp.json → Cursor IDE (references this file)",
+      ".gemini/extensions/shopify-dev-mcp/gemini-extension.json → Gemini (references this file)"
+    ],
+    "separateConcerns": [
+      ".shopify/project.json → Shopify CLI configuration",
+      "package.json → NPM dependencies & build scripts",
+      "shopify.app.toml → Shopify app manifest",
+      "remix.config.js → Remix build configuration"
+    ],
+    "secrets": ".env → Never commit, always add to .gitignore"
+  },
+
+  "phase1Status": {
+    "dashboard": "✅ Complete",
+    "goalSetup": "✅ Complete",
+    "bundles": "✅ Complete",
+    "settings": "✅ Complete",
+    "safety": "✅ Complete",
+    "polaris_components_used": 42,
+    "merchant_features_enabled": "25+",
+    "ready_for_testing": true
+  },
+
+  "phase2Planned": [
+    "Advanced Analytics Dashboard (AOV trends, segment breakdown)",
+    "Optimization Controls (auto-tuning visualization)",
+    "Offer Deep-Dive Analytics",
+    "UX Polish and Navigation improvements",
+    "Performance optimization"
+  ],
+
+  "documentation": {
+    "projectConfig": "PROJECT_CONFIG.md",
+    "phase1QuickStart": "PHASE_1_QUICK_START.md",
+    "phase1Completion": "PHASE_1_COMPLETION_SUMMARY.md"
+  }
+}

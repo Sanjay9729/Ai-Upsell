@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bundle Cart Drawer Fix - Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #007bff;
+            border-radius: 4px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #007bff;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px 5px 5px 0;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button.danger {
+            background: #dc3545;
+        }
+        button.danger:hover {
+            background: #c82333;
+        }
+        .log {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 3px 0;
+            border-bottom: 1px solid #333;
+        }
+        .log-success { color: #00ff00; }
+        .log-error { color: #ff0000; }
+        .log-warning { color: #ffaa00; }
+        .log-info { color: #00aaff; }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .status.ok {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Bundle Cart Drawer Fix - Test Suite</h1>
+        
+        <div class="test-section">
+            <h2>1. Cart State Check</h2>
+            <p>Check the current cart state and identify bundle items.</p>
+            <button onclick="checkCartState()">Check Cart State</button>
+            <button onclick="clearLog()" class="danger">Clear Log</button>
+            <div id="cartStatus" class="status" style="display:none;"></div>
+            <div class="log" id="log"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>2. Bundle Removal Test</h2>
+            <p>Remove a bundle item and monitor the drawer update in real-time.</p>
+            <button onclick="testBundleRemoval()">Test Bundle Removal</button>
+            <button onclick="clearLog()" class="danger">Clear Log</button>
+            <div id="testStatus" class="status" style="display:none;"></div>
+            <div class="log" id="log"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>3. Drawer Content Inspection</h2>
+            <p>Inspect the drawer DOM to check for bundle offer text.</p>
+            <button onclick="inspectDrawer()">Inspect Drawer</button>
+            <button onclick="clearLog()" class="danger">Clear Log</button>
+            <div id="drawerStatus" class="status" style="display:none;"></div>
+            <div class="log" id="log"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>4. Full Test Sequence</h2>
+            <p>Run the complete test sequence: check cart → remove bundle item → inspect drawer.</p>
+            <button onclick="runFullTest()">Run Full Test</button>
+            <button onclick="clearLog()" class="danger">Clear Log</button>
+            <div id="fullTestStatus" class="status" style="display:none;"></div>
+            <div class="log" id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        const log = document.getElementById('log');
+        
+        function addLog(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        function clearLog() {
+            log.innerHTML = '';
+        }
+        
+        function showStatus(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            el.textContent = message;
+            el.className = `status ${type}`;
+            el.style.display = 'block';
+        }
+        
+        async function checkCartState() {
+            clearLog();
+            addLog('🔍 Checking cart state...', 'info');
+            
+            try {
+                const res = await fetch('/cart.js');
+                const cart = await res.json();
+                
+                addLog(`✅ Cart fetched: ${cart.item_count} items`, 'success');
+                
+                const bundleItems = cart.items.filter(item =>
+                    item.properties &&
+                    ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                     (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0))
+                );
+                
+                addLog(`📦 Bundle items: ${bundleItems.length}`, 'info');
+                bundleItems.forEach((item, idx) => {
+                    addLog(`  ${idx + 1}. ${item.title} - ${item.properties.Offer || item.properties.offer}`, 'info');
+                });
+                
+                if (bundleItems.length > 0) {
+                    showStatus('cartStatus', `✅ Found ${bundleItems.length} bundle items`, 'ok');
+                } else {
+                    showStatus('cartStatus', '⚠️ No bundle items in cart', 'warning');
+                }
+            } catch (err) {
+                addLog(`❌ Error: ${err.message}`, 'error');
+                showStatus('cartStatus', `❌ Error: ${err.message}`, 'error');
+            }
+        }
+        
+        async function testBundleRemoval() {
+            clearLog();
+            addLog('🧪 Starting bundle removal test...', 'info');
+            
+            try {
+                // Get cart
+                const res = await fetch('/cart.js');
+                const cart = await res.json();
+                
+                const bundleItems = cart.items.filter(item =>
+                    item.properties &&
+                    ((item.properties.Offer && String(item.properties.Offer).indexOf('Bundle') === 0) ||
+                     (item.properties.offer && String(item.properties.offer).indexOf('Bundle') === 0))
+                );
+                
+                if (bundleItems.length === 0) {
+                    addLog('❌ No bundle items to remove', 'error');
+                    showStatus('testStatus', '❌ No bundle items in cart', 'error');
+                    return;
+                }
+                
+                const itemToRemove = bundleItems[0];
+                addLog(`🗑️  Removing: ${itemToRemove.title}`, 'warning');
+                
+                // Remove item
+                const removeRes = await fetch('/cart/change.js', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: itemToRemove.key,
+                        quantity: 0
+                    })
+                });
+                
+                if (removeRes.ok) {
+                    addLog('✅ Item removed successfully', 'success');
+                    
+                    // Wait for drawer to update
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // Check drawer
+                    const drawer = document.querySelector('cart-drawer');
+                    if (drawer) {
+                        const offerElements = drawer.querySelectorAll('[data-cart-item-property], .cart-item__property, .properties, p, span, div');
+                        let bundleOfferCount = 0;
+                        const offerTexts = [];
+                        
+                        offerElements.forEach(el => {
+                            const text = el.textContent.trim();
+                            if (text && (text.indexOf('Bundle') !== -1 || text.indexOf('Offer') !== -1) && text.length < 100) {
+                                bundleOfferCount++;
+                                offerTexts.push(text);
+                            }
+                        });
+                        
+                        if (bundleOfferCount > 0) {
+                            addLog(`⚠️  Bundle offers still visible: ${bundleOfferCount}`, 'warning');
+                            offerTexts.slice(0, 3).forEach(text => {
+                                addLog(`  - "${text}"`, 'warning');
+                            });
+                            showStatus('testStatus', `⚠️  Bundle offers still visible in drawer`, 'warning');
+                        } else {
+                            addLog('✅ No bundle offers visible in drawer', 'success');
+                            showStatus('testStatus', '✅ Bundle offers successfully removed', 'ok');
+                        }
+                    } else {
+                        addLog('⚠️  Cart drawer not found', 'warning');
+                    }
+                } else {
+                    addLog(`❌ Failed to remove item: ${removeRes.status}`, 'error');
+                    showStatus('testStatus', `❌ Failed to remove item`, 'error');
+                }
+            } catch (err) {
+                addLog(`❌ Error: ${err.message}`, 'error');
+                showStatus('testStatus', `❌ Error: ${err.message}`, 'error');
+            }
+        }
+        
+        async function inspectDrawer() {
+            clearLog();
+            addLog('🔍 Inspecting drawer...', 'info');
+            
+            try {
+                const drawer = document.querySelector('cart-drawer');
+                if (!drawer) {
+                    addLog('❌ Cart drawer not found', 'error');
+                    showStatus('drawerStatus', '❌ Cart drawer not found', 'error');
+                    return;
+                }
+                
+                const items = drawer.querySelectorAll('[data-cart-item], .cart-item, .drawer-cart-item');
+                addLog(`📦 Items in drawer: ${items.length}`, 'info');
+                
+                const offerElements = drawer.querySelectorAll('[data-cart-item-property], .cart-item__property, .properties, p, span, div');
+                let bundleOfferCount = 0;
+                const offerTexts = [];
+                
+                offerElements.forEach(el => {
+                    const text = el.textContent.trim();
+                    if (text && (text.indexOf('Bundle') !== -1 || text.indexOf('Offer') !== -1) && text.length < 100) {
+                        bundleOfferCount++;
+                        offerTexts.push(text);
+                    }
+                });
+                
+                addLog(`🔍 Bundle offer elements found: ${bundleOfferCount}`, 'info');
+                offerTexts.slice(0, 5).forEach(text => {
+                    addLog(`  - "${text}"`, 'warning');
+                });
+                
+                if (bundleOfferCount > 0) {
+                    showStatus('drawerStatus', `⚠️  ${bundleOfferCount} bundle offers visible`, 'warning');
+                } else {
+                    showStatus('drawerStatus', '✅ No bundle offers in drawer', 'ok');
+                }
+            } catch (err) {
+                addLog(`❌ Error: ${err.message}`, 'error');
+                showStatus('drawerStatus', `❌ Error: ${err.message}`, 'error');
+            }
+        }
+        
+        async function runFullTest() {
+            clearLog();
+            addLog('🧪 Running full test sequence...', 'info');
+            
+            // Step 1: Check cart
+            addLog('Step 1: Checking cart state...', 'info');
+            await checkCartState();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Step 2: Remove bundle item
+            addLog('Step 2: Removing bundle item...', 'info');
+            await testBundleRemoval();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Step 3: Inspect drawer
+            addLog('Step 3: Inspecting drawer...', 'info');
+            await inspectDrawer();
+            
+            addLog('✅ Full test sequence completed', 'success');
+            showStatus('fullTestStatus', '✅ Test sequence completed', 'ok');
+        }
+        
+        // Auto-run initial check
+        window.addEventListener('load', () => {
+            addLog('🚀 Test suite loaded', 'success');
+            addLog('Click a button to start testing', 'info');
+        });
+    </script>
+</body>
+</html>

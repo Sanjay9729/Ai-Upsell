@@ -1322,11 +1322,11 @@
         var compareAtParsed = parseFloat(p.compareAtPrice);
         var priceHtml;
         if (priceInfo.applied && priceInfo.compareAt !== priceInfo.price) {
-          priceHtml = '<s class="ai-dc-cmp">$' + priceInfo.compareAt + '</s><span class="ai-dc-price">$' + priceInfo.price + '</span>';
+          priceHtml = '<s class="ai-dc-cmp">Rs. ' + priceInfo.compareAt + '</s><span class="ai-dc-price">Rs. ' + priceInfo.price + '</span>';
         } else if (isFinite(compareAtParsed) && compareAtParsed > parseFloat(p.price || 0) && compareAtParsed.toFixed(2) !== basePrice) {
-          priceHtml = '<s class="ai-dc-cmp">$' + compareAtParsed.toFixed(2) + '</s><span class="ai-dc-price">$' + basePrice + '</span>';
+          priceHtml = '<s class="ai-dc-cmp">Rs. ' + compareAtParsed.toFixed(2) + '</s><span class="ai-dc-price">Rs. ' + basePrice + '</span>';
         } else {
-          priceHtml = '<span class="ai-dc-price">$' + basePrice + '</span>';
+          priceHtml = '<span class="ai-dc-price">Rs. ' + basePrice + '</span>';
         }
         var badgeHtml = '';
         if (discountPct > 0) {
@@ -2140,9 +2140,9 @@
       var upsellImg = product.image ? '<img src="' + product.image + '" alt="" class="ai-bundle-img" />' : '<div class="ai-bundle-img-placeholder"></div>';
       var upsellVid = product.variantId || product.id;
       if (typeof upsellVid === 'string' && upsellVid.includes('/')) upsellVid = upsellVid.split('/').pop();
-      var savingsHtml = savings > 0 ? '<p class="ai-bundle-savings">You save $' + savings.toFixed(2) + ' (' + formatDiscountPercent(discountPct) + '% off)</p>' : '';
-      var comparePriceHtml = bundleOriginalTotal > bundleDiscountedTotal ? '<span class="ai-bundle-compare">$' + bundleOriginalTotal.toFixed(2) + '</span>' : '';
-      return '<div class="ai-upsell-card ai-bundle-card" data-product-id="' + product.id + '" data-inventory-quantity="' + (product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999) + '" data-inventory-policy="' + (product.inventoryPolicy || 'continue') + '"><div class="ai-offer-type-badge ai-offer-type-bundle">Bundle &amp; Save</div><div class="ai-bundle-products"><div class="ai-bundle-item"><a href="' + (src ? src.url : '#') + '" class="ai-bundle-img-link">' + srcImg + '</a><p class="ai-bundle-item-title">' + (src ? src.title : 'Current Product') + '</p></div><div class="ai-bundle-plus">+</div><div class="ai-bundle-item"><a href="' + product.url + '" class="ai-bundle-img-link">' + upsellImg + '</a><p class="ai-bundle-item-title">' + product.title + '</p></div></div><div class="ai-bundle-pricing"><p class="ai-bundle-total-label">Bundle Price</p><p class="ai-bundle-price-row">' + comparePriceHtml + '<span class="ai-bundle-price">$' + bundleDiscountedTotal.toFixed(2) + '</span></p>' + savingsHtml + '</div><div class="ai-upsell-actions"><button class="ai-add-to-cart-btn" data-variant-id="' + upsellVid + '" data-product-id="' + product.id + '" data-source-variant-id="' + (src && src.variantId ? src.variantId : '') + '" data-source-product-id="' + (src && src.id ? src.id : '') + '" data-discount-percent="' + discountPct + '" data-recommendation-type="' + (product.type || 'bundle') + '" data-confidence="' + product.confidence + '"' + (!product.availableForSale ? ' disabled' : '') + '>' + (product.availableForSale ? 'Add to Cart' : 'Out of Stock') + '</button></div></div>';
+      var savingsHtml = savings > 0 ? '<p class="ai-bundle-savings">You save Rs. ' + savings.toFixed(2) + ' (' + formatDiscountPercent(discountPct) + '% off)</p>' : '';
+      var comparePriceHtml = bundleOriginalTotal > bundleDiscountedTotal ? '<span class="ai-bundle-compare">Rs. ' + bundleOriginalTotal.toFixed(2) + '</span>' : '';
+      return '<div class="ai-upsell-card ai-bundle-card" data-product-id="' + product.id + '" data-inventory-quantity="' + (product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999) + '" data-inventory-policy="' + (product.inventoryPolicy || 'continue') + '"><div class="ai-offer-type-badge ai-offer-type-bundle">Bundle &amp; Save</div><div class="ai-bundle-products"><div class="ai-bundle-item"><a href="' + (src ? src.url : '#') + '" class="ai-bundle-img-link">' + srcImg + '</a><p class="ai-bundle-item-title">' + (src ? src.title : 'Current Product') + '</p></div><div class="ai-bundle-plus">+</div><div class="ai-bundle-item"><a href="' + product.url + '" class="ai-bundle-img-link">' + upsellImg + '</a><p class="ai-bundle-item-title">' + product.title + '</p></div></div><div class="ai-bundle-pricing"><p class="ai-bundle-total-label">Bundle Price</p><p class="ai-bundle-price-row">' + comparePriceHtml + '<span class="ai-bundle-price">Rs. ' + bundleDiscountedTotal.toFixed(2) + '</span></p>' + savingsHtml + '</div><div class="ai-upsell-actions"><button class="ai-add-to-cart-btn" data-variant-id="' + upsellVid + '" data-product-id="' + product.id + '" data-source-variant-id="' + (src && src.variantId ? src.variantId : '') + '" data-source-product-id="' + (src && src.id ? src.id : '') + '" data-discount-percent="' + discountPct + '" data-recommendation-type="' + (product.type || 'bundle') + '" data-confidence="' + product.confidence + '"' + (!product.availableForSale ? ' disabled' : '') + '>' + (product.availableForSale ? 'Add to Cart' : 'Out of Stock') + '</button></div></div>';
     }
 
     function buildMultiBundleCardHTML(sourceProduct, bundleProducts) {
@@ -2175,7 +2175,7 @@
         itemsHtml += '<div class="ai-mbc-item" data-vid="' + (vid || '') + '" data-product-id="' + (p.id || '') + '" data-handle="' + (p.handle || '') + '">'
           + '<a href="' + (p.url || '#') + '" class="ai-mbc-img-link">' + imgHtml + '</a>'
           + '<p class="ai-mbc-title">' + (p.title || '') + '</p>'
-          + '<p class="ai-mbc-price-row"><span class="ai-mbc-price">$' + price.toFixed(2) + '</span></p>'
+          + '<p class="ai-mbc-price-row"><span class="ai-mbc-price">Rs. ' + price.toFixed(2) + '</span></p>'
           + '<div class="ai-mbc-qty"><button type="button" class="ai-mbc-qty-btn ai-mbc-minus">\u2212</button><span class="ai-mbc-qty-val">1</span><button type="button" class="ai-mbc-qty-btn ai-mbc-plus">+</button></div>'
           + '</div>';
       });
@@ -2190,8 +2190,8 @@
       var srcVariantId = src && src.variantId ? src.variantId : '';
       var buttonText = 'Add ' + totalCount + ' Items';
       var totalPriceHtml = savings > 0
-        ? '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-original">$' + originalTotal.toFixed(2) + '</span> <span class="ai-mbc-total-discounted">$' + discountedTotal.toFixed(2) + '</span>'
-        : '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-discounted">$' + discountedTotal.toFixed(2) + '</span>';
+        ? '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-original">Rs. ' + originalTotal.toFixed(2) + '</span> <span class="ai-mbc-total-discounted">Rs. ' + discountedTotal.toFixed(2) + '</span>'
+        : '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-discounted">Rs. ' + discountedTotal.toFixed(2) + '</span>';
       return '<div class="ai-upsell-card ai-bundle-card ai-multi-bundle-card" data-source-price="' + srcPrice.toFixed(2) + '">'
         + '<div class="ai-offer-type-badge ai-offer-type-bundle">Bundle &amp; Save</div>'
         + '<div class="ai-mbc-grid">' + itemsHtml + '</div>'
@@ -2454,8 +2454,8 @@
         var totalRow = card.querySelector('.ai-mbc-total-row');
         if (totalRow) {
           totalRow.innerHTML = savings > 0.001
-            ? '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-original">$' + originalTotal.toFixed(2) + '</span> <span class="ai-mbc-total-discounted">$' + discountedTotal.toFixed(2) + '</span>'
-            : '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-discounted">$' + discountedTotal.toFixed(2) + '</span>';
+            ? '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-original">Rs. ' + originalTotal.toFixed(2) + '</span> <span class="ai-mbc-total-discounted">Rs. ' + discountedTotal.toFixed(2) + '</span>'
+            : '<span class="ai-mbc-total-label">Total price : </span><span class="ai-mbc-total-discounted">Rs. ' + discountedTotal.toFixed(2) + '</span>';
         }
         btn.setAttribute('data-original-text', 'Add ' + totalQty + ' Items');
         if (btn.textContent !== 'Adding...' && btn.textContent !== 'Added \u2713') {
@@ -2512,14 +2512,14 @@
       var variantHtml = hasV ? '<div class="ai-variant-wrapper"><select class="ai-variant-select">' + product.variants.map(function (v) { var vInfo = applyAiDiscount(v.price, v.compareAtPrice || '', discountPct); return '<option value="' + v.id + '" data-price="' + vInfo.price + '" data-compare="' + (vInfo.compareAt || '') + '"' + (!v.available ? ' disabled' : '') + (v.id === (first && first.id) ? ' selected' : '') + '>' + v.title + (!v.available ? ' - Sold out' : '') + '</option>'; }).join('') + '</select></div>' : '';
       var subscriptionMetaHtml = offerType === 'subscription_upgrade' ? getSubscriptionMetaHTML(product) : '';
       var primaryActionLabel = product.availableForSale ? (offerType === 'subscription_upgrade' ? 'Start Subscription' : 'Add to Cart') : 'Out of Stock';
-      return '<div class="' + cardClass + '" data-product-id="' + product.id + '" data-offer-type="' + offerType + '"' + volumeTiersAttr + ' data-selling-plan-id="' + (product.sellingPlanIdNumeric || product.sellingPlanId || '') + '" data-inventory-quantity="' + (product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999) + '" data-inventory-policy="' + (product.inventoryPolicy || 'continue') + '">' + getOfferTypeBadge(product) + '<a href="' + product.url + '" class="ai-upsell-link"><div class="ai-upsell-image-wrapper">' + (product.image ? '<img src="' + product.image + '" alt="' + product.title + '" class="ai-upsell-image" loading="lazy" />' : '') + '</div><div class="ai-upsell-info"><h3 class="ai-upsell-product-title">' + product.title + '</h3><p class="ai-upsell-price-block">' + (dc && parseFloat(dc) > parseFloat(dp) && parseFloat(dc).toFixed(2) !== parseFloat(dp).toFixed(2) ? '<span class="ai-upsell-compare-price">$' + parseFloat(dc).toFixed(2) + '</span> ' : '') + '<span class="ai-upsell-price">$' + parseFloat(dp).toFixed(2) + '</span>' + discountLabel + '</p>' + subscriptionMetaHtml + '</div></a><div class="ai-upsell-actions">' + variantHtml + '<div class="ai-upsell-quantity"><span class="ai-qty-label">Quantity</span><div class="ai-qty-controls"><button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">\u2212</button><input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly /><button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button></div></div><button class="ai-add-to-cart-btn" data-variant-id="' + eVid + '" data-product-id="' + product.id + '" data-discount-percent="' + (discountPct || 0) + '" data-recommendation-type="' + product.type + '" data-confidence="' + product.confidence + '" ' + (!product.availableForSale ? 'disabled' : '') + '>' + primaryActionLabel + '</button></div></div>';
+      return '<div class="' + cardClass + '" data-product-id="' + product.id + '" data-offer-type="' + offerType + '"' + volumeTiersAttr + ' data-selling-plan-id="' + (product.sellingPlanIdNumeric || product.sellingPlanId || '') + '" data-inventory-quantity="' + (product.inventoryQuantity !== undefined ? product.inventoryQuantity : 999) + '" data-inventory-policy="' + (product.inventoryPolicy || 'continue') + '">' + getOfferTypeBadge(product) + '<a href="' + product.url + '" class="ai-upsell-link"><div class="ai-upsell-image-wrapper">' + (product.image ? '<img src="' + product.image + '" alt="' + product.title + '" class="ai-upsell-image" loading="lazy" />' : '') + '</div><div class="ai-upsell-info"><h3 class="ai-upsell-product-title">' + product.title + '</h3><p class="ai-upsell-price-block">' + (dc && parseFloat(dc) > parseFloat(dp) && parseFloat(dc).toFixed(2) !== parseFloat(dp).toFixed(2) ? '<span class="ai-upsell-compare-price">Rs. ' + parseFloat(dc).toFixed(2) + '</span> ' : '') + '<span class="ai-upsell-price">Rs. ' + parseFloat(dp).toFixed(2) + '</span>' + discountLabel + '</p>' + subscriptionMetaHtml + '</div></a><div class="ai-upsell-actions">' + variantHtml + '<div class="ai-upsell-quantity"><span class="ai-qty-label">Quantity</span><div class="ai-qty-controls"><button class="ai-qty-btn ai-qty-minus" aria-label="Decrease quantity">\u2212</button><input type="number" class="ai-qty-input" value="1" min="1" max="99" readonly /><button class="ai-qty-btn ai-qty-plus" aria-label="Increase quantity">+</button></div></div><button class="ai-add-to-cart-btn" data-variant-id="' + eVid + '" data-product-id="' + product.id + '" data-discount-percent="' + (discountPct || 0) + '" data-recommendation-type="' + product.type + '" data-confidence="' + product.confidence + '" ' + (!product.availableForSale ? 'disabled' : '') + '>' + primaryActionLabel + '</button></div></div>';
     }
 
     function updateUpsellPrice(card, qty) {
       var el = card.querySelector('span.ai-upsell-price'); if (!el) return;
       var orig = el.getAttribute('data-original-price') || el.textContent;
       var m = orig.match(/[\d,]+\.?\d*/); if (!m) return;
-      var sym = (orig.match(/[^\d\s,\.]+/) || ['$'])[0];
+      var sym = (orig.match(/[^\d\s,\.]+/) || ['Rs. '])[0];
       var base = parseFloat(m[0].replace(/,/g, ''));
       el.textContent = sym + (base * qty).toFixed(2);
       if (!el.hasAttribute('data-original-price')) el.setAttribute('data-original-price', orig);
@@ -2545,9 +2545,9 @@
           var np = opt.dataset.price, nc = opt.dataset.compare;
           if (np) {
             var pe = card.querySelector('.ai-upsell-price');
-            if (pe) { var s = (pe.textContent.match(/[^\d\s,\.]+/) || ['$'])[0]; pe.textContent = s + parseFloat(np).toFixed(2); pe.removeAttribute('data-original-price'); }
+            if (pe) { var s = (pe.textContent.match(/[^\d\s,\.]+/) || ['Rs. '])[0]; pe.textContent = s + parseFloat(np).toFixed(2); pe.removeAttribute('data-original-price'); }
             var ce = card.querySelector('.ai-upsell-compare-price');
-            if (ce) { if (nc && parseFloat(nc) > parseFloat(np)) { var s2 = (ce.textContent.match(/[^\d\s,\.]+/) || ['$'])[0]; ce.textContent = s2 + parseFloat(nc).toFixed(2); ce.style.display = ''; ce.removeAttribute('data-original-price'); } else { ce.style.display = 'none'; } }
+            if (ce) { if (nc && parseFloat(nc) > parseFloat(np)) { var s2 = (ce.textContent.match(/[^\d\s,\.]+/) || ['Rs. '])[0]; ce.textContent = s2 + parseFloat(nc).toFixed(2); ce.style.display = ''; ce.removeAttribute('data-original-price'); } else { ce.style.display = 'none'; } }
           }
           var qi = card.querySelector('.ai-qty-input'); if (qi) qi.value = '1';
           updateUpsellPrice(card, 1);

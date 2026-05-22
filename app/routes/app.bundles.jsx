@@ -2,6 +2,22 @@ import { useEffect, useState } from 'react';
 import { json } from '@remix-run/node';
 import { useLoaderData, useFetcher } from '@remix-run/react';
 import { authenticate } from '../shopify.server';
+import {
+  Page,
+  Card,
+  BlockStack,
+  InlineStack,
+  InlineGrid,
+  Text,
+  Button,
+  TextField,
+  Badge,
+  Banner,
+  EmptyState,
+  Box,
+  Divider,
+  ChoiceList,
+} from '@shopify/polaris';
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -11,14 +27,11 @@ export const loader = async ({ request }) => {
     const { getBundles, getBundleAnalytics } = await import("../../backend/services/bundleEngine.js");
     const db = await getDb();
 
-    // Load current offer display mode setting
     const config = await db.collection(collections.merchantConfig).findOne({ shopId: session.shop });
     const offerDisplayMode = config?.offerDisplayMode || 'both';
-    
-    // Fetch bundles for the shop
+
     const bundlesResult = await getBundles(session.shop);
-    
-    // Fetch product details for bundle items
+
     const bundleProducts = new Map();
     for (const bundle of bundlesResult.bundles) {
       for (const productId of bundle.productIds) {
@@ -30,7 +43,6 @@ export const loader = async ({ request }) => {
       }
     }
 
-    // Fetch analytics for each bundle
     const bundlesWithAnalytics = await Promise.all(
       bundlesResult.bundles.map(async (bundle) => {
         const analyticsResult = await getBundleAnalytics(session.shop, bundle._id);
@@ -116,21 +128,17 @@ export const action = async ({ request }) => {
 };
 
 export default function BundlesPage() {
-  const { bundles, shopId, offerDisplayMode: initialOfferMode } = useLoaderData();
+  const { bundles, offerDisplayMode: initialOfferMode } = useLoaderData();
   const fetcher = useFetcher();
   const [showCreate, setShowCreate] = useState(false);
   const [expandedBundles, setExpandedBundles] = useState(new Set());
-  const [offerMode, setOfferMode] = useState(initialOfferMode || 'both');
+  const [offerMode, setOfferMode] = useState([initialOfferMode || 'both']);
   const [modeSaved, setModeSaved] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    productIds: [],
-    discountPercent: 10
-  });
+  const [formData, setFormData] = useState({ name: '', productIds: '', discountPercent: '10' });
 
   const handleSaveOfferMode = () => {
     fetcher.submit(
-      { actionType: 'save_offer_mode', offerDisplayMode: offerMode },
+      { actionType: 'save_offer_mode', offerDisplayMode: offerMode[0] },
       { method: 'POST', encType: 'application/json' }
     );
     setModeSaved(true);
@@ -147,306 +155,163 @@ export default function BundlesPage() {
   };
 
   const handleCreateBundle = () => {
+    const productIds = formData.productIds.split(',').map(s => s.trim()).filter(Boolean);
     fetcher.submit(
-      {
-        actionType: 'create',
-        ...formData
-      },
+      { actionType: 'create', name: formData.name, productIds, discountPercent: formData.discountPercent },
       { method: 'POST', encType: 'application/json' }
     );
     setShowCreate(false);
-    setFormData({ name: '', productIds: [], discountPercent: 10 });
+    setFormData({ name: '', productIds: '', discountPercent: '10' });
   };
 
   const handlePauseBundle = (bundleId, isPaused) => {
     fetcher.submit(
-      {
-        actionType: isPaused ? 'resume' : 'pause',
-        bundleId
-      },
+      { actionType: isPaused ? 'resume' : 'pause', bundleId },
       { method: 'POST', encType: 'application/json' }
     );
   };
 
+  const offerModeChoices = [
+    { value: 'bundle', label: 'Bundle & Save', helpText: 'Show only bundle offers' },
+    { value: 'volume_discount', label: 'Buy More, Save More', helpText: 'Show only volume discount offers' },
+    { value: 'both', label: 'Both', helpText: 'Show both types together' },
+  ];
+
+  const productIdsArray = formData.productIds.split(',').map(s => s.trim()).filter(Boolean);
+
   return (
-    <div style={{ padding: '24px', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto' }}>
-
-      {/* Offer Display Mode Setting */}
-      <div style={{ marginBottom: '28px', padding: '20px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
-        <h2 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '6px' }}>Offer Display Mode</h2>
-        <p style={{ fontSize: '13px', color: '#666', marginBottom: '16px' }}>
-          Choose which type of offer to show customers on the product page.
-        </p>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
-          {[
-            { value: 'bundle', label: 'Bundle & Save', desc: 'Show only bundle offers' },
-            { value: 'volume_discount', label: 'Buy More, Save More', desc: 'Show only volume discount offers' },
-            { value: 'both', label: 'Both', desc: 'Show both types together' },
-          ].map(opt => (
-            <label
-              key={opt.value}
-              onClick={() => setOfferMode(opt.value)}
-              style={{
-                display: 'flex', alignItems: 'flex-start', gap: '10px',
-                padding: '12px 16px', border: `2px solid ${offerMode === opt.value ? '#007bff' : '#ddd'}`,
-                borderRadius: '8px', cursor: 'pointer', backgroundColor: offerMode === opt.value ? '#e8f0fe' : '#fff',
-                minWidth: '180px', flex: '1'
-              }}
-            >
-              <input type="radio" name="offerMode" value={opt.value} checked={offerMode === opt.value} onChange={() => setOfferMode(opt.value)} style={{ marginTop: '2px' }} />
-              <div>
-                <div style={{ fontWeight: '600', fontSize: '14px' }}>{opt.label}</div>
-                <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{opt.desc}</div>
-              </div>
-            </label>
-          ))}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button
-            onClick={handleSaveOfferMode}
-            style={{ padding: '8px 20px', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
-          >
-            Save Setting
-          </button>
-          {modeSaved && <span style={{ color: '#28a745', fontSize: '13px', fontWeight: '600' }}>Saved!</span>}
-        </div>
-      </div>
-
-      <div style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ fontSize: '28px', fontWeight: '600', marginBottom: '8px' }}>📦 Bundle Review</h1>
-          <p style={{ color: '#666', fontSize: '14px' }}>
-            Manage auto-generated and merchant bundles. View performance metrics and adjust configurations.
-          </p>
-        </div>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#007bff',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '6px',
-            fontSize: '14px',
-            fontWeight: '600',
-            cursor: 'pointer'
-          }}
-        >
-          ➕ Create Bundle
-        </button>
-      </div>
-
-      {/* Create Bundle Form */}
-      {showCreate && (
-        <div style={{
-          padding: '20px',
-          backgroundColor: '#f9f9f9',
-          border: '1px solid #ddd',
-          borderRadius: '8px',
-          marginBottom: '24px'
-        }}>
-          <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>Create New Bundle</h3>
-          <div style={{ display: 'grid', gap: '12px' }}>
-            <input
-              type="text"
-              placeholder="Bundle name"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              style={{
-                padding: '8px 12px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px'
-              }}
+    <Page
+      title="Bundle Review"
+      subtitle="Manage auto-generated and merchant bundles. View performance metrics and adjust configurations."
+      primaryAction={{ content: showCreate ? 'Cancel' : 'Create Bundle', onAction: () => setShowCreate(!showCreate) }}
+    >
+      <BlockStack gap="500">
+        {/* Offer Display Mode */}
+        <Card>
+          <BlockStack gap="400">
+            <BlockStack gap="100">
+              <Text variant="headingMd" as="h2">Offer Display Mode</Text>
+              <Text variant="bodySm" tone="subdued">
+                Choose which type of offer to show customers on the product page.
+              </Text>
+            </BlockStack>
+            <ChoiceList
+              title="Display mode"
+              titleHidden
+              choices={offerModeChoices}
+              selected={offerMode}
+              onChange={setOfferMode}
             />
-            <input
-              type="text"
-              placeholder="Product IDs (comma separated)"
-              value={formData.productIds.join(',')}
-              onChange={(e) => setFormData({
-                ...formData,
-                productIds: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
-              })}
-              style={{
-                padding: '8px 12px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px'
-              }}
-            />
-            <input
-              type="number"
-              placeholder="Discount %"
-              min="0"
-              max="100"
-              value={formData.discountPercent}
-              onChange={(e) => setFormData({ ...formData, discountPercent: Number(e.target.value) })}
-              style={{
-                padding: '8px 12px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px'
-              }}
-            />
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={handleCreateBundle}
-                disabled={!formData.name || formData.productIds.length < 2}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: '#28a745',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  cursor: !formData.name || formData.productIds.length < 2 ? 'not-allowed' : 'pointer'
-                }}
-              >
-                Create
-              </button>
-              <button
-                onClick={() => setShowCreate(false)}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: '#6c757d',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                  cursor: 'pointer'
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+            <InlineStack gap="300" blockAlign="center">
+              <Button variant="primary" onClick={handleSaveOfferMode}>Save Setting</Button>
+              {modeSaved && <Text tone="success" variant="bodySm">Saved!</Text>}
+            </InlineStack>
+          </BlockStack>
+        </Card>
 
-      {/* Bundle Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '16px' }}>
-        {bundles.map(bundle => (
-          <div
-            key={bundle._id}
-            style={{
-              padding: '16px',
-              border: bundle.status === 'paused' ? '1px solid #ccc' : '1px solid #ddd',
-              borderRadius: '8px',
-              backgroundColor: bundle.status === 'paused' ? '#f5f5f5' : '#fff',
-              opacity: bundle.status === 'paused' ? 0.6 : 1
-            }}
-          >
-            <div style={{ marginBottom: '12px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '4px' }}>
-                {bundle.name}
-              </h3>
-              <p style={{ fontSize: '13px', color: '#666' }}>
-                {bundle.displayNames.join(' + ')}
-              </p>
-            </div>
+        {/* Create Bundle Form */}
+        {showCreate && (
+          <Card>
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Create New Bundle</Text>
+              <TextField
+                label="Bundle name"
+                value={formData.name}
+                onChange={(v) => setFormData({ ...formData, name: v })}
+                autoComplete="off"
+              />
+              <TextField
+                label="Product IDs (comma separated)"
+                value={formData.productIds}
+                onChange={(v) => setFormData({ ...formData, productIds: v })}
+                helpText="Enter at least 2 product IDs"
+                autoComplete="off"
+              />
+              <TextField
+                label="Discount %"
+                type="number"
+                value={formData.discountPercent}
+                onChange={(v) => setFormData({ ...formData, discountPercent: v })}
+                min="0"
+                max="100"
+                autoComplete="off"
+              />
+              <InlineStack gap="200">
+                <Button
+                  variant="primary"
+                  disabled={!formData.name || productIdsArray.length < 2}
+                  onClick={handleCreateBundle}
+                >
+                  Create
+                </Button>
+                <Button onClick={() => setShowCreate(false)}>Cancel</Button>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        )}
 
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '12px',
-              padding: '12px 0',
-              borderTop: '1px solid #eee',
-              borderBottom: '1px solid #eee',
-              marginBottom: '12px',
-              fontSize: '13px'
-            }}>
-              <div>
-                <span style={{ color: '#666' }}>Discount:</span>{' '}
-                <span style={{ fontWeight: '600' }}>{bundle.discountPercent}%</span>
-              </div>
-              <div>
-                <span style={{ color: '#666' }}>Type:</span>{' '}
-                <span style={{ fontWeight: '600' }}>{bundle.bundleType}</span>
-              </div>
-              <div>
-                <span style={{ color: '#666' }}>Views:</span>{' '}
-                <span style={{ fontWeight: '600' }}>{bundle.analytics?.stats?.view || 0}</span>
-              </div>
-              <div>
-                <span style={{ color: '#666' }}>Conversions:</span>{' '}
-                <span style={{ fontWeight: '600' }}>{bundle.analytics?.stats?.cart_add || 0}</span>
-              </div>
-            </div>
+        {/* Bundle Cards */}
+        {bundles.length === 0 ? (
+          <EmptyState heading="No bundles yet" image="">
+            <p>Create your first bundle or wait for autonomous recommendations to appear.</p>
+          </EmptyState>
+        ) : (
+          <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+            {bundles.map(bundle => (
+              <Card key={bundle._id}>
+                <BlockStack gap="300">
+                  <BlockStack gap="100">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text variant="bodyMd" fontWeight="bold">{bundle.name}</Text>
+                      <Badge tone={bundle.status === 'paused' ? 'critical' : 'success'}>
+                        {bundle.status}
+                      </Badge>
+                    </InlineStack>
+                    <Text variant="bodySm" tone="subdued">{bundle.displayNames.join(' + ')}</Text>
+                  </BlockStack>
 
-            {expandedBundles.has(bundle._id) && (
-              <div style={{
-                marginBottom: '12px',
-                padding: '12px',
-                background: '#f8f9fa',
-                borderRadius: '6px',
-                border: '1px solid #e9ecef',
-                fontSize: '13px'
-              }}>
-                <div style={{ fontWeight: 600, marginBottom: '8px', color: '#343a40' }}>Bundle Details</div>
-                <div style={{ display: 'grid', gap: '6px', color: '#495057' }}>
-                  <div><span style={{ color: '#6c757d' }}>Type:</span> {bundle.bundleType === 'auto' ? 'Auto-generated' : 'Merchant-created'}</div>
-                  <div><span style={{ color: '#6c757d' }}>Confidence:</span> {bundle.confidence != null ? `${(bundle.confidence * 100).toFixed(0)}%` : '—'}</div>
-                  <div><span style={{ color: '#6c757d' }}>Products ({bundle.productIds?.length || 0}):</span> {bundle.displayNames.join(', ')}</div>
-                  <div><span style={{ color: '#6c757d' }}>Click-through:</span> {bundle.analytics?.stats?.view > 0 ? `${((bundle.analytics.stats.click || 0) / bundle.analytics.stats.view * 100).toFixed(1)}%` : '—'}</div>
-                  <div><span style={{ color: '#6c757d' }}>Conversion:</span> {bundle.analytics?.stats?.view > 0 ? `${((bundle.analytics.stats.cart_add || 0) / bundle.analytics.stats.view * 100).toFixed(1)}%` : '—'}</div>
-                  <div><span style={{ color: '#6c757d' }}>Status:</span> <span style={{ fontWeight: 600, color: bundle.status === 'paused' ? '#dc3545' : '#28a745' }}>{bundle.status}</span></div>
-                </div>
-              </div>
-            )}
+                  <Divider />
 
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={() => handlePauseBundle(bundle._id, bundle.status === 'paused')}
-                style={{
-                  flex: 1,
-                  padding: '8px 12px',
-                  backgroundColor: bundle.status === 'paused' ? '#28a745' : '#ffc107',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '13px',
-                  fontWeight: '600',
-                  cursor: 'pointer'
-                }}
-              >
-                {bundle.status === 'paused' ? '▶ Resume' : '⏸ Pause'}
-              </button>
-              <button
-                onClick={() => toggleDetails(bundle._id)}
-                style={{
-                  flex: 1,
-                  padding: '8px 12px',
-                  backgroundColor: expandedBundles.has(bundle._id) ? '#343a40' : '#6c757d',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '13px',
-                  fontWeight: '600',
-                  cursor: 'pointer'
-                }}
-              >
-                {expandedBundles.has(bundle._id) ? '▲ Hide Details' : '📊 Details'}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+                  <InlineGrid columns={2} gap="200">
+                    <Text variant="bodySm">Discount: <strong>{bundle.discountPercent}%</strong></Text>
+                    <Text variant="bodySm">Type: <strong>{bundle.bundleType}</strong></Text>
+                    <Text variant="bodySm">Views: <strong>{bundle.analytics?.stats?.view || 0}</strong></Text>
+                    <Text variant="bodySm">Conversions: <strong>{bundle.analytics?.stats?.cart_add || 0}</strong></Text>
+                  </InlineGrid>
 
-      {bundles.length === 0 && (
-        <div style={{
-          padding: '40px',
-          textAlign: 'center',
-          backgroundColor: '#f9f9f9',
-          borderRadius: '8px',
-          color: '#666'
-        }}>
-          <p style={{ fontSize: '16px', marginBottom: '12px' }}>No bundles yet</p>
-          <p style={{ fontSize: '13px', color: '#999' }}>
-            Create your first bundle or wait for autonomous recommendations to appear.
-          </p>
-        </div>
-      )}
-    </div>
+                  {expandedBundles.has(bundle._id) && (
+                    <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                      <BlockStack gap="100">
+                        <Text variant="bodySm" fontWeight="bold">Bundle Details</Text>
+                        <Text variant="bodySm">Source: {bundle.bundleType === 'auto' ? 'Auto-generated' : 'Merchant-created'}</Text>
+                        <Text variant="bodySm">Confidence: {bundle.confidence != null ? `${(bundle.confidence * 100).toFixed(0)}%` : '—'}</Text>
+                        <Text variant="bodySm">Products ({bundle.productIds?.length || 0}): {bundle.displayNames.join(', ')}</Text>
+                        <Text variant="bodySm">Click-through: {bundle.analytics?.stats?.view > 0 ? `${((bundle.analytics.stats.click || 0) / bundle.analytics.stats.view * 100).toFixed(1)}%` : '—'}</Text>
+                        <Text variant="bodySm">Conversion: {bundle.analytics?.stats?.view > 0 ? `${((bundle.analytics.stats.cart_add || 0) / bundle.analytics.stats.view * 100).toFixed(1)}%` : '—'}</Text>
+                      </BlockStack>
+                    </Box>
+                  )}
+
+                  <InlineStack gap="200">
+                    <Button
+                      tone={bundle.status === 'paused' ? 'success' : 'critical'}
+                      onClick={() => handlePauseBundle(bundle._id, bundle.status === 'paused')}
+                    >
+                      {bundle.status === 'paused' ? 'Resume' : 'Pause'}
+                    </Button>
+                    <Button
+                      variant={expandedBundles.has(bundle._id) ? 'primary' : undefined}
+                      onClick={() => toggleDetails(bundle._id)}
+                    >
+                      {expandedBundles.has(bundle._id) ? 'Hide Details' : 'Details'}
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+            ))}
+          </InlineGrid>
+        )}
+      </BlockStack>
+    </Page>
   );
 }
