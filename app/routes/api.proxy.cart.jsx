@@ -345,7 +345,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+        "Cache-Control": "private, max-age=60",
       }
     });
 
