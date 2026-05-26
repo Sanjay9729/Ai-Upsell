@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
+import { API_URL } from '../config'
+import { getShop } from '../hooks/useApi'
 
-const API_BASE = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '')
+const API_BASE = API_URL
 const API_KEY = import.meta.env.VITE_DASHBOARD_API_KEY || ''
-const SHOP = import.meta.env.VITE_SHOP_DOMAIN || ''
 
 const GOALS = [
   { value: 'increase_aov', label: 'Increase AOV', desc: 'Maximise average order value through bundles and add-ons.' },
@@ -27,7 +28,7 @@ function buildListText(ids = [], handles = []) {
 }
 
 export default function GoalGuardrails() {
-  const shop = SHOP
+  const shop = getShop()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -49,7 +50,7 @@ export default function GoalGuardrails() {
   useEffect(() => {
     if (!shop) { setLoading(false); return }
     fetch(`${API_BASE}/api/dashboard/goal-guardrails?shop=${encodeURIComponent(shop)}`, {
-      headers: { 'X-Dashboard-Key': API_KEY },
+      headers: API_KEY ? { 'X-Dashboard-Key': API_KEY } : {},
     })
       .then(r => r.json())
       .then(data => {
@@ -82,7 +83,7 @@ export default function GoalGuardrails() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Dashboard-Key': API_KEY,
+          ...(API_KEY ? { 'X-Dashboard-Key': API_KEY } : {}),
         },
         body: JSON.stringify({
           goal: selectedGoal,
