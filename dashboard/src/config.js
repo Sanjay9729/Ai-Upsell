@@ -1,3 +1,4 @@
-// Always use relative URLs — Vite proxy handles /api/* in dev,
-// Netlify redirects handle /api/* in production.
-export const API_URL = '';
+// In dev: Vite proxy handles /api/* (relative URL = '').
+// In production: VITE_BACKEND_URL points directly to the backend,
+// bypassing the Netlify proxy so the correct Render URL is always used.
+export const API_URL = import.meta.env.VITE_BACKEND_URL || '';
