@@ -120,7 +120,7 @@ export const loader = async ({ request }) => {
     const _cacheHeaders = {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+      "Cache-Control": "private, max-age=60",
     };
 
     // Fetch cache + merchantConfig in parallel so offerDisplayMode filter applies to cached results too
@@ -216,7 +216,15 @@ export const loader = async ({ request }) => {
       ;(async () => {
         try {
           const freshDecision = await decideProductOffers({ shopId: shop, productId, userId, limit: 4, placement: "product_page" });
-          const freshRecs = (freshDecision.offers || []).map(product => {
+          const bgGoal = merchantConfig?.goal || 'increase_aov';
+          const bgDisplayMode = merchantConfig?.offerDisplayMode || 'both';
+          const freshOffers = applyDisplayModeFilter(
+            freshDecision.offers || [],
+            bgGoal,
+            bgDisplayMode,
+            freshDecision.meta?.discountPercent ?? null
+          );
+          const freshRecs = freshOffers.map(product => {
             const recType = product.recommendationType || "similar";
             const offerType = product.offerType || "addon_upsell";
             const baseDiscount = product.discountPercent ?? freshDecision.meta?.discountPercent ?? null;
@@ -451,7 +459,7 @@ export const loader = async ({ request }) => {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+        "Cache-Control": "private, max-age=60",
       }
     });
 
