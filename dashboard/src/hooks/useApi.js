@@ -7,7 +7,7 @@ export function getShop() {
     localStorage.setItem('upsell_shop', param);
     return param;
   }
-  return localStorage.getItem('upsell_shop') || '';
+  return localStorage.getItem('upsell_shop') || import.meta.env.VITE_SHOP_DOMAIN || '';
 }
 
 export function useApi(resource) {
