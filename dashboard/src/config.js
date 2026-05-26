@@ -1,1 +1,3 @@
-export const API_URL = import.meta.env.VITE_API_URL || 'https://ai-upsell.onrender.com';
+// Always use relative URLs — Vite proxy handles /api/* in dev,
+// Netlify redirects handle /api/* in production.
+export const API_URL = '';

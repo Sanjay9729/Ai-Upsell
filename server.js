@@ -47,7 +47,18 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+
+// Apply JSON body parsing only to Express-owned routes.
+// Remix routes (e.g. /api/dashboard/*) read the raw body stream themselves —
+// if express.json() consumes the stream first, request.json() in the Remix
+// action receives an empty body and throws "Unexpected end of JSON input".
+const jsonParser = express.json();
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/dashboard')) {
+    return next();
+  }
+  return jsonParser(req, res, next);
+});
 
 // Serve Remix client assets
 app.use(express.static(path.join(__dirname, 'build', 'client'), { maxAge: '1h' }));
