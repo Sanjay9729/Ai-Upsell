@@ -158,7 +158,7 @@ export const loader = async ({ request }) => {
     function applyDisplayModeFilter(recs, goal, displayMode, decisionDiscountPercent = null) {
       // Revenue per Visitor & Subscription Adoption: always addon_upsell, no bundles/volume
       if (goal === 'revenue_per_visitor' || goal === 'subscription_adoption') {
-        return recs.map(r => ({ ...r, offerType: 'addon_upsell' }));
+        return recs.map(({ tagline, tiers, ...r }) => ({ ...r, offerType: 'addon_upsell' }));
       }
       // AOV & Inventory Movement: apply merchant's display mode choice
       if (displayMode === 'bundle') {
