@@ -286,7 +286,8 @@
     var _prefetchUid = window.__AI_UPSELL_USER_ID__ || '';
     window.__AI_UPSELL_PREFETCH__ = fetch(
       '/apps/ai-upsell?id=gid://shopify/Product/' + _C.productId +
-      (_prefetchUid ? '&userId=' + encodeURIComponent(_prefetchUid) : '')
+      (_prefetchUid ? '&userId=' + encodeURIComponent(_prefetchUid) : '') +
+      '&_t=' + Date.now()
     );
   }
 
