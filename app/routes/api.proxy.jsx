@@ -156,31 +156,31 @@ export const loader = async ({ request }) => {
 
     // Helper to apply goal + offerDisplayMode filter to a recommendations array
     function applyDisplayModeFilter(recs, goal, displayMode, decisionDiscountPercent = null) {
+      // Strip stale tagline/tiers so getOfferTypeExtras always wins
+      const strip = ({ tagline, tiers, ...r }) => r;
+
       // Revenue per Visitor & Subscription Adoption: always addon_upsell, no bundles/volume
       if (goal === 'revenue_per_visitor' || goal === 'subscription_adoption') {
-        return recs.map(({ tagline, tiers, ...r }) => ({ ...r, offerType: 'addon_upsell' }));
+        return recs.map(r => ({ ...strip(r), offerType: 'addon_upsell', ...getOfferTypeExtras('addon_upsell', r.discountPercent) }));
       }
       // AOV & Inventory Movement: apply merchant's display mode choice
       if (displayMode === 'bundle') {
-        // When remapping to bundle, restore discountPercent if it was zeroed (e.g. was volume_discount in cache)
         return recs.map(r => {
           const missingDiscount = (r.discountPercent === 0 || r.discountPercent === null || r.discountPercent === undefined);
-          return {
-            ...r,
-            offerType: 'bundle',
-            discountPercent: missingDiscount && decisionDiscountPercent > 0 ? decisionDiscountPercent : r.discountPercent,
-          };
+          const discountPercent = missingDiscount && decisionDiscountPercent > 0 ? decisionDiscountPercent : r.discountPercent;
+          return { ...strip(r), offerType: 'bundle', discountPercent, ...getOfferTypeExtras('bundle', discountPercent) };
         });
       }
       if (displayMode === 'volume_discount') {
-        return recs.map(r => ({ ...r, offerType: 'volume_discount' }));
+        return recs.map(r => ({ ...strip(r), offerType: 'volume_discount', ...getOfferTypeExtras('volume_discount', r.discountPercent) }));
       }
       // 'both': if volume_discount is present, convert bundle products to volume_discount
-      // so all products appear together in the "Buy More, Save More" grid instead of
-      // splitting between "Bundle & Save" and "Buy More, Save More" sections.
       const hasVolume = recs.some(r => r.offerType === 'volume_discount');
       if (hasVolume) {
-        return recs.map(r => r.offerType === 'bundle' ? { ...r, offerType: 'volume_discount' } : r);
+        return recs.map(r => r.offerType === 'bundle'
+          ? { ...strip(r), offerType: 'volume_discount', ...getOfferTypeExtras('volume_discount', r.discountPercent) }
+          : r
+        );
       }
       return recs;
     }
