@@ -3,11 +3,7 @@ import { getMerchantConfig, saveMerchantConfig } from "../services/merchantConfi
 const ALLOWED_ORIGIN = process.env.DASHBOARD_URL || "*";
 
 function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Dashboard-Key",
-  };
+  return {};
 }
 
 function checkAuth(request) {
