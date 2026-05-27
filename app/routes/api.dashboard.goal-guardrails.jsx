@@ -102,6 +102,7 @@ export const action = async ({ request }) => {
     const result = await saveMerchantConfig(shop, {
       goal,
       riskTolerance,
+      offerDisplayMode,
       guardrails: {
         maxDiscountCap: guardrails?.maxDiscountCap ?? 20,
         inventoryMinThreshold: guardrails?.inventoryMinThreshold ?? 0,
@@ -119,16 +120,8 @@ export const action = async ({ request }) => {
       return Response.json({ success: false, errors: result.errors }, { status: 400, headers: corsHeaders() });
     }
 
-    const { getDb, collections } = await import("../../backend/database/mongodb.js");
+    const { getDb } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
-
-    if (offerDisplayMode) {
-      await db.collection(collections.merchantConfig).updateOne(
-        { shopId: shop },
-        { $set: { offerDisplayMode } },
-        { upsert: true }
-      );
-    }
 
     await db.collection("upsell_response_cache").deleteMany({ shopId: shop });
 

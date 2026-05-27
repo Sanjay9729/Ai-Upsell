@@ -52,7 +52,11 @@ export default function GoalGuardrails() {
     fetch(`${API_BASE}/api/dashboard/goal-guardrails?shop=${encodeURIComponent(shop)}`, {
       headers: API_KEY ? { 'X-Dashboard-Key': API_KEY } : {},
     })
-      .then(r => r.json())
+      .then(async r => {
+        const text = await r.text()
+        if (!text) throw new Error(`Server returned empty response (HTTP ${r.status})`)
+        try { return JSON.parse(text) } catch { throw new Error(`Invalid JSON from server (HTTP ${r.status})`) }
+      })
       .then(data => {
         if (data.error) { setError(data.error); return }
         setSelectedGoal(data.goal || 'increase_aov')
@@ -100,7 +104,10 @@ export default function GoalGuardrails() {
           },
         }),
       })
-      const data = await res.json()
+      const text = await res.text()
+      if (!text) throw new Error(`Server returned empty response (HTTP ${res.status})`)
+      let data
+      try { data = JSON.parse(text) } catch { throw new Error(`Invalid JSON from server (HTTP ${res.status})`) }
       if (data.success) {
         setLastSavedAt(new Date().toISOString())
         setSuccessMsg('Settings saved successfully.')
@@ -123,6 +130,12 @@ export default function GoalGuardrails() {
     <div>
       <h1 style={s.title}>Goal &amp; Guardrails</h1>
       <p style={s.subtitle}>Configure AI optimisation goals and safety limits.</p>
+
+      {shop && (
+        <div style={{ ...s.card, padding: '12px 16px', marginBottom: '16px', background: '#f0f5ff', border: '1px solid #c7d2fe' }}>
+          <span style={{ fontSize: '13px', color: '#4338ca', fontWeight: 500 }}>Active shop: <strong>{shop}</strong></span>
+        </div>
+      )}
 
       {!shop && (
         <div style={s.warnBanner}>
@@ -298,7 +311,7 @@ export default function GoalGuardrails() {
           </button>
           {lastSavedAt && !saving && (
             <span style={s.lastSaved}>
-              Last saved: {new Date(lastSavedAt).toLocaleString()}
+              Last saved: {new Date(lastSavedAt).toLocaleString()} · Goal & Guardrails · {GOALS.find(g => g.value === selectedGoal)?.label ?? selectedGoal}
             </span>
           )}
         </div>

@@ -170,12 +170,18 @@ export async function getMerchantConfig(shopId) {
     topOfferType: VALID_OFFER_TYPES.has(rawOptimization?.topOfferType) ? rawOptimization.topOfferType : null,
   };
 
+  const VALID_DISPLAY_MODES = new Set(['bundle', 'volume_discount', 'both']);
+  const offerDisplayMode = VALID_DISPLAY_MODES.has(saved?.offerDisplayMode)
+    ? saved.offerDisplayMode
+    : 'both';
+
   const result = {
     shopId,
     goal,
     riskTolerance,
     guardrails,
     optimization,
+    offerDisplayMode,
     // Computed mappings — ready for the decision engine
     goalConfig: GOAL_MAPPING[goal],
     riskConfig: RISK_MAPPING[riskTolerance],
@@ -197,7 +203,7 @@ export async function getMerchantConfig(shopId) {
  * Validates and persists merchant config.
  * Returns { success: boolean, errors: string[] }
  */
-export async function saveMerchantConfig(shopId, { goal, riskTolerance, guardrails, optimization }) {
+export async function saveMerchantConfig(shopId, { goal, riskTolerance, guardrails, optimization, offerDisplayMode }) {
   const validation = validateConfig({ goal, riskTolerance, guardrails });
   if (!validation.valid) {
     return { success: false, errors: validation.errors };
@@ -238,6 +244,11 @@ export async function saveMerchantConfig(shopId, { goal, riskTolerance, guardrai
         topOfferType: optimization?.topOfferType ?? null,
         updatedAt: optimization?.updatedAt ?? now
       };
+    }
+
+    const VALID_DISPLAY_MODES = new Set(['bundle', 'volume_discount', 'both']);
+    if (offerDisplayMode && VALID_DISPLAY_MODES.has(offerDisplayMode)) {
+      updateDoc.offerDisplayMode = offerDisplayMode;
     }
 
     await db.collection(collections.merchantConfig).updateOne(

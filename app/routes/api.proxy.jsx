@@ -4,38 +4,10 @@ import { authenticate } from "../shopify.server";
 import { decideProductOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
 import { getSafetyMode } from "../../backend/services/safetyMode.js";
+import { getOfferTypeExtras, applyDisplayModeFilter } from "../../backend/services/offerDisplayFilter.js";
 
 // Pre-warm MongoDB at module load — eliminates cold-start delay on first request after server restart
 import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
-
-/**
- * Shopify App Proxy Handler
- * Handles requests from storefront via /apps/ai-upsell proxy
- *
- * URL Format: /apps/ai-upsell?id=gid://shopify/Product/{productId}
- * Maps to: /api/proxy?id=gid://shopify/Product/{productId}&shop={shop}&...
- */
-
-function getOfferTypeExtras(offerType, discountPercent) {
-  if (offerType === 'bundle') {
-    return { tagline: 'Bundle & Save' };
-  }
-  if (offerType === 'volume_discount') {
-    const t1 = Math.round((discountPercent || 0) * 0.6);
-    const t2 = discountPercent || 0;
-    return {
-      tagline: 'Buy More, Save More',
-      tiers: [
-        { quantity: 2, discountPercent: t1, label: '2+ items' },
-        { quantity: 3, discountPercent: t2, label: '3+ items' },
-      ],
-    };
-  }
-  if (offerType === 'subscription_upgrade') {
-    return { tagline: 'Subscribe & Save', interval: 'monthly' };
-  }
-  return {};
-}
 
 function extractNumericId(gid) {
   if (!gid || typeof gid !== 'string') return null;
@@ -154,39 +126,12 @@ export const loader = async ({ request }) => {
 
     const cacheAge = cachedDoc ? Date.now() - new Date(cachedDoc.cachedAt).getTime() : Infinity;
 
-    // Helper to apply goal + offerDisplayMode filter to a recommendations array
-    function applyDisplayModeFilter(recs, goal, displayMode, decisionDiscountPercent = null) {
-      // Strip stale tagline/tiers so getOfferTypeExtras always wins
-      const strip = ({ tagline, tiers, ...r }) => r;
-
-      // Revenue per Visitor & Subscription Adoption: always addon_upsell, no bundles/volume
-      if (goal === 'revenue_per_visitor' || goal === 'subscription_adoption') {
-        return recs.map(r => ({ ...strip(r), offerType: 'addon_upsell', ...getOfferTypeExtras('addon_upsell', r.discountPercent) }));
-      }
-      // AOV & Inventory Movement: apply merchant's display mode choice
-      if (displayMode === 'bundle') {
-        return recs.map(r => {
-          const missingDiscount = (r.discountPercent === 0 || r.discountPercent === null || r.discountPercent === undefined);
-          const discountPercent = missingDiscount && decisionDiscountPercent > 0 ? decisionDiscountPercent : r.discountPercent;
-          return { ...strip(r), offerType: 'bundle', discountPercent, ...getOfferTypeExtras('bundle', discountPercent) };
-        });
-      }
-      if (displayMode === 'volume_discount') {
-        return recs.map(r => ({ ...strip(r), offerType: 'volume_discount', ...getOfferTypeExtras('volume_discount', r.discountPercent) }));
-      }
-      // 'both': if volume_discount is present, convert bundle products to volume_discount
-      const hasVolume = recs.some(r => r.offerType === 'volume_discount');
-      if (hasVolume) {
-        return recs.map(r => r.offerType === 'bundle'
-          ? { ...strip(r), offerType: 'volume_discount', ...getOfferTypeExtras('volume_discount', r.discountPercent) }
-          : r
-        );
-      }
-      return recs;
-    }
+    // applyDisplayModeFilter is imported from shared module
 
     const cachedGoal = merchantConfig?.goal || 'increase_aov';
     const cachedDisplayMode = merchantConfig?.offerDisplayMode || 'both';
+
+    console.log(`🎯 [DISPLAY MODE] shop=${shop} offerDisplayMode=${merchantConfig?.offerDisplayMode} resolved=${cachedDisplayMode} goal=${cachedGoal} configExists=${!!merchantConfig} configShopId=${merchantConfig?.shopId || 'N/A'}`);
 
     // Skip cache if it stored a safety_mode response — so disabling safety mode takes effect immediately.
     // Also skip if cached count is below the expected limit (e.g. was built before a guardrail fix)

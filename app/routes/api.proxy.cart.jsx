@@ -4,33 +4,10 @@ import { authenticate } from "../shopify.server";
 import { decideCartOffers } from "../../backend/services/decisionEngine.js";
 import { ensureProductFromAdminGraphQL, getProductById } from "../../backend/database/collections.js";
 import { getSafetyMode } from "../../backend/services/safetyMode.js";
+import { getOfferTypeExtras, applyDisplayModeFilter } from "../../backend/services/offerDisplayFilter.js";
 
 // Pre-warm MongoDB at module load — eliminates cold-start delay on first request after server restart
 import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
-
-/**
- * Fetch live inventory using authenticated admin client from appProxy
- */
-function getOfferTypeExtras(offerType, discountPercent) {
-  if (offerType === 'bundle') {
-    return { tagline: 'Complete Your Look', isCartBundle: true };
-  }
-  if (offerType === 'volume_discount') {
-    const t1 = Math.round((discountPercent || 0) * 0.6);
-    const t2 = discountPercent || 0;
-    return {
-      tagline: 'Buy More, Save More',
-      tiers: [
-        { quantity: 2, discountPercent: t1, label: '2+ items' },
-        { quantity: 3, discountPercent: t2, label: '3+ items' },
-      ],
-    };
-  }
-  if (offerType === 'subscription_upgrade') {
-    return { tagline: 'Subscribe & Save', interval: 'monthly' };
-  }
-  return {};
-}
 
 function extractNumericId(gid) {
   if (!gid || typeof gid !== 'string') return null;
@@ -267,24 +244,8 @@ export const loader = async ({ request }) => {
     // Use cart products already fetched by AI engine — no extra DB query needed
     let recommendations = decision.offers || [];
 
-    // Apply goal-based offer type filter
-    if (merchantGoal === 'revenue_per_visitor' || merchantGoal === 'subscription_adoption') {
-      // These goals: always addon_upsell only, no bundles/volume discounts
-      recommendations = recommendations.map(r => ({ ...r, offerType: 'addon_upsell' }));
-    } else if (offerDisplayMode === 'bundle') {
-      recommendations = recommendations.map(r => ({ ...r, offerType: 'bundle' }));
-    } else if (offerDisplayMode === 'volume_discount') {
-      recommendations = recommendations.map(r => ({ ...r, offerType: 'volume_discount' }));
-    } else {
-      // 'both': if volume_discount is present, convert bundle products to volume_discount
-      // so all products appear together in the "Buy More, Save More" grid.
-      const hasVolume = recommendations.some(r => r.offerType === 'volume_discount');
-      if (hasVolume) {
-        recommendations = recommendations.map(r =>
-          r.offerType === 'bundle' ? { ...r, offerType: 'volume_discount' } : r
-        );
-      }
-    }
+    // Apply goal-based offer type filter (shared module handles all goal/displayMode logic)
+    recommendations = applyDisplayModeFilter(recommendations, merchantGoal, offerDisplayMode, decision.meta?.discountPercent ?? null);
     const validCartProducts = decision.cartProducts || [];
     const cartSourceTitle = validCartProducts.length > 0
       ? validCartProducts.map(p => p.title).join(', ')

@@ -1,5 +1,7 @@
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { getMerchantConfig } from "../../backend/services/merchantConfig.js";
+import { applyDisplayModeFilter, getOfferTypeExtras } from "../../backend/services/offerDisplayFilter.js";
 
 /**
  * Proxy route for /apps/ai-upsell
@@ -36,6 +38,22 @@ export const loader = async ({ request }) => {
     }
 
     const data = await response.json();
+
+    // Apply goal-based offer type filtering
+    if (data.success && data.recommendations?.length > 0) {
+      try {
+        const config = await getMerchantConfig(shop);
+        const merchantGoal = config?.goal || 'increase_aov';
+        const displayMode = config?.offerDisplayMode || 'both';
+        const decisionDiscount = data.decision?.discountPercent ?? null;
+        data.recommendations = applyDisplayModeFilter(data.recommendations, merchantGoal, displayMode, decisionDiscount);
+        // Re-apply offer type extras after filtering
+        data.recommendations = data.recommendations.map(r => {
+          const extras = getOfferTypeExtras(r.offerType, r.discountPercent);
+          return { ...r, ...extras };
+        });
+      } catch (_) { /* continue with unfiltered data */ }
+    }
 
     // Enrich recommendations with live inventory from Shopify Admin API
     if (data.success && data.recommendations?.length > 0) {

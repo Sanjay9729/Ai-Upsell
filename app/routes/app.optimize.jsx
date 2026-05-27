@@ -335,7 +335,7 @@ export default function OptimizePage() {
                     {hotBundles.length}
                   </Text>
                   <Text as="span" variant="bodySm" tone="subdued">
-                    >3% conversion rate
+                    &gt;3% conversion rate
                   </Text>
                 </BlockStack>
               </Box>

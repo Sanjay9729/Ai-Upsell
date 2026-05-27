@@ -8,6 +8,11 @@ import {
 import { MongoDBSessionStorage } from "@shopify/shopify-app-session-storage-mongodb";
 
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-upsell';
+const mongoOptions = {
+  serverSelectionTimeoutMS: 30000,
+  connectTimeoutMS: 30000,
+  socketTimeoutMS: 30000,
+};
 const enableProtectedOrdersWebhook =
   (process.env.ENABLE_PROTECTED_ORDERS_WEBHOOK || '').toLowerCase() === 'true';
 
@@ -239,7 +244,7 @@ const shopify = shopifyApp({
   scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
-  sessionStorage: new MongoDBSessionStorage(mongoUri, 'ai-upsell'),
+  sessionStorage: new MongoDBSessionStorage(mongoUri, 'ai-upsell', mongoOptions),
   distribution: AppDistribution.AppStore,
   hooks: {
     afterAuth: async ({ session, admin }) => {

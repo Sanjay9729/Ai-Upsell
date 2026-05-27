@@ -14,7 +14,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<Navigate to="/guardrails" replace />} />
+        <Route index element={<GoalGuardrails />} />
         <Route path="goal-guardrails" element={<GoalGuardrails />} />
         <Route path="guardrails" element={<GoalGuardrails />} />
         <Route path="goals" element={<Goals />} />
