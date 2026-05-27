@@ -1,26 +1,7 @@
 import { json } from "@remix-run/node";
 import { decideProductOffers } from "../../backend/services/decisionEngine.js";
-
-function getOfferTypeExtras(offerType, discountPercent) {
-  if (offerType === 'bundle') {
-    return { tagline: 'Bundle & Save' };
-  }
-  if (offerType === 'volume_discount') {
-    const t1 = Math.round((discountPercent || 0) * 0.6);
-    const t2 = discountPercent || 0;
-    return {
-      tagline: 'Buy More, Save More',
-      tiers: [
-        { quantity: 2, discountPercent: t1, label: '2+ items' },
-        { quantity: 3, discountPercent: t2, label: '3+ items' },
-      ],
-    };
-  }
-  if (offerType === 'subscription_upgrade') {
-    return { tagline: 'Subscribe & Save', interval: 'monthly' };
-  }
-  return {};
-}
+import { getMerchantConfig } from "../../backend/services/merchantConfig.js";
+import { getOfferTypeExtras, applyDisplayModeFilter } from "../../backend/services/offerDisplayFilter.js";
 
 /**
  * API endpoint to get AI-powered upsell recommendations
@@ -51,7 +32,17 @@ export const loader = async ({ params, request }) => {
       limit: 4,
       placement: "product_page"
     });
-    const recommendations = decision.offers || [];
+    let recommendations = decision.offers || [];
+
+    // Apply goal-based offer type filtering
+    let merchantGoal = 'increase_aov';
+    let offerDisplayMode = 'both';
+    try {
+      const config = await getMerchantConfig(shop);
+      merchantGoal = config?.goal || 'increase_aov';
+      offerDisplayMode = config?.offerDisplayMode || 'both';
+    } catch (_) { /* use defaults */ }
+    recommendations = applyDisplayModeFilter(recommendations, merchantGoal, offerDisplayMode, decision.meta?.discountPercent ?? null);
 
     // Format response for frontend (inventory will be enriched by proxy route)
     const formattedRecommendations = recommendations.map(product => {

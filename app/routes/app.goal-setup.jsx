@@ -89,6 +89,7 @@ export const action = async ({ request }) => {
     const result = await saveMerchantConfig(session.shop, {
       goal,
       riskTolerance,
+      offerDisplayMode,
       guardrails: {
         maxDiscountCap,
         inventoryMinThreshold,
@@ -108,13 +109,8 @@ export const action = async ({ request }) => {
       return Response.json({ success: false, errors: result.errors }, { status: 400 });
     }
 
-    const { getDb, collections } = await import("../../backend/database/mongodb.js");
+    const { getDb } = await import("../../backend/database/mongodb.js");
     const db = await getDb();
-    await db.collection(collections.merchantConfig).updateOne(
-      { shopId: session.shop },
-      { $set: { offerDisplayMode } },
-      { upsert: true }
-    );
 
     await db.collection("upsell_response_cache").deleteMany({ shopId: session.shop });
     console.log(`[goal-setup action] Cache cleared for shop: ${session.shop}`);
@@ -311,7 +307,7 @@ export default function GoalSetup() {
       setIsDefault(false);
       setToast({ message: "Settings saved successfully.", error: false });
       setTimeout(() => setToast(null), 4000);
-      window.open(`${dashboardUrl}/guardrails`, "_blank");
+      window.open(`${dashboardUrl}/guardrails?shop=${encodeURIComponent(shop)}`, "_blank");
     }
   }, [fetcher.state, fetcher.data]);
 
@@ -574,7 +570,7 @@ export default function GoalSetup() {
                   </Button>
                   {lastSavedAt && !saving && (
                     <Text as="span" variant="bodySm" tone="subdued">
-                      Last saved: {new Date(lastSavedAt).toLocaleString()}
+                      Last saved: {new Date(lastSavedAt).toLocaleString()} · Goal & Guardrails{selectedGoal ? ` · ${GOALS.find(g => g.value === selectedGoal)?.label ?? selectedGoal}` : ""}
                     </Text>
                   )}
                 </InlineStack>
