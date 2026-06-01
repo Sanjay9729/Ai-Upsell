@@ -7,6 +7,9 @@ const navItems = [
   { to: '/bundles', label: 'Bundles' },
   { to: '/optimization', label: 'Optimization' },
   { to: '/activity-logs', label: 'Activity Logs' },
+  { to: '/intelligence', label: 'Merchandising Intelligence' },
+  { to: '/safety', label: 'Safety Mode' },
+  { to: '/guardrail-monitor', label: 'Guardrail Monitor' },
   { to: '/settings', label: 'Settings' },
 ]
 

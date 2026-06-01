@@ -125,6 +125,89 @@ export const loader = async ({ request, params }) => {
         });
       }
 
+      case 'intelligence': {
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+        let context = { priority: 'none', notes: '', preferBundles: false };
+        let offers = [];
+        try {
+          const { getMerchantContext, getOfferLogs } = await import('../services/merchandisingIntelligence.server.js');
+          const [ctx, offerResult] = await Promise.all([
+            getMerchantContext(shop),
+            getOfferLogs(shop, { limit: 50 }),
+          ]);
+          context = ctx;
+          offers = (offerResult.offers || []).map(o => ({
+            offerId: o.offerId,
+            sourceProductName: o.sourceProductName || o.sourceProductId || '—',
+            upsellProductName: o.upsellProductName || o.upsellProductId || '—',
+            offerType: o.offerType || 'addon_upsell',
+            confidence: o.confidence,
+            decisionScore: o.decisionScore,
+            decisionReason: o.decisionReason || '—',
+            createdAt: o.createdAt,
+          }));
+        } catch (e) {
+          console.warn('[intelligence API] service import failed:', e.message);
+        }
+
+        const segmentAgg = await db.collection(collections.upsellEvents).aggregate([
+          { $match: { shopId: shop, isUpsellEvent: true, timestamp: { $gte: thirtyDaysAgo } } },
+          { $project: { eventType: 1, segment: { $ifNull: ['$metadata.segment', { $cond: [{ $ifNull: ['$customerId', false] }, 'known_customer', 'anonymous'] }] } } },
+          { $group: { _id: { segment: '$segment', eventType: '$eventType' }, count: { $sum: 1 } } },
+        ]).toArray();
+
+        const segmentMap = {};
+        for (const row of segmentAgg) {
+          const seg = row._id.segment || 'unknown';
+          if (!segmentMap[seg]) segmentMap[seg] = { segment: seg, views: 0, cartAdds: 0 };
+          if (row._id.eventType === 'view') segmentMap[seg].views += row.count;
+          if (row._id.eventType === 'cart_add') segmentMap[seg].cartAdds += row.count;
+        }
+        const segments = Object.values(segmentMap).map(s => ({
+          ...s,
+          conversionRate: s.views > 0 ? ((s.cartAdds / s.views) * 100).toFixed(1) : '0.0',
+        }));
+
+        return json({ context, offers, segments });
+      }
+
+      case 'safety': {
+        const { getSafetyStatus } = await import('../../backend/services/safetyMode.js');
+        const status = await getSafetyStatus(shop);
+        return json({ status });
+      }
+
+      case 'guardrail-monitor': {
+        const { analyzeGuardrailTriggers } = await import('../../backend/services/optimizationEngine.js');
+
+        const [events, counts, guardrailAnalysis, autoTunings] = await Promise.all([
+          db.collection(collections.guardrailEvents).find({ shopId: shop }).sort({ timestamp: -1 }).limit(100).toArray(),
+          db.collection(collections.guardrailEvents).aggregate([
+            { $match: { shopId: shop } },
+            { $group: { _id: '$guardrailType', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ]).toArray(),
+          analyzeGuardrailTriggers(shop),
+          db.collection(collections.optimizationLogs).find({
+            shopId: shop, type: 'learning_loop',
+            'results.actions.tunings.sessionOfferLimit': { $exists: true },
+          }).sort({ timestamp: -1 }).limit(10).toArray(),
+        ]);
+
+        return json({
+          events: events.map(e => ({ ...e, _id: e._id.toString() })),
+          counts,
+          guardrailRate: guardrailAnalysis.success ? guardrailAnalysis.guardrailRate : null,
+          totalDecisions: guardrailAnalysis.success ? guardrailAnalysis.totalDecisions : null,
+          autoTunings: autoTunings.map(log => ({
+            _id: log._id.toString(),
+            timestamp: log.timestamp,
+            tuning: log.results?.actions?.tunings?.sessionOfferLimit ?? null,
+          })).filter(t => t.tuning !== null),
+        });
+      }
+
       default:
         return json({ error: `Unknown resource: ${resource}` }, 404);
     }

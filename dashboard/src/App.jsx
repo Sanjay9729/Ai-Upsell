@@ -9,6 +9,9 @@ import ActivityLogs from './pages/ActivityLogs'
 import Guardrails from './pages/Guardrails'
 import Optimization from './pages/Optimization'
 import GoalGuardrails from './pages/GoalGuardrails'
+import MerchandisingIntelligence from './pages/MerchandisingIntelligence'
+import SafetyMode from './pages/SafetyMode'
+import GuardrailMonitor from './pages/GuardrailMonitor'
 
 export default function App() {
   return (
@@ -24,6 +27,9 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="activity-logs" element={<ActivityLogs />} />
         <Route path="optimization" element={<Optimization />} />
+        <Route path="intelligence" element={<MerchandisingIntelligence />} />
+        <Route path="safety" element={<SafetyMode />} />
+        <Route path="guardrail-monitor" element={<GuardrailMonitor />} />
       </Route>
     </Routes>
   )
