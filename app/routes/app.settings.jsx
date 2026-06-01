@@ -1,30 +1,19 @@
-import { RedirectToDashboard } from "../components/RedirectToDashboard";
 import { json } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
   Badge,
+  Banner,
   BlockStack,
   Button,
   Card,
   Divider,
-  Grid,
+  InlineGrid,
   InlineStack,
-  Layout,
   Page,
   Text,
-  Toast,
-  Box,
-  Icon,
 } from "@shopify/polaris";
-import {
-  CheckCircleIcon,
-  AlertCircleIcon,
-  ExternalIcon,
-} from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useState, useEffect } from "react";
-import { Breadcrumbs } from "../components/Breadcrumbs";
-import { ErrorBoundary } from "../components/ErrorBoundary";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -114,5 +103,105 @@ export const action = async ({ request }) => {
 
 
 export default function SettingsPage() {
-  return <RedirectToDashboard path="/settings" />;
+  const { shopId, config, systemHealth } = useLoaderData();
+  const fetcher = useFetcher();
+  const [banner, setBanner] = useState(null);
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data) {
+      setBanner(fetcher.data.success
+        ? { tone: "success", title: "Optimization complete." }
+        : { tone: "critical", title: fetcher.data.error || "Optimization failed." }
+      );
+      const t = setTimeout(() => setBanner(null), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  const handleOptimize = () => {
+    fetcher.submit(
+      JSON.stringify({ actionType: "run_optimization" }),
+      { method: "POST", encType: "application/json" }
+    );
+  };
+
+  const healthItems = [
+    { label: "Products synced", value: systemHealth.productCount },
+    { label: "Active bundles", value: systemHealth.bundleCount },
+    { label: "Events (7 days)", value: systemHealth.eventCount },
+  ];
+
+  return (
+    <Page title="Settings" subtitle="System configuration and health overview.">
+      <BlockStack gap="500">
+        {banner && <Banner tone={banner.tone} title={banner.title} />}
+
+        {/* System Health */}
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text variant="headingMd" as="h2">System Health</Text>
+              <Badge tone={systemHealth.safetyModeActive ? "critical" : "success"}>
+                {systemHealth.safetyModeActive ? "Safety Mode ON" : "Operational"}
+              </Badge>
+            </InlineStack>
+            <Divider />
+            <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+              {healthItems.map(({ label, value }) => (
+                <BlockStack key={label} gap="100">
+                  <Text variant="bodySm" tone="subdued">{label}</Text>
+                  <Text variant="headingMd" fontWeight="bold">{value}</Text>
+                </BlockStack>
+              ))}
+            </InlineGrid>
+          </BlockStack>
+        </Card>
+
+        {/* Store */}
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd" as="h2">Store</Text>
+            <Divider />
+            <BlockStack gap="100">
+              <Text variant="bodySm" tone="subdued">Shop ID</Text>
+              <Text variant="bodyMd">{shopId}</Text>
+            </BlockStack>
+            {config?.goal && (
+              <BlockStack gap="100">
+                <Text variant="bodySm" tone="subdued">Active Goal</Text>
+                <Text variant="bodyMd">{config.goal}</Text>
+              </BlockStack>
+            )}
+            {config?.riskTolerance && (
+              <BlockStack gap="100">
+                <Text variant="bodySm" tone="subdued">Risk Tolerance</Text>
+                <Text variant="bodyMd">{config.riskTolerance}</Text>
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* Manual Optimization */}
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd" as="h2">Manual Optimization</Text>
+            <Divider />
+            <Text variant="bodyMd" tone="subdued">
+              Trigger a full learning loop run manually. This updates offer weights based on recent event data.
+            </Text>
+            <InlineStack>
+              <Button
+                variant="primary"
+                loading={fetcher.state !== "idle"}
+                disabled={fetcher.state !== "idle"}
+                onClick={handleOptimize}
+              >
+                Run Optimization
+              </Button>
+            </InlineStack>
+          </BlockStack>
+        </Card>
+      </BlockStack>
+    </Page>
+  );
 }

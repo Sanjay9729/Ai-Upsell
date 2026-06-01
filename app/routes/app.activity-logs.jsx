@@ -1,4 +1,3 @@
-import { RedirectToDashboard } from "../components/RedirectToDashboard";
 import { useLoaderData } from "@remix-run/react";
 import {
   Badge,
@@ -6,8 +5,7 @@ import {
   Box,
   Card,
   DataTable,
-  Divider,
-  Layout,
+  EmptyState,
   Page,
   Text,
 } from "@shopify/polaris";
@@ -35,5 +33,41 @@ export const loader = async ({ request }) => {
 
 
 export default function ActivityLogsPage() {
-  return <RedirectToDashboard path="/activity-logs" />;
+  const { recentConversions } = useLoaderData();
+
+  const rows = recentConversions.map((e) => [
+    e.upsellProductName || e.productTitle || "—",
+    e.sourceProductName || "—",
+    e.quantity ?? 1,
+    e.discountPercent != null ? `${e.discountPercent}%` : "—",
+    e.timestamp ? new Date(e.timestamp).toLocaleString() : "—",
+  ]);
+
+  return (
+    <Page
+      title="Activity Logs"
+      subtitle="Recent upsell cart-add conversions."
+    >
+      <Card>
+        {recentConversions.length === 0 ? (
+          <EmptyState heading="No conversions yet" image="">
+            <p>Upsell cart-add events will appear here once customers start interacting.</p>
+          </EmptyState>
+        ) : (
+          <BlockStack gap="0">
+            <Box paddingBlockEnd="300">
+              <Text variant="bodySm" tone="subdued">
+                {recentConversions.length} recent conversion{recentConversions.length !== 1 ? "s" : ""}
+              </Text>
+            </Box>
+            <DataTable
+              columnContentTypes={["text", "text", "numeric", "text", "text"]}
+              headings={["Upsell Product", "Source Product", "Qty", "Discount", "Time"]}
+              rows={rows}
+            />
+          </BlockStack>
+        )}
+      </Card>
+    </Page>
+  );
 }

@@ -1,8 +1,6 @@
-import { RedirectToDashboard } from "../components/RedirectToDashboard";
 import { useLoaderData } from "@remix-run/react";
 import {
   Badge,
-  Banner,
   BlockStack,
   Box,
   Card,
@@ -10,7 +8,6 @@ import {
   Divider,
   InlineGrid,
   InlineStack,
-  Layout,
   Page,
   Text,
 } from "@shopify/polaris";
@@ -86,5 +83,110 @@ export const loader = async ({ request }) => {
 
 
 export default function GuardrailMonitorPage() {
-  return <RedirectToDashboard path="/guardrails" />;
+  const { events, counts, guardrailRate, totalDecisions, autoTunings } = useLoaderData();
+
+  const countRows = counts.map((c) => {
+    const meta = guardrailMeta(c._id);
+    return [
+      <Badge key={c._id} tone={meta.tone}>{meta.label}</Badge>,
+      c.count,
+    ];
+  });
+
+  const eventRows = events.slice(0, 50).map((ev) => {
+    const meta = guardrailMeta(ev.guardrailType);
+    const details = buildDetails(ev).join(" · ");
+    return [
+      <Badge key={ev._id} tone={meta.tone}>{meta.label}</Badge>,
+      details,
+      formatDate(ev.timestamp),
+    ];
+  });
+
+  const tuningRows = autoTunings.map((t) => [
+    formatDate(t.timestamp),
+    String(t.tuning),
+  ]);
+
+  return (
+    <Page
+      title="Guardrail Monitor"
+      subtitle="Live guardrail trigger log and auto-tuning history."
+    >
+      <BlockStack gap="500">
+        {/* Summary */}
+        <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+          <Card>
+            <BlockStack gap="100">
+              <Text variant="bodySm" tone="subdued">Total Decisions</Text>
+              <Text variant="headingLg" fontWeight="bold">{totalDecisions ?? "—"}</Text>
+            </BlockStack>
+          </Card>
+          <Card>
+            <BlockStack gap="100">
+              <Text variant="bodySm" tone="subdued">Guardrail Rate</Text>
+              <Text variant="headingLg" fontWeight="bold">
+                {guardrailRate != null ? `${(guardrailRate * 100).toFixed(1)}%` : "—"}
+              </Text>
+            </BlockStack>
+          </Card>
+          <Card>
+            <BlockStack gap="100">
+              <Text variant="bodySm" tone="subdued">Unique Trigger Types</Text>
+              <Text variant="headingLg" fontWeight="bold">{counts.length}</Text>
+            </BlockStack>
+          </Card>
+        </InlineGrid>
+
+        {/* Trigger counts by type */}
+        {counts.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">Triggers by Type</Text>
+              <Divider />
+              <DataTable
+                columnContentTypes={["text", "numeric"]}
+                headings={["Guardrail Type", "Count"]}
+                rows={countRows}
+              />
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* Recent events */}
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd" as="h2">Recent Guardrail Events</Text>
+            <Divider />
+            {events.length === 0 ? (
+              <Box padding="600">
+                <Text variant="bodyMd" tone="subdued" alignment="center">No guardrail events recorded yet.</Text>
+              </Box>
+            ) : (
+              <DataTable
+                columnContentTypes={["text", "text", "text"]}
+                headings={["Type", "Details", "Time"]}
+                rows={eventRows}
+              />
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* Auto-tuning history */}
+        {autoTunings.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">Session Offer Limit Auto-Tunings</Text>
+              <Divider />
+              <DataTable
+                columnContentTypes={["text", "text"]}
+                headings={["Time", "New Limit"]}
+                rows={tuningRows}
+              />
+            </BlockStack>
+          </Card>
+        )}
+      </BlockStack>
+    </Page>
+  );
 }

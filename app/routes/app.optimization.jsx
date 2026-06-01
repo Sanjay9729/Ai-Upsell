@@ -1,23 +1,20 @@
-import { RedirectToDashboard } from "../components/RedirectToDashboard";
 import { json } from "@remix-run/node";
-import { useLoaderData, useActionData, useNavigation, useSubmit, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
 import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import {
-    Page,
-    Card,
-    BlockStack,
-    InlineStack,
-    InlineGrid,
-    Text,
-    Button,
-    TextField,
-    Badge,
-    DataTable,
-    EmptyState,
-    Banner,
-    Box,
-    Divider,
+  Page,
+  Card,
+  BlockStack,
+  InlineStack,
+  InlineGrid,
+  Text,
+  Button,
+  Badge,
+  Banner,
+  DataTable,
+  Divider,
+  Box,
 } from "@shopify/polaris";
 
 export const loader = async ({ request }) => {
@@ -177,5 +174,199 @@ const fmtMs = (ms) => ms ? `${(ms / 1000).toFixed(1)}s` : "—";
 
 
 export default function OptimizationPage() {
-  return <RedirectToDashboard path="/optimization" />;
+  const { schedulerState, history, offerTypePerf, aovImpact, elasticity, segmentPerf, guardrails } = useLoaderData();
+  const fetcher = useFetcher();
+  const [banner, setBanner] = useState(null);
+
+  const isRunning = fetcher.state !== "idle" || schedulerState?.isRunning;
+
+  const handleRunOptimization = () => {
+    fetcher.submit(
+      { intent: "run_optimization" },
+      { method: "POST" }
+    );
+  };
+
+  // Show result banner after fetcher completes
+  useState(() => {
+    if (fetcher.state === "idle" && fetcher.data?.intent === "run_optimization") {
+      setBanner(fetcher.data.success
+        ? { tone: "success", title: `Optimization complete — ${fetcher.data.updatesMade} updates, ${fetcher.data.bundleRecommendations} bundle suggestions.` }
+        : { tone: "critical", title: fetcher.data.reason || "Optimization failed." }
+      );
+    }
+  });
+
+  const historyRows = history.map((h) => [
+    fmtDate(h.startedAt),
+    h.triggeredBy || "—",
+    resultBadge(h.success ? "success" : "error"),
+    h.updatesMade ?? "—",
+    fmtMs(h.durationMs),
+  ]);
+
+  const offerRows = offerTypePerf
+    ? Object.entries(offerTypePerf).map(([type, data]) => [
+        type,
+        data.count ?? "—",
+        data.conversionRate != null ? `${(data.conversionRate * 100).toFixed(1)}%` : "—",
+        data.avgDiscount != null ? `${data.avgDiscount.toFixed(1)}%` : "—",
+      ])
+    : [];
+
+  const segmentRows = (segmentPerf || []).map((s) => [
+    s.segment || "—",
+    s.count ?? "—",
+    s.conversionRate != null ? `${(s.conversionRate * 100).toFixed(1)}%` : "—",
+  ]);
+
+  return (
+    <Page
+      title="Optimization"
+      subtitle="AI learning loop performance and analytics."
+      primaryAction={{
+        content: isRunning ? "Running…" : "Run Optimization",
+        onAction: handleRunOptimization,
+        disabled: isRunning,
+        loading: isRunning,
+      }}
+    >
+      <BlockStack gap="500">
+        {banner && <Banner tone={banner.tone} title={banner.title} onDismiss={() => setBanner(null)} />}
+
+        {/* Scheduler status */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text variant="headingMd" as="h2">Scheduler Status</Text>
+              {schedulerState && (
+                <Badge tone={schedulerState.isRunning ? "attention" : "success"}>
+                  {schedulerState.isRunning ? "Running" : "Idle"}
+                </Badge>
+              )}
+            </InlineStack>
+            <Divider />
+            {schedulerState ? (
+              <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Last Run</Text>
+                  <Text variant="bodyMd">{fmtDate(schedulerState.lastOptimizationAt)}</Text>
+                </BlockStack>
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Triggered By</Text>
+                  <Text variant="bodyMd">{schedulerState.triggeredBy || "—"}</Text>
+                </BlockStack>
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Duration</Text>
+                  <Text variant="bodyMd">{fmtMs(schedulerState.durationMs)}</Text>
+                </BlockStack>
+              </InlineGrid>
+            ) : (
+              <Text variant="bodyMd" tone="subdued">No optimization has run yet.</Text>
+            )}
+            {schedulerState?.lastReason && (
+              <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                <Text variant="bodySm" tone="subdued">Last reason: {schedulerState.lastReason}</Text>
+              </Box>
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* Offer type performance */}
+        {offerRows.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">Performance by Offer Type</Text>
+              <Divider />
+              <DataTable
+                columnContentTypes={["text", "numeric", "text", "text"]}
+                headings={["Offer Type", "Count", "Conversion Rate", "Avg Discount"]}
+                rows={offerRows}
+              />
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* Segment performance */}
+        {segmentRows.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">Performance by Segment</Text>
+              <Divider />
+              <DataTable
+                columnContentTypes={["text", "numeric", "text"]}
+                headings={["Segment", "Count", "Conversion Rate"]}
+                rows={segmentRows}
+              />
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* AOV impact */}
+        {aovImpact && (
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">AOV Impact</Text>
+              <Divider />
+              <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+                {Object.entries(aovImpact).map(([key, val]) => (
+                  <BlockStack key={key} gap="100">
+                    <Text variant="bodySm" tone="subdued">{key}</Text>
+                    <Text variant="bodyMd" fontWeight="semibold">
+                      {typeof val === "number" ? val.toFixed(2) : String(val)}
+                    </Text>
+                  </BlockStack>
+                ))}
+              </InlineGrid>
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* Guardrail summary */}
+        {guardrails && (
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">Guardrail Summary</Text>
+              <Divider />
+              <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Total Decisions</Text>
+                  <Text variant="headingMd" fontWeight="bold">{guardrails.totalDecisions ?? "—"}</Text>
+                </BlockStack>
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Guardrail Rate</Text>
+                  <Text variant="headingMd" fontWeight="bold">
+                    {guardrails.guardrailRate != null ? `${(guardrails.guardrailRate * 100).toFixed(1)}%` : "—"}
+                  </Text>
+                </BlockStack>
+                <BlockStack gap="100">
+                  <Text variant="bodySm" tone="subdued">Trigger Types</Text>
+                  <Text variant="headingMd" fontWeight="bold">{guardrails.triggers?.length ?? "—"}</Text>
+                </BlockStack>
+              </InlineGrid>
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* Optimization history */}
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd" as="h2">Optimization History</Text>
+            <Divider />
+            {history.length === 0 ? (
+              <Box padding="600">
+                <Text variant="bodyMd" tone="subdued" alignment="center">No optimization runs yet.</Text>
+              </Box>
+            ) : (
+              <DataTable
+                columnContentTypes={["text", "text", "text", "numeric", "text"]}
+                headings={["Started", "Triggered By", "Result", "Updates", "Duration"]}
+                rows={historyRows}
+              />
+            )}
+          </BlockStack>
+        </Card>
+      </BlockStack>
+    </Page>
+  );
 }

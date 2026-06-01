@@ -1,16 +1,13 @@
-import { RedirectToDashboard } from "../components/RedirectToDashboard";
-import { useState } from "react";
 import { useLoaderData } from "@remix-run/react";
 import {
   Badge,
   BlockStack,
   Box,
-  Button,
-  ButtonGroup,
   Card,
-  Divider,
+  DataTable,
+  EmptyState,
+  InlineGrid,
   InlineStack,
-  Layout,
   Page,
   Text,
 } from "@shopify/polaris";
@@ -43,5 +40,58 @@ export const loader = async ({ request }) => {
 
 
 export default function RecommendationsPage() {
-  return <RedirectToDashboard path="/recommendations" />;
+  const { recommendations, stats } = useLoaderData();
+
+  const rows = recommendations.map((r) => [
+    r.sourceProductTitle || r.sourceProductId || "—",
+    r.upsellProductTitle || r.upsellProductId || "—",
+    r.offerType || "—",
+    r.confidence != null ? `${(r.confidence * 100).toFixed(0)}%` : "—",
+    r.timestamp ? new Date(r.timestamp).toLocaleString() : "—",
+  ]);
+
+  return (
+    <Page
+      title="Recommendations"
+      subtitle="AI-generated upsell recommendations for your products."
+    >
+      <BlockStack gap="500">
+        <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
+          {[
+            { label: "Total Recommendations", value: stats.total },
+            { label: "Unique Source Products", value: stats.uniqueProducts },
+            { label: "Recent (last 50)", value: stats.recent },
+          ].map(({ label, value }) => (
+            <Card key={label}>
+              <BlockStack gap="100">
+                <Text variant="bodySm" tone="subdued">{label}</Text>
+                <Text variant="headingLg" fontWeight="bold">{value}</Text>
+              </BlockStack>
+            </Card>
+          ))}
+        </InlineGrid>
+
+        <Card>
+          {recommendations.length === 0 ? (
+            <EmptyState heading="No recommendations yet" image="">
+              <p>AI recommendations will appear once the engine has enough event data.</p>
+            </EmptyState>
+          ) : (
+            <BlockStack gap="0">
+              <Box paddingBlockEnd="300">
+                <Text variant="bodySm" tone="subdued">
+                  Showing {recommendations.length} of {stats.total} recommendations
+                </Text>
+              </Box>
+              <DataTable
+                columnContentTypes={["text", "text", "text", "text", "text"]}
+                headings={["Source Product", "Upsell Product", "Offer Type", "Confidence", "Generated"]}
+                rows={rows}
+              />
+            </BlockStack>
+          )}
+        </Card>
+      </BlockStack>
+    </Page>
+  );
 }

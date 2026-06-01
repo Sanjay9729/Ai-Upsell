@@ -1,4 +1,3 @@
-import { RedirectToDashboard } from "../components/RedirectToDashboard";
 import { useLoaderData } from "@remix-run/react";
 import {
   BlockStack,
@@ -6,8 +5,7 @@ import {
   Card,
   DataTable,
   Divider,
-  Grid,
-  Layout,
+  InlineGrid,
   Page,
   Text,
 } from "@shopify/polaris";
@@ -117,5 +115,111 @@ function EmptyBox({ message, sub }) {
 
 
 export default function AnalyticsPage() {
-  return <RedirectToDashboard path="/analytics" />;
+  const { stats, topProducts, topTimeProducts, cartTimeStats, recentCartTime } = useLoaderData();
+
+  const topProductRows = topProducts.map((p) => [
+    p.productName || "—",
+    p.count,
+    p.totalQuantity,
+  ]);
+
+  const topTimeRows = topTimeProducts.map((p) => [
+    p.productTitle || "—",
+    fmtTime(Math.round(p.avgTimeSeconds)),
+    p.totalSessions,
+  ]);
+
+  const cartTimeRows = recentCartTime.map((r) => [
+    r.customerName || r._id?.slice(0, 8) || "—",
+    r.sessions,
+    fmtTime(Math.round(r.avgTimeSeconds)),
+    r.avgCartItemCount != null ? r.avgCartItemCount.toFixed(1) : "—",
+    r.lastVisit ? new Date(r.lastVisit).toLocaleDateString() : "—",
+  ]);
+
+  return (
+    <Page
+      title="Analytics"
+      subtitle="Upsell performance and revenue insights."
+    >
+      <BlockStack gap="500">
+        {/* Summary stats */}
+        <InlineGrid columns={{ xs: 2, sm: 4 }} gap="400">
+          <StatCard label="Views" value={stats.views.toLocaleString()} />
+          <StatCard label="Clicks" value={stats.clicks.toLocaleString()} />
+          <StatCard label="Cart Adds" value={stats.cartAdds.toLocaleString()} />
+          <StatCard label="Click-Through Rate" value={`${stats.clickThroughRate}%`} />
+        </InlineGrid>
+
+        <InlineGrid columns={{ xs: 2, sm: 4 }} gap="400">
+          <StatCard label="Add-to-Cart Rate" value={`${stats.addToCartRate}%`} />
+          <StatCard label="Overall Conversion" value={`${stats.overallConversionRate}%`} />
+          <StatCard label="Total Events" value={stats.total.toLocaleString()} />
+          <StatCard label="Recent Events" value={stats.recent.toLocaleString()} />
+        </InlineGrid>
+
+        {/* Top upsell products */}
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd" as="h2">Top Upsell Products</Text>
+            <Divider />
+            {topProducts.length === 0 ? (
+              <EmptyBox message="No cart-add events yet." />
+            ) : (
+              <DataTable
+                columnContentTypes={["text", "numeric", "numeric"]}
+                headings={["Product", "Cart Adds", "Total Qty"]}
+                rows={topProductRows}
+              />
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* Product time on page */}
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd" as="h2">Top Products by Time on Page</Text>
+            <Divider />
+            {topTimeProducts.length === 0 ? (
+              <EmptyBox message="No time-on-page data yet." />
+            ) : (
+              <DataTable
+                columnContentTypes={["text", "text", "numeric"]}
+                headings={["Product", "Avg Time", "Sessions"]}
+                rows={topTimeRows}
+              />
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* Cart time stats */}
+        <Card>
+          <BlockStack gap="300">
+            <Text variant="headingMd" as="h2">Cart Engagement</Text>
+            <Divider />
+            <InlineGrid columns={{ xs: 2, sm: 3 }} gap="400">
+              <StatCard label="Avg Time in Cart" value={fmtTime(Math.round(cartTimeStats.avgTimeSeconds))} />
+              <StatCard label="Cart Sessions" value={cartTimeStats.totalSessions.toLocaleString()} />
+              <StatCard label="Avg Items in Cart" value={cartTimeStats.avgItemCount != null ? cartTimeStats.avgItemCount.toFixed(1) : "—"} />
+            </InlineGrid>
+          </BlockStack>
+        </Card>
+
+        {/* Recent cart sessions */}
+        {recentCartTime.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text variant="headingMd" as="h2">Recent Cart Sessions</Text>
+              <Divider />
+              <DataTable
+                columnContentTypes={["text", "numeric", "text", "text", "text"]}
+                headings={["Customer", "Sessions", "Avg Time", "Avg Items", "Last Visit"]}
+                rows={cartTimeRows}
+              />
+            </BlockStack>
+          </Card>
+        )}
+      </BlockStack>
+    </Page>
+  );
 }
