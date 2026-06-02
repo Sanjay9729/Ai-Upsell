@@ -8,7 +8,12 @@ export async function connectToMongoDB() {
   
   try {
     const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-upsell';
-    client = new MongoClient(mongoUri);
+    client = new MongoClient(mongoUri, {
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 30000,
+      socketTimeoutMS: 30000,
+      family: 4,
+    });
     await client.connect();
     db = client.db('ai-upsell');
     console.log('Connected to MongoDB');

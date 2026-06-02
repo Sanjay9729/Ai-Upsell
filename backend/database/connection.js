@@ -16,6 +16,7 @@ export async function connectToMongoDB() {
       serverSelectionTimeoutMS: 30000,
       connectTimeoutMS: 30000,
       socketTimeoutMS: 30000,
+      family: 4,
     });
     await client.connect();
     db = client.db('ai-upsell');

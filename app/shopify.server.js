@@ -6,12 +6,42 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
 import { MongoDBSessionStorage } from "@shopify/shopify-app-session-storage-mongodb";
+import { MongoClient } from "mongodb";
+
+class CustomMongoDBSessionStorage extends MongoDBSessionStorage {
+  async init() {
+    const mongoClientOptions = {
+      family: 4,
+      serverSelectionTimeoutMS: 10000,
+      connectTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      retryWrites: true,
+      retryReads: true,
+      maxPoolSize: 10,
+      minPoolSize: 0,
+      maxConnecting: 2,
+      heartbeatFrequencyMS: 10000,
+      ...this.options.mongoClientOptions,
+    };
+    this.client = new MongoClient(this.dbUrl.toString(), mongoClientOptions);
+    await this.client.connect();
+    await this.client.db().command({ ping: 1 });
+    await this.createCollection();
+  }
+}
 
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-upsell';
 const mongoOptions = {
-  serverSelectionTimeoutMS: 30000,
-  connectTimeoutMS: 30000,
-  socketTimeoutMS: 30000,
+  serverSelectionTimeoutMS: 10000,
+  connectTimeoutMS: 10000,
+  socketTimeoutMS: 45000,
+  retryWrites: true,
+  retryReads: true,
+  maxPoolSize: 10,
+  minPoolSize: 0,
+  maxConnecting: 2,
+  heartbeatFrequencyMS: 10000,
+  family: 4, // force IPv4 — Windows can prefer IPv6 which causes ECONNRESET with Atlas
 };
 const enableProtectedOrdersWebhook =
   (process.env.ENABLE_PROTECTED_ORDERS_WEBHOOK || '').toLowerCase() === 'true';
@@ -244,7 +274,9 @@ const shopify = shopifyApp({
   scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
-  sessionStorage: new MongoDBSessionStorage(mongoUri, 'ai-upsell', mongoOptions),
+  sessionStorage: new CustomMongoDBSessionStorage(mongoUri, 'ai-upsell', {
+    mongoClientOptions: mongoOptions,
+  }),
   distribution: AppDistribution.AppStore,
   hooks: {
     afterAuth: async ({ session, admin }) => {
