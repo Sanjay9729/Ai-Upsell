@@ -17,7 +17,8 @@ export default function Sidebar() {
   return (
     <aside style={styles.sidebar}>
       <div style={styles.logo}>
-        <span style={styles.logoText}>AI Upsell</span>
+        <img src="/AI Upsell icon with glowing microchip 1 (1).png" alt="logo" style={styles.logoImg} />
+        <span style={styles.logoText}>Upsell</span>
       </div>
       <nav style={styles.nav}>
         {navItems.map((item) => (
@@ -40,16 +41,28 @@ export default function Sidebar() {
 const styles = {
   sidebar: {
     width: '220px',
-    minHeight: '100vh',
+    height: '100vh',
+    position: 'sticky',
+    top: 0,
     background: '#1a1a2e',
     display: 'flex',
     flexDirection: 'column',
     padding: '0',
     flexShrink: 0,
+    overflowY: 'auto',
   },
   logo: {
-    padding: '24px 20px',
+    padding: '16px 20px',
     borderBottom: '1px solid rgba(255,255,255,0.08)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  logoImg: {
+    width: '36px',
+    height: '36px',
+    borderRadius: '8px',
+    flexShrink: 0,
   },
   logoText: {
     color: '#fff',

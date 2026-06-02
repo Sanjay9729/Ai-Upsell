@@ -72,34 +72,96 @@ export default function AdditionalFeaturesPage() {
         <Text as="p" variant="bodyMd" tone="subdued">
           Explore and manage all features available in your AI Upsell app.
         </Text>
-        <InlineGrid columns={{ xs: 1, sm: 2, md: 3 }} gap="400">
-          {FEATURES.map((feature) => (
-            <Card key={feature.title}>
-              <BlockStack gap="400">
+
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">
+              App Overview
+            </Text>
+            <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
+              <Card background="bg-surface-secondary">
                 <BlockStack gap="200">
-                  <Text as="h3" variant="headingMd">
-                    {feature.title}
+                  <Text as="h3" variant="headingSm">
+                    AI Recommendations
                   </Text>
                   <Text as="p" variant="bodyMd" tone="subdued">
-                    {feature.description}
+                    Your AI upsell engine is active and generating personalized product recommendations.
                   </Text>
+                  <Box paddingBlockStart="100">
+                    <Button
+                      onClick={() =>
+                        window.open(
+                          `${dashboardUrl}/analytics?shop=${encodeURIComponent(shop)}`,
+                          "_blank"
+                        )
+                      }
+                    >
+                      View Analytics
+                    </Button>
+                  </Box>
                 </BlockStack>
-                <Box paddingBlockStart="100">
-                  <Button
-                    onClick={() =>
-                      window.open(
-                        `${dashboardUrl}${feature.href}?shop=${encodeURIComponent(shop)}`,
-                        "_blank"
-                      )
-                    }
-                  >
-                    Manage
-                  </Button>
-                </Box>
-              </BlockStack>
-            </Card>
-          ))}
-        </InlineGrid>
+              </Card>
+              <Card background="bg-surface-secondary">
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm">
+                    Guardrails & Safety
+                  </Text>
+                  <Text as="p" variant="bodyMd" tone="subdued">
+                    Configure guardrails and safety rules to ensure recommendations stay within your preferred boundaries.
+                  </Text>
+                  <Box paddingBlockStart="100">
+                    <Button
+                      onClick={() =>
+                        window.open(
+                          `${dashboardUrl}/guardrails?shop=${encodeURIComponent(shop)}`,
+                          "_blank"
+                        )
+                      }
+                    >
+                      View Guardrails
+                    </Button>
+                  </Box>
+                </BlockStack>
+              </Card>
+            </InlineGrid>
+          </BlockStack>
+        </Card>
+
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">
+              Additional features
+            </Text>
+            <InlineGrid columns={{ xs: 1, sm: 2, md: 3 }} gap="400">
+              {FEATURES.map((feature) => (
+                <Card key={feature.title} background="bg-surface-secondary">
+                  <BlockStack gap="400">
+                    <BlockStack gap="200">
+                      <Text as="h3" variant="headingMd">
+                        {feature.title}
+                      </Text>
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        {feature.description}
+                      </Text>
+                    </BlockStack>
+                    <Box paddingBlockStart="100">
+                      <Button
+                        onClick={() =>
+                          window.open(
+                            `${dashboardUrl}${feature.href}?shop=${encodeURIComponent(shop)}`,
+                            "_blank"
+                          )
+                        }
+                      >
+                        Manage
+                      </Button>
+                    </Box>
+                  </BlockStack>
+                </Card>
+              ))}
+            </InlineGrid>
+          </BlockStack>
+        </Card>
       </BlockStack>
     </Page>
   );
