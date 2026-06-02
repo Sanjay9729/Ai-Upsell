@@ -65,14 +65,19 @@ export default function Index() {
   const { totalConversions, themeEditorUrl } = useLoaderData();
 
   return (
-    <Page title="Setup Guide">
+    <Page title="">
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
-
+            <InlineStack align="space-between" blockAlign="center">
+              <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>Welcome to AI Upsells</h1>
+              <Button url="https://upselldashboard.netlify.app/" target="_blank">Go to Dashboard</Button>
+            </InlineStack>
             {/* Step 1 */}
             <Card>
               <BlockStack gap="300">
+                <Text as="h2" variant="headingLg" fontWeight="bold">Setup Guide</Text>
+                <Divider />
                 <InlineStack align="space-between" blockAlign="center" wrap={false}>
                   <Text as="h2" variant="headingMd">Step 1: Open Theme Editor</Text>
                   <Badge tone="attention">Required</Badge>

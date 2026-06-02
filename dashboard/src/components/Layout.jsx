@@ -6,7 +6,9 @@ export default function Layout() {
     <div style={styles.container}>
       <Sidebar />
       <main style={styles.main}>
-        <Outlet />
+        <div style={styles.content}>
+          <Outlet />
+        </div>
       </main>
     </div>
   )
@@ -22,5 +24,10 @@ const styles = {
     flex: 1,
     padding: '32px',
     overflowY: 'auto',
+    minWidth: 0,
+  },
+  content: {
+    maxWidth: '998px',
+    margin: '0 auto',
   },
 }

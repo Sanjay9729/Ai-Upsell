@@ -394,7 +394,7 @@ const s = {
   badgeRequired: { padding: '3px 10px', background: '#fff3cd', color: '#856404', fontSize: '12px', fontWeight: '600', borderRadius: '6px' },
   badgeRecommended: { padding: '3px 10px', background: '#d1fae5', color: '#065f46', fontSize: '12px', fontWeight: '600', borderRadius: '6px' },
   badge: { padding: '2px 8px', background: '#d1fae5', color: '#065f46', fontSize: '12px', fontWeight: '600', borderRadius: '4px' },
-  goalGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '12px' },
+  goalGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(182px, 1fr))', gap: '12px' },
   riskStack: { display: 'flex', flexDirection: 'column', gap: '10px' },
   selCard: { border: '1px solid #e1e3e5', borderRadius: '10px', padding: '14px 16px', cursor: 'pointer', background: '#fff', transition: 'all 0.15s', outline: 'none' },
   selCardActive: { border: '2px solid #6c63ff', background: '#f0f0ff' },
