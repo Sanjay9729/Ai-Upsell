@@ -128,7 +128,7 @@ export default function GoalGuardrails() {
 
   return (
     <div>
-      <h1 style={s.title}>Goal &amp; Guardrails</h1>
+      <h1 className="page-title" style={s.title}>Goal &amp; Guardrails</h1>
       <p style={s.subtitle}>Configure AI optimisation goals and safety limits.</p>
 
       {shop && (
@@ -301,7 +301,7 @@ export default function GoalGuardrails() {
 
       {/* ── Save bar ── */}
       <div style={s.saveBar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className="save-bar-inner" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button
             onClick={handleSave}
             disabled={saving || !shop}
@@ -311,7 +311,8 @@ export default function GoalGuardrails() {
           </button>
           {lastSavedAt && !saving && (
             <span style={s.lastSaved}>
-              Last saved: {new Date(lastSavedAt).toLocaleString()} · Goal & Guardrails · {GOALS.find(g => g.value === selectedGoal)?.label ?? selectedGoal}
+              Last saved: {new Date(lastSavedAt).toLocaleString()}
+              <span className="save-goal-percent"> Goal & Guardrails {GOALS.find(g => g.value === selectedGoal)?.label ?? selectedGoal} {maxDiscountCap}%</span>
             </span>
           )}
         </div>

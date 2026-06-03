@@ -112,7 +112,13 @@ const navItems = [
   { to: '/settings', label: 'Settings', Icon: IconSettings, hasSubmenu: true },
 ]
 
-export default function Sidebar() {
+const IconX = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+)
+
+export default function Sidebar({ isOpen, onClose }) {
   const [testMode, setTestMode] = useState(false)
   const [shopInfo, setShopInfo] = useState({ name: '', email: '' })
 
@@ -130,7 +136,10 @@ export default function Sidebar() {
     : ''
 
   return (
-    <aside style={styles.sidebar}>
+    <aside
+      className={`sidebar-mobile${isOpen ? ' is-open' : ''}`}
+      style={styles.sidebar}
+    >
       {/* Store selector */}
       <div style={styles.storeSelector}>
         <div style={styles.storeLogoWrap}>
@@ -144,6 +153,9 @@ export default function Sidebar() {
           <div style={styles.storeName}>Upsell AI</div>
         </div>
         <span style={styles.caret}><IconChevronsUpDown /></span>
+        <button className="sidebar-close-btn" onClick={onClose} aria-label="Close menu">
+          <IconX />
+        </button>
       </div>
 
       {/* Main navigation */}
@@ -152,6 +164,7 @@ export default function Sidebar() {
           <NavLink
             key={to}
             to={to}
+            onClick={onClose}
             style={({ isActive }) => ({
               ...styles.navLink,
               ...(isActive ? styles.navLinkActive : {}),
