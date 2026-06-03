@@ -1,5 +1,7 @@
 import { NavLink } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { getShop } from '../hooks/useApi'
+import { API_URL } from '../config'
 
 const IconHome = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -112,6 +114,20 @@ const navItems = [
 
 export default function Sidebar() {
   const [testMode, setTestMode] = useState(false)
+  const [shopInfo, setShopInfo] = useState({ name: '', email: '' })
+
+  useEffect(() => {
+    const shop = getShop()
+    if (!shop) return
+    fetch(`${API_URL}/api/shop-info?shop=${shop}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.name) setShopInfo({ name: d.name, email: d.email || '' }) })
+      .catch(() => {})
+  }, [])
+
+  const initials = shopInfo.name
+    ? shopInfo.name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('')
+    : ''
 
   return (
     <aside style={styles.sidebar}>
@@ -160,15 +176,16 @@ export default function Sidebar() {
       {/* Divider */}
       <div style={styles.divider} />
 
-     
-
-      {/* Divider */}
-      <div style={styles.divider} />
-
-      
-
-
-      
+      {initials && (
+        <div style={styles.userProfile}>
+          <div style={styles.userAvatar}>{initials}</div>
+          <div style={styles.userInfo}>
+            <div style={styles.userName}>{shopInfo.name}</div>
+            <div style={styles.userEmail}>{shopInfo.email}</div>
+          </div>
+          <span style={styles.caret}><IconChevronsUpDown /></span>
+        </div>
+      )}
     </aside>
   )
 }

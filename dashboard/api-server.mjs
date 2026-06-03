@@ -60,6 +60,31 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); res.end(); return; }
 
+  // Shop info — returns owner name + email from Shopify session
+  if (url.pathname === '/api/shop-info') {
+    const shop = url.searchParams.get('shop');
+    if (!shop) return json(res, { error: 'Missing shop param' }, 400);
+    try {
+      const database = await getDb();
+      const session = await database.collection('shopify_sessions').findOne({
+        shop,
+        id: /^offline_/,
+      });
+      if (!session?.accessToken) return json(res, { error: 'No session found' }, 404);
+      const shopRes = await fetch(`https://${shop}/admin/api/2026-01/shop.json`, {
+        headers: { 'X-Shopify-Access-Token': session.accessToken },
+      });
+      if (!shopRes.ok) return json(res, { error: 'Shopify API error' }, shopRes.status);
+      const { shop: shopData } = await shopRes.json();
+      return json(res, {
+        name: shopData.shop_owner || shopData.name || shop,
+        email: shopData.email || '',
+      });
+    } catch (err) {
+      return json(res, { error: err.message }, 500);
+    }
+  }
+
   // Only handle /api/dashboard/goal-guardrails
   if (!url.pathname.startsWith('/api/dashboard/goal-guardrails')) {
     return json(res, { error: 'Not found' }, 404);

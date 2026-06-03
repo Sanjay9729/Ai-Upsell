@@ -401,6 +401,36 @@ app.get('/api/products/upsell/:productId', async (req, res) => {
   }
 });
 
+// Shop info endpoint — used by Netlify dashboard to show logged-in merchant details
+app.get('/api/shop-info', async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).json({ error: 'Missing shop param' });
+  try {
+    const { getDb } = await import('./backend/database/mongodb.js');
+    const db = await getDb();
+    const session = await db.collection('shopify_sessions').findOne({
+      shop,
+      id: /^offline_/,
+    });
+    if (!session?.accessToken) {
+      return res.status(404).json({ error: 'No session found' });
+    }
+    const shopRes = await fetch(`https://${shop}/admin/api/2026-01/shop.json`, {
+      headers: { 'X-Shopify-Access-Token': session.accessToken },
+    });
+    if (!shopRes.ok) {
+      return res.status(shopRes.status).json({ error: 'Shopify API error' });
+    }
+    const { shop: shopData } = await shopRes.json();
+    return res.json({
+      name: shopData.shop_owner || shopData.name || shop,
+      email: shopData.email || '',
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
