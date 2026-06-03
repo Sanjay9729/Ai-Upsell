@@ -77,7 +77,7 @@ export default function SafetyMode() {
 
   return (
     <div>
-      <h1 style={s.title}>Safety Mode &amp; Rollback</h1>
+      <h1 className="page-title" style={s.title}>Safety Mode &amp; Rollback</h1>
       <p style={s.subtitle}>Pause all offers instantly and restore configurations if needed.</p>
 
       {shop && (
@@ -194,22 +194,24 @@ export default function SafetyMode() {
         {snapshots.length === 0 ? (
           <p style={s.empty}>No snapshots yet. Save your first snapshot above.</p>
         ) : (
-          <table style={s.table}>
-            <thead>
-              <tr>
-                <th style={s.th}>Label</th>
-                <th style={s.th}>Saved At</th>
-              </tr>
-            </thead>
-            <tbody>
-              {snapshots.map((snap, i) => (
-                <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                  <td style={s.td}><strong>{snap.label}</strong></td>
-                  <td style={s.td}>{new Date(snap.createdAt).toLocaleString()}</td>
+          <div className="table-scroll">
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Label</th>
+                  <th style={s.th}>Saved At</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {snapshots.map((snap, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                    <td style={s.td}><strong>{snap.label}</strong></td>
+                    <td style={s.td}>{new Date(snap.createdAt).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -220,33 +222,35 @@ export default function SafetyMode() {
         {auditLog.length === 0 ? (
           <p style={s.empty}>No safety mode events yet.</p>
         ) : (
-          <table style={s.table}>
-            <thead>
-              <tr>
-                <th style={s.th}>Action</th>
-                <th style={s.th}>Reason</th>
-                <th style={s.th}>Timestamp</th>
-              </tr>
-            </thead>
-            <tbody>
-              {auditLog.map((entry, i) => (
-                <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                  <td style={s.td}>
-                    <span style={{
-                      display: 'inline-block', padding: '2px 10px', borderRadius: '20px',
-                      fontSize: '11px', fontWeight: '600',
-                      background: entry.action === 'enabled' ? '#fee2e2' : '#d1fae5',
-                      color: entry.action === 'enabled' ? '#991b1b' : '#065f46',
-                    }}>
-                      {entry.action === 'enabled' ? 'Enabled' : 'Disabled'}
-                    </span>
-                  </td>
-                  <td style={s.td}>{entry.reason || '—'}</td>
-                  <td style={s.td}>{new Date(entry.timestamp).toLocaleString()}</td>
+          <div className="table-scroll">
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Action</th>
+                  <th style={s.th}>Reason</th>
+                  <th style={s.th}>Timestamp</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {auditLog.map((entry, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                    <td style={s.td}>
+                      <span style={{
+                        display: 'inline-block', padding: '2px 10px', borderRadius: '20px',
+                        fontSize: '11px', fontWeight: '600',
+                        background: entry.action === 'enabled' ? '#fee2e2' : '#d1fae5',
+                        color: entry.action === 'enabled' ? '#991b1b' : '#065f46',
+                      }}>
+                        {entry.action === 'enabled' ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </td>
+                    <td style={s.td}>{entry.reason || '—'}</td>
+                    <td style={s.td}>{new Date(entry.timestamp).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

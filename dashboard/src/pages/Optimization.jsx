@@ -15,7 +15,7 @@ export default function Optimization() {
 
       <Card title="Scheduler Status">
         {scheduler ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+          <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
             {[
               { label: 'Status', value: scheduler.isRunning ? 'Running' : 'Idle', type: scheduler.isRunning ? 'success' : 'default' },
               { label: 'Last Run', value: scheduler.lastRun ? new Date(scheduler.lastRun).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never' },
@@ -37,35 +37,37 @@ export default function Optimization() {
 
       <div style={{ marginTop: '20px' }}>
         <Card title="Optimization History">
-          <table style={s.table}>
-            <thead>
-              <tr>
-                <th style={s.th}>Run</th>
-                <th style={s.th}>Status</th>
-                <th style={s.th}>Rules Evaluated</th>
-                <th style={s.th}>Changes Applied</th>
-                <th style={s.th}>Duration</th>
-                <th style={s.th}>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.length === 0 && <tr><td colSpan={6} style={s.empty}>No optimization runs yet</td></tr>}
-              {history.map((h, i) => (
-                <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                  <td style={s.td}>#{history.length - i}</td>
-                  <td style={s.td}>
-                    <Badge type={h.status === 'success' || h.status === 'completed' ? 'success' : h.status === 'failed' ? 'danger' : 'default'}>
-                      {h.status || 'unknown'}
-                    </Badge>
-                  </td>
-                  <td style={s.td}>{h.rulesEvaluated ?? h.totalRules ?? '—'}</td>
-                  <td style={s.td}>{h.changesApplied ?? h.changes ?? '—'}</td>
-                  <td style={s.td}>{h.durationMs != null ? `${(h.durationMs / 1000).toFixed(1)}s` : '—'}</td>
-                  <td style={s.td}>{h.timestamp ? new Date(h.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+          <div className="table-scroll">
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Run</th>
+                  <th style={s.th}>Status</th>
+                  <th style={s.th}>Rules Evaluated</th>
+                  <th style={s.th}>Changes Applied</th>
+                  <th style={s.th}>Duration</th>
+                  <th style={s.th}>Time</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {history.length === 0 && <tr><td colSpan={6} style={s.empty}>No optimization runs yet</td></tr>}
+                {history.map((h, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                    <td style={s.td}>#{history.length - i}</td>
+                    <td style={s.td}>
+                      <Badge type={h.status === 'success' || h.status === 'completed' ? 'success' : h.status === 'failed' ? 'danger' : 'default'}>
+                        {h.status || 'unknown'}
+                      </Badge>
+                    </td>
+                    <td style={s.td}>{h.rulesEvaluated ?? h.totalRules ?? '—'}</td>
+                    <td style={s.td}>{h.changesApplied ?? h.changes ?? '—'}</td>
+                    <td style={s.td}>{h.durationMs != null ? `${(h.durationMs / 1000).toFixed(1)}s` : '—'}</td>
+                    <td style={s.td}>{h.timestamp ? new Date(h.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </div>
     </div>

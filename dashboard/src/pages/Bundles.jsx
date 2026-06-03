@@ -16,7 +16,7 @@ export default function Bundles() {
     <div>
       <PageHeader title="Bundles" subtitle="Product bundle upsell offers and performance." />
 
-      <div style={s.grid4}>
+      <div className="stat-grid" style={s.grid4}>
         <StatCard label="Total Bundles" value={bundles.length} color="#6c63ff" />
         <StatCard label="Active" value={activeCount} color="#10b981" />
         <StatCard label="Total Views" value={totalViews.toLocaleString()} color="#f59e0b" />
@@ -28,7 +28,7 @@ export default function Bundles() {
           {bundles.length === 0 ? (
             <p style={s.empty}>No bundles created yet.</p>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+            <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
               {bundles.map((b, i) => (
                 <div key={i} style={{
                   padding: '16px', borderRadius: '8px',

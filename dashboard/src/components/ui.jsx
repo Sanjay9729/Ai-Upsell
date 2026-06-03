@@ -61,7 +61,7 @@ export function Card({ title, children }) {
 export function PageHeader({ title, subtitle }) {
   return (
     <div style={{ marginBottom: '24px' }}>
-      <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#1a1a2e', margin: '0 0 4px' }}>{title}</h1>
+      <h1 className="page-title" style={{ fontSize: '24px', fontWeight: '700', color: '#1a1a2e', margin: '0 0 4px' }}>{title}</h1>
       {subtitle && <p style={{ fontSize: '14px', color: '#6b7280', margin: 0 }}>{subtitle}</p>}
     </div>
   );

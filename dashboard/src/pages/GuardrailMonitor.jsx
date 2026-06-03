@@ -62,86 +62,88 @@ export default function GuardrailMonitor() {
         subtitle="Live guardrail trigger log and auto-tuning history."
       />
 
-      {/* Summary stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '20px' }}>
+      <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '20px' }}>
         <StatCard label="Total Decisions" value={totalDecisions != null ? totalDecisions.toLocaleString() : '—'} color="#6c63ff" />
         <StatCard label="Guardrail Rate" value={guardrailRate != null ? `${(guardrailRate * 100).toFixed(1)}%` : '—'} color="#f59e0b" />
         <StatCard label="Unique Trigger Types" value={counts.length.toString()} color="#3b82f6" />
       </div>
 
-      {/* Triggers by type */}
       {counts.length > 0 && (
         <Card title="Triggers by Type">
-          <table style={s.table}>
-            <thead>
-              <tr>
-                <th style={s.th}>Guardrail Type</th>
-                <th style={s.th}>Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {counts.map((c, i) => (
-                <tr key={c._id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                  <td style={s.td}>
-                    <Badge type={guardrailBadge(c._id)}>{guardrailLabel(c._id)}</Badge>
-                  </td>
-                  <td style={s.td}><strong>{c.count}</strong></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-
-      {/* Recent events */}
-      <div style={{ marginTop: '20px' }}>
-        <Card title="Recent Guardrail Events">
-          <table style={s.table}>
-            <thead>
-              <tr>
-                <th style={s.th}>Type</th>
-                <th style={s.th}>Details</th>
-                <th style={s.th}>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.length === 0 && (
-                <tr><td colSpan={3} style={s.empty}>No guardrail events recorded yet</td></tr>
-              )}
-              {events.slice(0, 50).map((ev, i) => (
-                <tr key={ev._id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                  <td style={s.td}>
-                    <Badge type={guardrailBadge(ev.guardrailType)}>{guardrailLabel(ev.guardrailType)}</Badge>
-                  </td>
-                  <td style={s.td}>{buildDetails(ev)}</td>
-                  <td style={s.td}>{formatDate(ev.timestamp)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      </div>
-
-      {/* Auto-tuning history */}
-      {autoTunings.length > 0 && (
-        <div style={{ marginTop: '20px' }}>
-          <Card title="Session Offer Limit Auto-Tunings">
+          <div className="table-scroll">
             <table style={s.table}>
               <thead>
                 <tr>
-                  <th style={s.th}>Time</th>
-                  <th style={s.th}>New Limit</th>
+                  <th style={s.th}>Guardrail Type</th>
+                  <th style={s.th}>Count</th>
                 </tr>
               </thead>
               <tbody>
-                {autoTunings.map((t, i) => (
-                  <tr key={t._id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                    <td style={s.td}>{formatDate(t.timestamp)}</td>
-                    <td style={s.td}><strong>{t.tuning}</strong></td>
+                {counts.map((c, i) => (
+                  <tr key={c._id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                    <td style={s.td}>
+                      <Badge type={guardrailBadge(c._id)}>{guardrailLabel(c._id)}</Badge>
+                    </td>
+                    <td style={s.td}><strong>{c.count}</strong></td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </Card>
+      )}
+
+      <div style={{ marginTop: '20px' }}>
+        <Card title="Recent Guardrail Events">
+          <div className="table-scroll">
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Type</th>
+                  <th style={s.th}>Details</th>
+                  <th style={s.th}>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.length === 0 && (
+                  <tr><td colSpan={3} style={s.empty}>No guardrail events recorded yet</td></tr>
+                )}
+                {events.slice(0, 50).map((ev, i) => (
+                  <tr key={ev._id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                    <td style={s.td}>
+                      <Badge type={guardrailBadge(ev.guardrailType)}>{guardrailLabel(ev.guardrailType)}</Badge>
+                    </td>
+                    <td style={s.td}>{buildDetails(ev)}</td>
+                    <td style={s.td}>{formatDate(ev.timestamp)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+
+      {autoTunings.length > 0 && (
+        <div style={{ marginTop: '20px' }}>
+          <Card title="Session Offer Limit Auto-Tunings">
+            <div className="table-scroll">
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Time</th>
+                    <th style={s.th}>New Limit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {autoTunings.map((t, i) => (
+                    <tr key={t._id} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                      <td style={s.td}>{formatDate(t.timestamp)}</td>
+                      <td style={s.td}><strong>{t.tuning}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </Card>
         </div>
       )}

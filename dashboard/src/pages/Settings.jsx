@@ -43,7 +43,7 @@ export default function Settings() {
     <div>
       <PageHeader title="Settings" subtitle="Configure shop connection and API endpoint." />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+      <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
         <Card title="Connection">
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>
@@ -103,7 +103,7 @@ export default function Settings() {
           )}
           {!healthLoading && health && !health.error && (
             <div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '16px' }}>
+              <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '16px' }}>
                 <StatCard label="Products" value={health.health?.products ?? '—'} color="#6c63ff" small />
                 <StatCard label="Bundles" value={health.health?.bundles ?? '—'} color="#10b981" small />
                 <StatCard label="Events (7d)" value={health.health?.events7d ?? '—'} color="#f59e0b" small />

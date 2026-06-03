@@ -120,6 +120,37 @@ a {
     display: block;
   }
 
+  /* stat cards: 4-col → 2-col */
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* 3-col layout grids → 2-col */
+  .grid-3 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* 2-col layout grids → single col */
+  .grid-2 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* tables: horizontal scroll */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-scroll th,
+  .table-scroll td {
+    white-space: nowrap;
+  }
+
+  /* filter tab rows: wrap */
+  .filter-tabs {
+    flex-wrap: wrap !important;
+  }
+
   .page-title {
     font-size: 20px !important;
   }

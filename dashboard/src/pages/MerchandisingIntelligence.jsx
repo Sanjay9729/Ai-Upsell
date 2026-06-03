@@ -170,7 +170,7 @@ export default function MerchandisingIntelligence() {
 
   return (
     <div>
-      <h1 style={s.title}>Merchandising Intelligence</h1>
+      <h1 className="page-title" style={s.title}>Merchandising Intelligence</h1>
       <p style={s.subtitle}>AI offer decisions, customer segments, and merchant context.</p>
 
       {shop && (
@@ -237,7 +237,7 @@ export default function MerchandisingIntelligence() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid #e5e7eb' }}>
+      <div className="filter-tabs" style={{ display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid #e5e7eb' }}>
         {[['intelligence', 'Intelligence'], ['segments', 'Segments'], ['why', 'Why']].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} style={{
             padding: '10px 20px', border: 'none', background: 'none',
@@ -370,26 +370,28 @@ export default function MerchandisingIntelligence() {
           {segments.length === 0 ? (
             <p style={s.empty}>No segment data yet. Data will appear once customers interact with upsell offers.</p>
           ) : (
-            <table style={s.table}>
-              <thead>
-                <tr>
-                  <th style={s.th}>Segment</th>
-                  <th style={s.th}>Views</th>
-                  <th style={s.th}>Cart Adds</th>
-                  <th style={s.th}>Conversion Rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                {segments.map((seg, i) => (
-                  <tr key={seg.segment} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                    <td style={s.td}><strong>{seg.segment}</strong></td>
-                    <td style={s.td}>{seg.views.toLocaleString()}</td>
-                    <td style={s.td}>{seg.cartAdds.toLocaleString()}</td>
-                    <td style={s.td}>{seg.conversionRate}%</td>
+            <div className="table-scroll">
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Segment</th>
+                    <th style={s.th}>Views</th>
+                    <th style={s.th}>Cart Adds</th>
+                    <th style={s.th}>Conversion Rate</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {segments.map((seg, i) => (
+                    <tr key={seg.segment} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                      <td style={s.td}><strong>{seg.segment}</strong></td>
+                      <td style={s.td}>{seg.views.toLocaleString()}</td>
+                      <td style={s.td}>{seg.cartAdds.toLocaleString()}</td>
+                      <td style={s.td}>{seg.conversionRate}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

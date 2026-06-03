@@ -20,7 +20,7 @@ export default function Recommendations() {
     <div>
       <PageHeader title="Recommendations" subtitle="AI-generated upsell recommendation pairs." />
 
-      <div style={s.grid4}>
+      <div className="stat-grid" style={s.grid4}>
         <StatCard label="Total Recommendations" value={stats.total.toLocaleString()} color="#6c63ff" />
         <StatCard label="Unique Source Products" value={stats.uniqueProducts.toLocaleString()} color="#10b981" />
         <StatCard label="Product Page" value={pdpCount.toLocaleString()} color="#f59e0b" />
@@ -29,7 +29,7 @@ export default function Recommendations() {
 
       <div style={{ marginTop: '20px' }}>
         <Card>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <div className="filter-tabs" style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
             {[['all', 'All'], ['product_detail', 'Product Detail'], ['cart', 'Cart']].map(([val, label]) => (
               <button key={val} onClick={() => setFilter(val)} style={{
                 padding: '6px 14px', borderRadius: '6px', border: '1px solid',
@@ -43,29 +43,31 @@ export default function Recommendations() {
             ))}
           </div>
 
-          <table style={s.table}>
-            <thead>
-              <tr>
-                <th style={s.th}>Source Product</th>
-                <th style={s.th}>Recommended Product</th>
-                <th style={s.th}>Context</th>
-                <th style={s.th}>Score</th>
-                <th style={s.th}>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 && <tr><td colSpan={5} style={s.empty}>No recommendations</td></tr>}
-              {filtered.map((r, i) => (
-                <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                  <td style={s.td}>{r.sourceProductTitle || r.sourceProductId || '—'}</td>
-                  <td style={s.td}><strong>{r.recommendedProductTitle || r.recommendedProductId || '—'}</strong></td>
-                  <td style={s.td}><Badge type={r.recommendationContext === 'cart' ? 'success' : 'info'}>{r.recommendationContext || '—'}</Badge></td>
-                  <td style={s.td}>{r.score != null ? (r.score * 100).toFixed(0) + '%' : '—'}</td>
-                  <td style={s.td}>{r.timestamp ? new Date(r.timestamp).toLocaleDateString() : '—'}</td>
+          <div className="table-scroll">
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Source Product</th>
+                  <th style={s.th}>Recommended Product</th>
+                  <th style={s.th}>Context</th>
+                  <th style={s.th}>Score</th>
+                  <th style={s.th}>Date</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.length === 0 && <tr><td colSpan={5} style={s.empty}>No recommendations</td></tr>}
+                {filtered.map((r, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                    <td style={s.td}>{r.sourceProductTitle || r.sourceProductId || '—'}</td>
+                    <td style={s.td}><strong>{r.recommendedProductTitle || r.recommendedProductId || '—'}</strong></td>
+                    <td style={s.td}><Badge type={r.recommendationContext === 'cart' ? 'success' : 'info'}>{r.recommendationContext || '—'}</Badge></td>
+                    <td style={s.td}>{r.score != null ? (r.score * 100).toFixed(0) + '%' : '—'}</td>
+                    <td style={s.td}>{r.timestamp ? new Date(r.timestamp).toLocaleDateString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </div>
     </div>
