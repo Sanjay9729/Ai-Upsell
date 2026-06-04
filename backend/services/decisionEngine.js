@@ -103,10 +103,9 @@ export async function decideProductOffers({
     };
   }
 
-  // Do not fully suppress cart-drawer offers; shift is advisory for cart context.
-  const shiftBlocksPlacement = normalizedPlacement === 'cart_drawer'
-    ? false
-    : shouldBlockPlacement(normalizedPlacement, placementShift);
+  // Placement shift is advisory only — never hard-block any placement.
+  // shift_downstream means cart converts better, but product page offers should still show.
+  const shiftBlocksPlacement = false;
   if (shiftBlocksPlacement) {
     logGuardrailEvent(shopId, 'placement_shifted', {
       placement: normalizedPlacement,
@@ -245,10 +244,8 @@ export async function decideCartOffers({
     };
   }
 
-  // Do not fully suppress cart-drawer offers; shift is advisory for cart context.
-  const shiftBlocksPlacement = normalizedPlacement === 'cart_drawer'
-    ? false
-    : shouldBlockPlacement(normalizedPlacement, placementShift);
+  // Placement shift is advisory only — never hard-block any placement.
+  const shiftBlocksPlacement = false;
   if (shiftBlocksPlacement) {
     logGuardrailEvent(shopId, 'placement_shifted', {
       placement: normalizedPlacement,
