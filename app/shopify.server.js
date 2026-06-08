@@ -337,9 +337,6 @@ const shopify = shopifyApp({
 
     return base;
   })(),
-  future: {
-    expiringOfflineAccessTokens: true,
-  },
 });
 
 export default shopify;
