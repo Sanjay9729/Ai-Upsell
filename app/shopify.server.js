@@ -271,7 +271,6 @@ const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
   apiVersion: ApiVersion.October25,
-  scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
   sessionStorage: new CustomMongoDBSessionStorage(mongoUri, 'ai-upsell', {
@@ -337,6 +336,9 @@ const shopify = shopifyApp({
 
     return base;
   })(),
+  future: {
+    unstable_newEmbeddedAuthStrategy: true,
+  },
 });
 
 export default shopify;
