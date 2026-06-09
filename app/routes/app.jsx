@@ -12,8 +12,11 @@ export const loader = async ({ request }) => {
     // eslint-disable-next-line no-undef
     return { apiKey: process.env.SHOPIFY_API_KEY || "" };
   } catch (error) {
-    console.error(`[app.jsx] authenticate.admin failed:`, error.message);
-    if (error.stack) console.error(error.stack);
+    if (error instanceof Response) {
+      console.log(`[app.jsx] authenticate.admin threw a Response: status=${error.status}, headers=${JSON.stringify(Object.fromEntries(error.headers.entries()))}`);
+    } else {
+      console.error(`[app.jsx] authenticate.admin failed:`, error);
+    }
     throw error;
   }
 };

@@ -15,8 +15,11 @@ export const loader = async ({ request }) => {
 
     return null;
   } catch (error) {
-    console.error(`[auth.$] authenticate.admin failed:`, error.message);
-    if (error.stack) console.error(error.stack);
+    if (error instanceof Response) {
+      console.log(`[auth.$] authenticate.admin threw a Response: status=${error.status}, headers=${JSON.stringify(Object.fromEntries(error.headers.entries()))}`);
+    } else {
+      console.error(`[auth.$] authenticate.admin failed:`, error);
+    }
     throw error;
   }
 };
