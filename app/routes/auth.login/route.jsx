@@ -1,4 +1,4 @@
-import { AppProvider } from "@shopify/shopify-app-remix/react";
+import { Page, Card, TextField, Button, FormLayout, Text, BlockStack } from "@shopify/polaris";
 import { useState } from "react";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import { login } from "../../shopify.server";
@@ -25,23 +25,29 @@ export default function Auth() {
   const { errors } = actionData || loaderData;
 
   return (
-    <AppProvider embedded={false}>
-      <s-page>
-        <Form method="post">
-          <s-section heading="Log in">
-            <s-text-field
-              name="shop"
-              label="Shop domain"
-              details="example.myshopify.com"
-              value={shop}
-              onChange={(e) => setShop(e.currentTarget.value)}
-              autocomplete="on"
-              error={errors.shop}
-            ></s-text-field>
-            <s-button type="submit">Log in</s-button>
-          </s-section>
-        </Form>
-      </s-page>
-    </AppProvider>
+    <Page>
+      <div style={{ maxWidth: "480px", margin: "80px auto" }}>
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h1" variant="headingLg" fontWeight="bold">Log in to AI Upsell</Text>
+            <Form method="post">
+              <FormLayout>
+                <TextField
+                  name="shop"
+                  label="Shop domain"
+                  helpText="example.myshopify.com"
+                  value={shop}
+                  onChange={(val) => setShop(val)}
+                  autoComplete="on"
+                  error={errors.shop}
+                />
+                <Button submit variant="primary">Log in</Button>
+              </FormLayout>
+            </Form>
+          </BlockStack>
+        </Card>
+      </div>
+    </Page>
   );
 }
+

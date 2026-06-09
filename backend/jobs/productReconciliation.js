@@ -5,13 +5,12 @@ import {
 } from "../database/collections.js";
 
 // Lazy-loaded to avoid running shopifyApp() before dotenv.config() executes
-let _shopify = null;
-async function getShopify() {
-  if (!_shopify) {
-    const mod = await import("../../app/shopify.server.js");
-    _shopify = mod.default;
+let _shopifyMod = null;
+async function getShopifyMod() {
+  if (!_shopifyMod) {
+    _shopifyMod = await import("../../app/shopify.server.js");
   }
-  return _shopify;
+  return _shopifyMod;
 }
 
 let running = false;

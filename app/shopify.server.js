@@ -341,7 +341,7 @@ const shopify = shopifyApp({
     expiringOfflineAccessTokens: true,
     unstable_newEmbeddedAuthStrategy: true,
   },
-  ...(process.env.SHOP_CUSTOM_DOMAIN
+  ...(process.env.SHOP_CUSTOM_DOMAIN && !process.env.SHOP_CUSTOM_DOMAIN.endsWith('.myshopify.com')
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
     : {}),
 });
