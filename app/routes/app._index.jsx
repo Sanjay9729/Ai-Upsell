@@ -54,7 +54,7 @@ export const loader = async ({ request }) => {
       })();
     }
 
-    return Response.json({ totalConversions, productCount, themeEditorUrl });
+    return Response.json({ totalConversions, productCount, themeEditorUrl, shop: session.shop });
   } catch (error) {
     console.error("Home page loader error:", error);
     return Response.json({ totalConversions: 0, productCount: 0, themeEditorUrl: null });
@@ -62,7 +62,7 @@ export const loader = async ({ request }) => {
 };
 
 export default function Index() {
-  const { totalConversions, themeEditorUrl } = useLoaderData();
+  const { totalConversions, themeEditorUrl, shop } = useLoaderData();
 
   return (
     <Page title="">
@@ -71,7 +71,7 @@ export default function Index() {
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
               <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>Welcome to AI Upsells</h1>
-              <Button url="https://upselldashboard.netlify.app/" target="_blank">Go to Dashboard</Button>
+              <Button url={`https://upselldashboard.netlify.app/?shop=${shop}`} target="_blank">Go to Dashboard</Button>
             </InlineStack>
             {/* Step 1 */}
             <Card>
