@@ -17,6 +17,30 @@ import { getMerchantConfig } from './backend/services/merchantConfig.js';
 // Load environment variables
 dotenv.config();
 
+const serverLogs = [];
+const originalLog = console.log;
+const originalError = console.error;
+
+console.log = (...args) => {
+  const message = args.map(arg => {
+    if (arg instanceof Error) return arg.stack || arg.message;
+    return typeof arg === 'object' ? JSON.stringify(arg) : arg;
+  }).join(' ');
+  serverLogs.push({ type: 'log', message, timestamp: new Date().toISOString() });
+  if (serverLogs.length > 500) serverLogs.shift();
+  originalLog(...args);
+};
+
+console.error = (...args) => {
+  const message = args.map(arg => {
+    if (arg instanceof Error) return arg.stack || arg.message;
+    return typeof arg === 'object' ? JSON.stringify(arg) : arg;
+  }).join(' ');
+  serverLogs.push({ type: 'error', message, timestamp: new Date().toISOString() });
+  if (serverLogs.length > 500) serverLogs.shift();
+  originalError(...args);
+};
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -440,6 +464,11 @@ app.get('/api/health', (req, res) => {
     message: 'AI Upsell API server is running',
     version: '1.0.0'
   });
+});
+
+// Live server logs endpoint for debugging OAuth flow
+app.get('/api/debug-logs', (req, res) => {
+  res.json(serverLogs);
 });
 
 // Debug Shopify Auth config endpoint
