@@ -5,13 +5,17 @@ import {
 } from "../database/collections.js";
 
 // Lazy-loaded to avoid running shopifyApp() before dotenv.config() executes
-let _shopify = null;
-async function getShopify() {
-  if (!_shopify) {
-    const mod = await import("../../app/shopify.server.js");
-    _shopify = mod.default;
+let _shopifyMod = null;
+async function getShopifyMod() {
+  if (!_shopifyMod) {
+    _shopifyMod = await import("../../app/shopify.server.js");
   }
-  return _shopify;
+  return _shopifyMod;
+}
+
+async function getShopify() {
+  const mod = await getShopifyMod();
+  return mod.default;
 }
 
 let running = false;
@@ -50,20 +54,7 @@ async function getShopsFromSessions() {
   return filtered;
 }
 
-async function getOfflineSession(shop) {
-  const shopify = await getShopify();
-  const sessions = await shopify.sessionStorage.findSessionsByShop(shop);
-  return sessions.find((s) => !s.isOnline && s.accessToken);
-}
-
-async function makeAdminGraphQL(session) {
-  const shopify = await getShopify();
-  const client = new shopify.api.clients.Graphql({ session });
-  return async (query, options) => {
-    const body = await client.request(query, options);
-    return { json: async () => body };
-  };
-}
+// Session retrieval and GraphQL client setup are handled via shopify.unauthenticated.admin
 
 export async function runProductReconciliation(reason = "interval") {
   const { enabled, shopDelayMs } = getConfig();
@@ -87,17 +78,19 @@ export async function runProductReconciliation(reason = "interval") {
 
     for (const shop of shops) {
       try {
-        const session = await getOfflineSession(shop);
-        if (!session) {
+        const shopify = await getShopify();
+        let adminContext;
+        try {
+          adminContext = await shopify.unauthenticated.admin(shop);
+        } catch (error) {
           result.skipped += 1;
-          console.warn(`⚠️ Reconcile skipped for ${shop}: no offline session`);
+          console.warn(`⚠️ Reconcile skipped for ${shop}: no offline session found`);
           continue;
         }
 
-        const adminGraphQL = await makeAdminGraphQL(session);
         const syncResult = await syncProductsWithGraphQL(
           shop,
-          adminGraphQL,
+          adminContext.admin.graphql,
           { returnIds: true }
         );
 

@@ -17,6 +17,30 @@ import { getMerchantConfig } from './backend/services/merchantConfig.js';
 // Load environment variables
 dotenv.config();
 
+const serverLogs = [];
+const originalLog = console.log;
+const originalError = console.error;
+
+console.log = (...args) => {
+  const message = args.map(arg => {
+    if (arg instanceof Error) return arg.stack || arg.message;
+    return typeof arg === 'object' ? JSON.stringify(arg) : arg;
+  }).join(' ');
+  serverLogs.push({ type: 'log', message, timestamp: new Date().toISOString() });
+  if (serverLogs.length > 500) serverLogs.shift();
+  originalLog(...args);
+};
+
+console.error = (...args) => {
+  const message = args.map(arg => {
+    if (arg instanceof Error) return arg.stack || arg.message;
+    return typeof arg === 'object' ? JSON.stringify(arg) : arg;
+  }).join(' ');
+  serverLogs.push({ type: 'error', message, timestamp: new Date().toISOString() });
+  if (serverLogs.length > 500) serverLogs.shift();
+  originalError(...args);
+};
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -44,6 +68,7 @@ const remixHandler = createRequestHandler({ build });
 console.log('✅ Remix build loaded — landing page served from route.jsx');
 
 const app = express();
+app.set('trust proxy', true);
 
 // Middleware
 app.use(cors());
@@ -439,6 +464,43 @@ app.get('/api/health', (req, res) => {
     message: 'AI Upsell API server is running',
     version: '1.0.0'
   });
+});
+
+// Live server logs endpoint for debugging OAuth flow
+app.get('/api/debug-logs', (req, res) => {
+  res.json(serverLogs);
+});
+
+// Debug Shopify Auth config endpoint
+app.get('/api/debug-auth', async (req, res) => {
+  try {
+    const config = {
+      hasApiKey: !!process.env.SHOPIFY_API_KEY,
+      apiKeyPrefix: process.env.SHOPIFY_API_KEY ? process.env.SHOPIFY_API_KEY.substring(0, 4) : 'none',
+      hasApiSecret: !!process.env.SHOPIFY_API_SECRET,
+      apiSecretPrefix: process.env.SHOPIFY_API_SECRET ? process.env.SHOPIFY_API_SECRET.substring(0, 8) : 'none',
+      appUrl: process.env.SHOPIFY_APP_URL,
+      scopes: process.env.SCOPES,
+      nodeEnv: process.env.NODE_ENV,
+    };
+
+    let shopifyInitStatus = 'unknown';
+    try {
+      const { default: shopify } = await import('./app/shopify.server.js');
+      shopifyInitStatus = shopify ? 'success' : 'null';
+    } catch (err) {
+      shopifyInitStatus = `error: ${err.message}`;
+    }
+
+    res.json({
+      success: true,
+      config,
+      shopifyInitStatus,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // Analytics Dashboard API
