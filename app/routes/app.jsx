@@ -7,10 +7,15 @@ import { authenticate } from "../shopify.server";
 import("../../backend/database/mongodb.js").then(({ getDb }) => getDb()).catch(() => {});
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-
-  // eslint-disable-next-line no-undef
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  try {
+    await authenticate.admin(request);
+    // eslint-disable-next-line no-undef
+    return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  } catch (error) {
+    console.error(`[app.jsx] authenticate.admin failed:`, error.message);
+    if (error.stack) console.error(error.stack);
+    throw error;
+  }
 };
 
 export default function App() {
