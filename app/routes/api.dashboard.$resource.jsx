@@ -1,5 +1,8 @@
 const CORS = {
   'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': process.env.DASHBOARD_URL || '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Dashboard-Key',
 };
 
 function json(data, status = 200) {
