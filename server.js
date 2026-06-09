@@ -441,6 +441,38 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Debug Shopify Auth config endpoint
+app.get('/api/debug-auth', async (req, res) => {
+  try {
+    const config = {
+      hasApiKey: !!process.env.SHOPIFY_API_KEY,
+      apiKeyPrefix: process.env.SHOPIFY_API_KEY ? process.env.SHOPIFY_API_KEY.substring(0, 4) : 'none',
+      hasApiSecret: !!process.env.SHOPIFY_API_SECRET,
+      apiSecretPrefix: process.env.SHOPIFY_API_SECRET ? process.env.SHOPIFY_API_SECRET.substring(0, 8) : 'none',
+      appUrl: process.env.SHOPIFY_APP_URL,
+      scopes: process.env.SCOPES,
+      nodeEnv: process.env.NODE_ENV,
+    };
+
+    let shopifyInitStatus = 'unknown';
+    try {
+      const { default: shopify } = await import('./app/shopify.server.js');
+      shopifyInitStatus = shopify ? 'success' : 'null';
+    } catch (err) {
+      shopifyInitStatus = `error: ${err.message}`;
+    }
+
+    res.json({
+      success: true,
+      config,
+      shopifyInitStatus,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Analytics Dashboard API
 app.get('/api/analytics/dashboard/:shopId', async (req, res) => {
   try {
