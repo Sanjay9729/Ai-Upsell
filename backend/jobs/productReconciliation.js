@@ -13,6 +13,11 @@ async function getShopifyMod() {
   return _shopifyMod;
 }
 
+async function getShopify() {
+  const mod = await getShopifyMod();
+  return mod.default;
+}
+
 let running = false;
 let timer = null;
 
