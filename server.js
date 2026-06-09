@@ -44,6 +44,7 @@ const remixHandler = createRequestHandler({ build });
 console.log('✅ Remix build loaded — landing page served from route.jsx');
 
 const app = express();
+app.set('trust proxy', true);
 
 // Middleware
 app.use(cors());
