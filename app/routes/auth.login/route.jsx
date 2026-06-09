@@ -1,4 +1,5 @@
-import { Page, Card, TextField, Button, FormLayout, Text, BlockStack } from "@shopify/polaris";
+import { AppProvider, Page, Card, TextField, Button, FormLayout, Text, BlockStack } from "@shopify/polaris";
+import enTranslations from "@shopify/polaris/locales/en.json";
 import { useState } from "react";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import { login } from "../../shopify.server";
@@ -25,29 +26,31 @@ export default function Auth() {
   const { errors } = actionData || loaderData;
 
   return (
-    <Page>
-      <div style={{ maxWidth: "480px", margin: "80px auto" }}>
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h1" variant="headingLg" fontWeight="bold">Log in to AI Upsell</Text>
-            <Form method="post">
-              <FormLayout>
-                <TextField
-                  name="shop"
-                  label="Shop domain"
-                  helpText="example.myshopify.com"
-                  value={shop}
-                  onChange={(val) => setShop(val)}
-                  autoComplete="on"
-                  error={errors.shop}
-                />
-                <Button submit variant="primary">Log in</Button>
-              </FormLayout>
-            </Form>
-          </BlockStack>
-        </Card>
-      </div>
-    </Page>
+    <AppProvider i18n={enTranslations}>
+      <Page>
+        <div style={{ maxWidth: "480px", margin: "80px auto" }}>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h1" variant="headingLg" fontWeight="bold">Log in to AI Upsell</Text>
+              <Form method="post">
+                <FormLayout>
+                  <TextField
+                    name="shop"
+                    label="Shop domain"
+                    helpText="example.myshopify.com"
+                    value={shop}
+                    onChange={(val) => setShop(val)}
+                    autoComplete="on"
+                    error={errors.shop}
+                  />
+                  <Button submit variant="primary">Log in</Button>
+                </FormLayout>
+              </Form>
+            </BlockStack>
+          </Card>
+        </div>
+      </Page>
+    </AppProvider>
   );
 }
 
