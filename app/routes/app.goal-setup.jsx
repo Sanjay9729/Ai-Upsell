@@ -15,7 +15,6 @@ import {
   RangeSlider,
   Text,
   TextField,
-  Toast,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { getMerchantConfig, saveMerchantConfig } from "../services/merchantConfig.server";
@@ -275,7 +274,6 @@ export default function GoalSetup() {
   const actionData = useActionData();
   const fetcher = useFetcher();
   const saving = fetcher.state !== "idle";
-  const { shop, dashboardUrl } = data;
 
   const [selectedGoal, setSelectedGoal] = useState(data.goal);
   const [selectedRisk, setSelectedRisk] = useState(data.riskTolerance);
@@ -307,7 +305,6 @@ export default function GoalSetup() {
       setIsDefault(false);
       setToast({ message: "Settings saved successfully.", error: false });
       setTimeout(() => setToast(null), 4000);
-      window.open(`${dashboardUrl}/guardrails?shop=${encodeURIComponent(shop)}`, "_blank");
     }
   }, [fetcher.state, fetcher.data]);
 
@@ -346,6 +343,11 @@ export default function GoalSetup() {
           <BlockStack gap="500">
 
             {/* Notices */}
+            {toast && (
+              <Banner tone={toast.error ? "critical" : "success"} onDismiss={() => setToast(null)}>
+                <Text as="p" variant="bodyMd">{toast.message}</Text>
+              </Banner>
+            )}
             {isDefault && !saving && (
               <Banner tone="info">
                 <Text as="p" variant="bodyMd">Using defaults — save to apply your choices</Text>
@@ -585,14 +587,6 @@ export default function GoalSetup() {
           </BlockStack>
         </Layout.Section>
       </Layout>
-
-      {toast && (
-        <Toast
-          content={toast.message}
-          error={toast.error}
-          onDismiss={() => setToast(null)}
-        />
-      )}
     </Page>
   );
 }
