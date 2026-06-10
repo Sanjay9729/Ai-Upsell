@@ -1453,9 +1453,15 @@
           try {
             console.log('[AI Upsell] Primary: goal=' + currentGoalD + ' discount=' + discountPct);
             var discountCode = discountPct > 0 ? await getOrCreateDiscountCode(discountTargetsD, discountPct) : null;
-            // Include sections in cart/add.js payload — Dawn theme returns rendered HTML inline
             var cartPayload = { id: varId, quantity: 1, sections: 'cart-drawer,cart-icon-bubble', ...offerPropsD };
-            var addRes = await fetch('/cart/add.js', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cartPayload) });
+            var addRes = await fetch(SHOPIFY_ROOT + 'cart/add', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+              },
+              body: JSON.stringify(cartPayload)
+            });
             var addData = addRes.ok ? await addRes.json() : {};
             if (discountCode) {
               window.__AI_UPSELL_DISCOUNT_CODE__ = discountCode;
@@ -1513,9 +1519,9 @@
           } catch (_) { btn.textContent = 'Add'; btn.disabled = false; }
         });
       });
-      // 1. Try to place it inside the scrollable container, after the cart items
-      var itemsHost = drawer.querySelector('cart-drawer-items, #CartDrawer-CartItems, .drawer__contents .cart-items, .drawer__contents [data-cart-items]');
-      if (itemsHost && itemsHost.parentNode) { insertAfter(itemsHost, wrapper); return; }
+      // 1. Try to place it inside the scrollable container, as a child of the items host (so it scrolls with them)
+      var itemsHost = drawer.querySelector('cart-drawer-items, #CartDrawer-CartItems, .cart-drawer__items, .drawer__contents .cart-items, .drawer__contents [data-cart-items], [data-cart-items]');
+      if (itemsHost) { itemsHost.appendChild(wrapper); return; }
       
       // 2. Try to place it inside .drawer__contents or similar contents area
       var contents = drawer.querySelector('.drawer__inner, .drawer__contents, cart-drawer-items');

@@ -420,7 +420,7 @@ cart-drawer.ai-has-upsell .drawer__footer > * {
   border-top: 1px solid #e5e7eb;
 }
 .ai-drawer-upsell-inner {
-  padding: 12px 16px 16px;
+  padding: 12px 16px 4px;
 }
 .ai-drawer-upsell-hd {
   display: flex;
