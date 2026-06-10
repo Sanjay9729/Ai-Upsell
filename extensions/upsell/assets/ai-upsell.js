@@ -1454,7 +1454,7 @@
             console.log('[AI Upsell] Primary: goal=' + currentGoalD + ' discount=' + discountPct);
             var discountCode = discountPct > 0 ? await getOrCreateDiscountCode(discountTargetsD, discountPct) : null;
             var cartPayload = { id: varId, quantity: 1, sections: 'cart-drawer,cart-icon-bubble', ...offerPropsD };
-            var addRes = await fetch(SHOPIFY_ROOT + 'cart/add', {
+            var addRes = await fetch(SHOPIFY_ROOT + 'cart/add.js', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
