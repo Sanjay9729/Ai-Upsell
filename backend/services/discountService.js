@@ -122,9 +122,18 @@ async function createDiscountCodeInShopify(
           value: {
             percentage: percent / 100
           },
-          items: {
-            all: true
-          }
+          items: Array.isArray(bundleProducts) && bundleProducts.length > 0
+            ? {
+                products: {
+                  productsToAdd: bundleProducts.map(function(p) {
+                    var id = String(p.productId || p.id || p).replace(/\D/g, '');
+                    return 'gid://shopify/Product/' + id;
+                  })
+                }
+              }
+            : {
+                all: true
+              }
         },
         customerSelection: {
           all: true
