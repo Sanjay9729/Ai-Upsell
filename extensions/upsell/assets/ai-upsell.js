@@ -490,7 +490,7 @@
     }
 
     function isInsideCartDrawer(el) {
-      return el && el.closest && !!el.closest('cart-drawer');
+      return el && el.closest && !!el.closest('cart-drawer, cart-drawer-component, .cart-drawer');
     }
 
     function placeInCartPage() {
@@ -657,7 +657,10 @@
       )) ||
       drawer.hasAttribute('open') ||
       drawer.getAttribute('aria-hidden') === 'false' ||
-      document.body.classList.contains('overflow-hidden');
+      document.body.classList.contains('overflow-hidden') ||
+      // Horizon's <cart-drawer-component> wraps a <dialog ref="dialog"> that carries
+      // the actual 'open' attribute when the drawer is visible.
+      !!(drawer.querySelector && drawer.querySelector('dialog[open]'));
     }
 
     function keepDrawerOpen(drawer, cart) {
@@ -746,7 +749,7 @@
     }
 
     function ensureDrawerShowsCartItems(cart) {
-      var drawer = document.querySelector('cart-drawer');
+      var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
       if (!drawer || !cart || !Array.isArray(cart.items) || cart.items.length === 0) return;
       // DOM-presence check must run before the visual check. When the drawer is closed or
       // mid-animation, getBoundingClientRect returns 0x0 for all rows, causing
@@ -779,12 +782,12 @@
     }
 
     function safelyUpdateDrawerFromSection(sectionHtml, cart, options) {
-      var drawer = document.querySelector('cart-drawer');
+      var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
       if (!drawer || !sectionHtml) return false;
       var wasOpen = isDrawerVisiblyOpen(drawer);
       var frag = document.createElement('div');
       frag.innerHTML = patchCartSectionHtml(sectionHtml, cart);
-      var nextDrawer = frag.querySelector('cart-drawer');
+      var nextDrawer = frag.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
       if (!nextDrawer) return false;
       
       // Check if bundle was just cleared (no bundle items in cart but HTML might still have offer text)
@@ -838,7 +841,7 @@
         }
         replaced = true;
       }
-      if (replaced && wasOpen) setTimeout(function () { keepDrawerOpen(document.querySelector('cart-drawer') || drawer, cart); }, 30);
+      if (replaced && wasOpen) setTimeout(function () { keepDrawerOpen(document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer') || drawer, cart); }, 30);
       return replaced;
     }
 
@@ -938,7 +941,7 @@
       // and drawer__inner-empty is visible (renderContents may not always set it
       // reliably when called from our context).
       if (cart && cart.item_count === 0) {
-        var d = document.querySelector('cart-drawer');
+        var d = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
         if (d) {
           d.classList.remove('ai-has-upsell');
           d.classList.add('is-empty');
@@ -1073,7 +1076,7 @@
           });
         }
         Array.prototype.slice.call(document.querySelectorAll('[data-ai-hidden-cart-discount="true"]')).forEach(function (el) {
-          if (!el.closest || !el.closest('cart-drawer')) {
+          if (!el.closest || !el.closest('cart-drawer, cart-drawer-component, .cart-drawer')) {
             el.style.display = '';
             el.removeAttribute('data-ai-hidden-cart-discount');
           }
@@ -1303,7 +1306,7 @@
     }
 
     function placeInCartDrawer() {
-      var drawer = document.querySelector('cart-drawer');
+      var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
       if (!drawer) return;
       if (drawer.querySelector('.ai-drawer-upsell')) { drawer.classList.add('ai-has-upsell'); return; }
       var products = secondaryAllProducts.length > 0 ? secondaryAllProducts.slice(0, DRAWER_MAX_PRODUCTS) : [];
@@ -1472,7 +1475,7 @@
                 sectionsData = await sectionsRes.json();
               }
               updateCartCountBubble(cartData.item_count);
-              var drawerEl = document.querySelector('cart-drawer');
+              var drawerEl = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
               if (drawerEl && sectionsData && sectionsData['cart-drawer']) {
                 safelyUpdateDrawerFromSection(sectionsData['cart-drawer'], cartData, { allowFullReplace: true });
                 keepDrawerOpen(drawerEl, cartData);
@@ -1497,7 +1500,7 @@
             }
             // Re-inject upsell into the (possibly new) drawer
             setTimeout(function () {
-              var activeDrawer = document.querySelector('cart-drawer');
+              var activeDrawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
               if (activeDrawer && !activeDrawer.querySelector('.ai-drawer-upsell')) placeInCartDrawer();
             }, 80);
             setTimeout(function () { btn.textContent = 'Add'; btn.disabled = false; btn.style.background = '#008060'; }, 2000);
@@ -1525,7 +1528,7 @@
       if (_drawerUpsellRefreshInFlight) return;
       _drawerUpsellRefreshInFlight = true;
       try {
-        var drawer = document.querySelector('cart-drawer');
+        var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
         if (!drawer) return;
         if (drawer.querySelector('.ai-drawer-upsell')) return;
         var cartRes = await fetch(SHOPIFY_ROOT + 'cart.js');
@@ -1792,7 +1795,7 @@
 
         // Hide the Offer property text in the cart drawer
         console.log('[AI Upsell] 🧹 Hiding Offer property text in cart drawer');
-        var cartDrawer = document.querySelector('cart-drawer');
+        var cartDrawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
         if (cartDrawer) {
           var allPropertyElements = cartDrawer.querySelectorAll('[data-cart-item-property], .cart-item__property, .properties');
           allPropertyElements.forEach(function(el) {
@@ -2342,7 +2345,7 @@
               // fetch that can return a stale/empty-cart cached response and overwrite the
               // correct content we just inserted. Instead we set the CSS state directly.
               setTimeout(function() {
-                var drawer = document.querySelector('cart-drawer');
+                var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
                 if (drawer) {
                   if (drawer.classList) { drawer.classList.add('active', 'animate'); drawer.classList.remove('is-empty'); }
                   drawer.setAttribute('aria-hidden', 'false');
@@ -2820,7 +2823,8 @@
         '[data-product-price]',
         '[data-cart-item-regular-price]',
         '[data-cart-item-final-price]',
-        '[data-cart-item-total]'
+        '[data-cart-item-total]',
+        'text-component'
       ].join(', ');
       return Array.prototype.slice.call(scope.querySelectorAll(selectors)).filter(function (el) {
         return el && !el.children.length && /\d/.test(el.textContent || '');
@@ -2837,7 +2841,8 @@
         '.cart-item__totals',
         '[data-cart-item-total]',
         '[data-cart-item-final-price]',
-        '[data-cart-item-regular-price]'
+        '[data-cart-item-regular-price]',
+        '.cart-items__price'
       ].join(', ');
 
       // Return all matching wrappers, deduplicated so nested matches don't cause double-patching.
@@ -2986,7 +2991,7 @@
       var nodes = Array.prototype.slice.call(root.querySelectorAll(selectors)).filter(function (el) {
         if (!el || el.getAttribute('data-ai-hidden-cart-discount') === 'true') return false;
         // On cart page, never hide discount nodes outside the cart drawer.
-        if (isCartPage && !(el.closest && el.closest('cart-drawer'))) return false;
+        if (isCartPage && !(el.closest && el.closest('cart-drawer, cart-drawer-component, .cart-drawer'))) return false;
         // Skip broad containers that include totals or checkout — hiding them would remove the checkout section.
         if (el.querySelector && el.querySelector('.totals, .cart__ctas, button[name="checkout"], a[href*="/checkout"]')) return false;
         if (el.classList && (el.classList.contains('cart__footer') || el.classList.contains('cart__blocks') || el.classList.contains('cart__ctas') || el.classList.contains('js-contents'))) return false;
@@ -3004,7 +3009,7 @@
       nodes.forEach(function (node) {
         var row = (node.closest && node.closest('li, .discounts__discount, .totals__discount, .cart-discount, .discount')) || null;
         var rowHasTotals = row && row.querySelector && row.querySelector('.totals, .cart__ctas, button[name="checkout"], a[href*="/checkout"]');
-        var inDrawer = !!(node.closest && node.closest('cart-drawer'));
+        var inDrawer = !!(node.closest && node.closest('cart-drawer, cart-drawer-component, .cart-drawer'));
         if (row && !rowHasTotals && inDrawer && !isCartPage) {
           row.style.display = 'none';
           row.setAttribute('data-ai-hidden-cart-discount', 'true');
@@ -3164,10 +3169,10 @@
         var isCartPage = window.location.pathname === '/cart' || window.location.pathname.indexOf('/cart') === 0;
         if (isCartPage) {
           // On the cart page, exclude hidden cart-drawer rows to avoid double counting.
-          rowsArr = rowsArr.filter(function (row) { return !(row.closest && row.closest('cart-drawer')); });
+          rowsArr = rowsArr.filter(function (row) { return !(row.closest && row.closest('cart-drawer, cart-drawer-component, .cart-drawer')); });
         } else {
           // On non-cart pages, prefer drawer rows if present.
-          var drawerRows = rowsArr.filter(function (row) { return row.closest && row.closest('cart-drawer'); });
+          var drawerRows = rowsArr.filter(function (row) { return row.closest && row.closest('cart-drawer, cart-drawer-component, .cart-drawer'); });
           if (drawerRows.length) rowsArr = drawerRows;
         }
       }
@@ -3554,7 +3559,7 @@
           .then(function (r) { return r.json(); })
           .then(function (cart) {
             if (cart && cart.item_count === 0) {
-              var drawer = document.querySelector('cart-drawer');
+              var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
               if (drawer) {
                 var upsell = drawer.querySelector('.ai-drawer-upsell');
                 if (upsell) upsell.remove();
@@ -4027,7 +4032,7 @@
               fetch('/apps/ai-upsell/analytics/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventType: 'cart_add', shopId: _C.shopDomain, sessionId: window.__AI_UPSELL_USER_ID__ || null, userId: window.__AI_UPSELL_USER_ID__ || null, sourceProductId: PRODUCT_ID, sourceProductName: _C.productTitle || '', upsellProductId: upsellProductId, upsellProductName: productTitle, variantId: variantId, recommendationType: recommendationType, confidence: parseFloat(confidence), quantity: quantity, metadata: { location: 'product_detail_page', offerType: offerType, discountPercent: effectiveDiscount, segment: _C.customerSegment || window.__AI_UPSELL_SEGMENT__ || 'anonymous' } }) }).catch(function () {});
               fetch(SHOPIFY_ROOT + 'cart.js').then(function (r) { return r.json(); }).then(function (cart) {
                 updateCartCountBubble(cart.item_count);
-                var drawerEl = document.querySelector('cart-drawer');
+                var drawerEl = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
                 var drawerOpen = isDrawerVisiblyOpen(drawerEl);
                 if (drawerEl && !drawerOpen) {
                   keepDrawerOpen(drawerEl);
@@ -4043,7 +4048,7 @@
                 // Open drawer before rendering — keepDrawerOpen adds 'active' class so Dawn's
                 // own open() returns early and does NOT call its renderContents(null) which
                 // would overwrite our content with stale data.
-                var freshDrawerEl = document.querySelector('cart-drawer');
+                var freshDrawerEl = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
                 if (freshDrawerEl && !isDrawerVisiblyOpen(freshDrawerEl)) {
                   keepDrawerOpen(freshDrawerEl);
                   var ov = document.getElementById('CartDrawer-Overlay');
@@ -4052,7 +4057,7 @@
                 // Mirror exactly the working drawer-add flow: prefer Dawn's native renderContents,
                 // fall back to manual section injection.
                 var inlineSections = addData && addData.sections ? addData.sections : null;
-                var latestDrawer = document.querySelector('cart-drawer');
+                var latestDrawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
                 if (latestDrawer && typeof latestDrawer.renderContents === 'function' && addData && addData.sections) {
                   latestDrawer.renderContents(addData);
                 } else if (inlineSections && inlineSections['cart-drawer']) {
@@ -4060,7 +4065,7 @@
                   ensureDrawerShowsCartItems(cart);
                 } else {
                   fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble').then(function (r) { return r.json(); }).then(function (sections) {
-                    var ld = document.querySelector('cart-drawer');
+                    var ld = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
                     if (ld && typeof ld.renderContents === 'function' && sections) {
                       ld.renderContents({ sections: sections });
                     } else if (sections && sections['cart-drawer']) {
@@ -4072,7 +4077,7 @@
                 }
                 if (inlineSections && inlineSections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = inlineSections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
                 // Re-confirm drawer is open after renderContents (it may have closed is-empty state)
-                var afterDrawer = document.querySelector('cart-drawer');
+                var afterDrawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
                 if (afterDrawer) keepDrawerOpen(afterDrawer);
                 setTimeout(function () {
                   updateLineItemDiscountedPrices(cart);
@@ -4081,13 +4086,16 @@
                 }, 500);
                 setTimeout(function () { updateLineItemDiscountedPrices(cart); restoreCartFooterVisibility(); }, 900);
                 document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
+                // Horizon theme's <cart-drawer auto-open> listens on document for the
+                // native 'cart:update' event and opens itself via showDialog().
+                document.dispatchEvent(new CustomEvent('cart:update', { bubbles: true, detail: { resource: cart, sourceId: 'ai-upsell', data: { source: 'ai-upsell-pdp' } } }));
                 // Fallback for themes without a Dawn-style <cart-drawer> element (e.g. Horizon):
                 // if our manual drawer manipulation didn't visibly open anything, trigger the
                 // theme's own cart icon so its native cart drawer/dialog opens.
                 setTimeout(function () {
-                  var checkDrawer = document.querySelector('cart-drawer');
+                  var checkDrawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
                   if (!isDrawerVisiblyOpen(checkDrawer)) {
-                    var cartTrigger = document.querySelector('#cart-icon-bubble, a#cart-icon-bubble, summary[aria-controls="cart-drawer"], button[aria-controls="cart-drawer"], [data-cart-drawer-toggle], a[href="/cart"]');
+                    var cartTrigger = document.querySelector('#cart-icon-bubble, a#cart-icon-bubble, summary[aria-controls="cart-drawer"], button[aria-controls="cart-drawer"], [data-cart-drawer-toggle], [data-testid="cart-drawer-trigger"], a[href="/cart"]');
                     if (cartTrigger && typeof cartTrigger.click === 'function') cartTrigger.click();
                   }
                 }, 200);
@@ -4444,7 +4452,7 @@
           setTimeout(function () {
             fetch(SHOPIFY_ROOT + 'cart.js').then(function (r) { return r.json(); }).then(function (cart) {
               if (cart && cart.item_count === 0) {
-                var drawer = document.querySelector('cart-drawer');
+                var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
                 if (drawer) {
                   var upsell = drawer.querySelector('.ai-drawer-upsell');
                   if (upsell) upsell.remove();
@@ -4541,7 +4549,7 @@
     }
 
     async function loadDrawerUpsellsFromCart(cartOverride) {
-      var drawer = document.querySelector('cart-drawer');
+      var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
       if (!drawer) return;
       // Remove existing drawer upsell so it can be re-rendered with fresh products
       var existing = drawer.querySelector('.ai-drawer-upsell');
@@ -4566,7 +4574,7 @@
     if (!window.__AI_DRAWER_OBSERVER__) {
       window.__AI_DRAWER_OBSERVER__ = true;
       async function loadDrawerUpsells() {
-        var drawer = document.querySelector('cart-drawer');
+        var drawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
         if (!drawer || drawer.querySelector('.ai-drawer-upsell')) return;
         try {
           var cartRes = await fetch('/cart.js'); var cart = await cartRes.json();
@@ -4588,9 +4596,18 @@
       var bodyDrawerObserver = new MutationObserver(function (mutations) {
         mutations.forEach(function (m) {
           var el = m.target;
-          if (!el || el.tagName !== 'CART-DRAWER') return;
-          var isOpen = el.classList.contains('active') || el.classList.contains('is-open') ||
-                       el.hasAttribute('open') || el.getAttribute('aria-hidden') === 'false';
+          if (!el) return;
+          var isOpen;
+          if (el.tagName === 'CART-DRAWER' || el.tagName === 'CART-DRAWER-COMPONENT') {
+            isOpen = el.classList.contains('active') || el.classList.contains('is-open') ||
+                     el.hasAttribute('open') || el.getAttribute('aria-hidden') === 'false' ||
+                     !!(el.querySelector && el.querySelector('dialog[open]'));
+          } else if (el.tagName === 'DIALOG' && el.closest && el.closest('cart-drawer, cart-drawer-component, .cart-drawer')) {
+            // Horizon's <cart-drawer-component> wraps a <dialog> that gets the 'open' attribute.
+            isOpen = el.hasAttribute('open');
+          } else {
+            return;
+          }
           if (isOpen && !_drawerWasOpen) {
             _drawerWasOpen = true;
             loadDrawerUpsells();
@@ -4612,7 +4629,7 @@
           if (m.type !== 'childList') return false;
           var target = m.target;
           if (!target) return false;
-          var inCartScope = !!(target.closest && (target.closest('cart-drawer') || target.closest('cart-items') || target.id === 'CartDrawer-CartItems' || target.id === 'main-cart-items'));
+          var inCartScope = !!(target.closest && (target.closest('cart-drawer, cart-drawer-component, .cart-drawer') || target.closest('cart-items') || target.id === 'CartDrawer-CartItems' || target.id === 'main-cart-items'));
           var addedNodes = Array.prototype.slice.call(m.addedNodes || []).filter(function (node) { return node && node.nodeType === 1; });
           var removedNodes = Array.prototype.slice.call(m.removedNodes || []).filter(function (node) { return node && node.nodeType === 1; });
           var aiOnlyMutation = (addedNodes.length || removedNodes.length) &&
