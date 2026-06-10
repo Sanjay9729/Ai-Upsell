@@ -606,3 +606,16 @@ cart-drawer.ai-has-upsell .drawer__footer > * {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
+
+/* Prevent horizontal overflow/scrolling on the page and drawer components */
+html, body {
+  overflow-x: hidden !important;
+}
+
+cart-drawer,
+.cart-drawer,
+cart-drawer-component,
+.drawer {
+  overflow-x: hidden !important;
+}
+
