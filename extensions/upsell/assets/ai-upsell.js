@@ -4081,6 +4081,16 @@
                 }, 500);
                 setTimeout(function () { updateLineItemDiscountedPrices(cart); restoreCartFooterVisibility(); }, 900);
                 document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart, source: 'ai-upsell' } }));
+                // Fallback for themes without a Dawn-style <cart-drawer> element (e.g. Horizon):
+                // if our manual drawer manipulation didn't visibly open anything, trigger the
+                // theme's own cart icon so its native cart drawer/dialog opens.
+                setTimeout(function () {
+                  var checkDrawer = document.querySelector('cart-drawer');
+                  if (!isDrawerVisiblyOpen(checkDrawer)) {
+                    var cartTrigger = document.querySelector('#cart-icon-bubble, a#cart-icon-bubble, summary[aria-controls="cart-drawer"], button[aria-controls="cart-drawer"], [data-cart-drawer-toggle], a[href="/cart"]');
+                    if (cartTrigger && typeof cartTrigger.click === 'function') cartTrigger.click();
+                  }
+                }, 200);
               });
               button.textContent = 'Added \u2713'; button.style.background = '#008060';
               try { sessionStorage.setItem('lastAiUpsellProduct', upsellProductId); } catch (_) {}
