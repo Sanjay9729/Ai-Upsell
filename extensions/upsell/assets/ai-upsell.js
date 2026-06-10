@@ -1499,10 +1499,28 @@
                 var iconEl = document.getElementById('cart-icon-bubble');
                 if (iconEl) { var tmp2 = document.createElement('div'); tmp2.innerHTML = sectionsData['cart-icon-bubble']; var newIcon = tmp2.querySelector('#cart-icon-bubble'); if (newIcon) { iconEl.replaceWith(newIcon); updateCartCountBubble(cartData.item_count); } }
               }
+              ensureDrawerShowsCartItems(cartData);
               updateLineItemDiscountedPrices(cartData);
               if (window.__AI_UPSELL_DISCOUNT_CODE__) syncCheckoutLinks(window.__AI_UPSELL_DISCOUNT_CODE__);
               // Dispatch after our DOM writes so the theme reacts to already-updated content
               document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cartData, source: 'ai-upsell' } }));
+              // Horizon theme's <cart-drawer auto-open> listens on document for the
+              // native 'cart:update' event and opens/refreshes itself via showDialog().
+              document.dispatchEvent(new CustomEvent('cart:update', { bubbles: true, detail: { resource: cartData, sourceId: 'ai-upsell', data: { source: 'ai-upsell-drawer' } } }));
+              // Re-confirm drawer is open after all DOM updates (renderContents-style
+              // refreshes can briefly close the is-empty state).
+              var afterDrawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
+              if (afterDrawer) keepDrawerOpen(afterDrawer, cartData);
+              // Fallback for themes without a Dawn-style <cart-drawer> element (e.g. Horizon):
+              // if our manual drawer manipulation didn't visibly open anything, trigger the
+              // theme's own cart icon so its native cart drawer/dialog opens with fresh content.
+              setTimeout(function () {
+                var checkDrawer = document.querySelector('cart-drawer, cart-drawer-component, .cart-drawer');
+                if (!isDrawerVisiblyOpen(checkDrawer)) {
+                  var cartTrigger = document.querySelector('#cart-icon-bubble, a#cart-icon-bubble, summary[aria-controls="cart-drawer"], button[aria-controls="cart-drawer"], [data-cart-drawer-toggle], [data-testid="cart-drawer-trigger"], a[href="/cart"]');
+                  if (cartTrigger && typeof cartTrigger.click === 'function') cartTrigger.click();
+                }
+              }, 200);
             } catch (_) {
               fetch('/cart.js').then(function (r) { return r.json(); }).then(function (cart) {
                 document.documentElement.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true, detail: { cart: cart } }));
