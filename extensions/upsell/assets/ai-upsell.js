@@ -1513,20 +1513,24 @@
           } catch (_) { btn.textContent = 'Add'; btn.disabled = false; }
         });
       });
-      // Place before footer so checkout sits below the upsell block.
+      // 1. Try to place it inside the scrollable container, after the cart items
+      var itemsHost = drawer.querySelector('cart-drawer-items, #CartDrawer-CartItems, .drawer__contents .cart-items, .drawer__contents [data-cart-items]');
+      if (itemsHost && itemsHost.parentNode) { insertAfter(itemsHost, wrapper); return; }
+      
+      // 2. Try to place it inside .drawer__contents or similar contents area
+      var contents = drawer.querySelector('.drawer__inner, .drawer__contents, cart-drawer-items');
+      if (contents) { contents.appendChild(wrapper); return; }
+
+      // 3. Fallback: place before footer so checkout sits below the upsell block
       var footer = drawer.querySelector('.drawer__footer, .cart-drawer__footer, #CartDrawer-Footer, cart-drawer-footer');
       if (footer && footer.parentNode) { footer.parentNode.insertBefore(wrapper, footer); return; }
-      // If footer not found, place before checkout CTA inside drawer.
+      
+      // 4. Fallback: place before checkout CTA inside drawer
       var checkoutBtn = drawer.querySelector('button[name="checkout"], #CartDrawer-Checkout, .cart__checkout-button button, a[href*="/checkout"]');
       if (checkoutBtn && checkoutBtn.parentNode) {
         var checkoutWrap = checkoutBtn.closest('.cart__ctas, .cart__checkout-button, .drawer__footer, .cart-drawer__footer, form') || checkoutBtn.parentNode;
         if (checkoutWrap && checkoutWrap.parentNode) { checkoutWrap.parentNode.insertBefore(wrapper, checkoutWrap); return; }
       }
-      // Fallback: place under cart items if footer not found.
-      var itemsHost = drawer.querySelector('cart-drawer-items, #CartDrawer-CartItems, .drawer__contents .cart-items, .drawer__contents [data-cart-items]');
-      if (itemsHost && itemsHost.parentNode) { insertAfter(itemsHost, wrapper); return; }
-      var contents = drawer.querySelector('.drawer__inner, .drawer__contents, cart-drawer-items');
-      if (contents) contents.appendChild(wrapper);
     }
 
     var _drawerUpsellRefreshInFlight = false;
