@@ -665,9 +665,15 @@
 
     function keepDrawerOpen(drawer, cart) {
       if (!drawer) return;
-      // Do NOT call drawer.open() — in Dawn theme that method calls renderContents(),
-      // which fires a new sections fetch that can overwrite our correct content with
-      // a stale/empty-cart cached response.
+      // Horizon's <cart-drawer-component> wraps a native <dialog>; CSS classes alone
+      // won't make a <dialog> visible. Its public open() just calls showDialog()
+      // (unlike Dawn's open(), which re-fetches and overwrites content), so it's safe here.
+      if (drawer.tagName === 'CART-DRAWER-COMPONENT' && typeof drawer.open === 'function') {
+        try { drawer.open(); } catch (_) {}
+      }
+      // Do NOT call drawer.open() for Dawn's <cart-drawer> — that method calls
+      // renderContents(), which fires a new sections fetch that can overwrite our
+      // correct content with a stale/empty-cart cached response.
       if (drawer.classList) {
         drawer.classList.add('active');
         drawer.classList.add('animate');
