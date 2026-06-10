@@ -107,7 +107,9 @@ export const action = async ({ request }) => {
                    value: { percentage: percentageDecimal },
                    items: allVariantIds.length > 0
                      ? { products: { productVariantsToAdd: allVariantIds.map(function(id) { return 'gid://shopify/ProductVariant/' + id; }) } }
-                     : { all: true }
+                     : allProductIds.length > 0
+                       ? { products: { productsToAdd: allProductIds.map(function(id) { return 'gid://shopify/Product/' + id; }) } }
+                       : { all: true }
                  },
                  customerSelection: { all: true }
                }
