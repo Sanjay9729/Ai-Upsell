@@ -79,7 +79,7 @@ app.use(cors());
 // action receives an empty body and throws "Unexpected end of JSON input".
 const jsonParser = express.json();
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/dashboard')) {
+  if (req.path.startsWith('/api/dashboard') || req.path.startsWith('/api/proxy/discount') || req.path.startsWith('/api/proxy/time') || req.path.startsWith('/api/proxy/purchase')) {
     return next();
   }
   return jsonParser(req, res, next);
