@@ -556,6 +556,32 @@
       return window.location.pathname === '/cart' || window.location.pathname.indexOf('/cart') === 0;
     }
 
+    function replaceCartItemsSection(sectionHtml, cart) {
+      if (!sectionHtml) return false;
+      var selectors = ['cart-items', '#main-cart-items', '.cart__items', '[data-cart-items]', 'form[action="/cart"]', 'form[action*="/cart"]'];
+      var el = null;
+      for (var i = 0; i < selectors.length; i++) {
+        el = document.querySelector(selectors[i]);
+        if (el) break;
+      }
+      if (!el) return false;
+      
+      var f = document.createElement('div');
+      f.innerHTML = patchCartSectionHtml(sectionHtml, cart);
+      
+      var nextEl = null;
+      for (var j = 0; j < selectors.length; j++) {
+        nextEl = f.querySelector(selectors[j]);
+        if (nextEl) break;
+      }
+      
+      if (nextEl) {
+        el.replaceWith(nextEl);
+        return true;
+      }
+      return false;
+    }
+
     function cartItemHasAiOffer(item) {
       var props = item && item.properties;
       return !!(props && typeof props === 'object' && (props.Offer || props.offer || props._source === 'ai-bundle'));
@@ -909,13 +935,12 @@
           }
         }
       }
-      if (isCart && sections['main-cart-items']) {
-        var el3 = document.querySelector('cart-items');
-        if (el3) {
-          var f3 = document.createElement('div');
-          f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart);
-          var n3 = f3.querySelector('cart-items');
-          if (n3) el3.replaceWith(n3);
+      if (isCart) {
+        var replacedCart = replaceCartItemsSection(sections['main-cart-items'], cart);
+        if (!replacedCart) {
+          console.log('[AI Upsell] Could not replace cart items section dynamically on cart page. Reloading...');
+          window.location.reload();
+          return;
         }
       }
       if (isCart) {
@@ -2363,7 +2388,12 @@
           sectionsPromise.then(function(sections) {
             if (sections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = sections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
             if (_bundleIsCartPage) {
-              if (sections['main-cart-items']) { var el3 = document.querySelector('cart-items'); if (el3) { var f3 = document.createElement('div'); f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart); var n3 = f3.querySelector('cart-items'); if (n3) el3.replaceWith(n3); } }
+              var replacedCart = replaceCartItemsSection(sections['main-cart-items'], cart);
+              if (!replacedCart) {
+                console.log('[AI Upsell] Could not replace cart items section dynamically on cart page. Reloading...');
+                window.location.reload();
+                return;
+              }
               restoreCartFooterVisibility();
               setTimeout(function() {
                 updateLineItemDiscountedPrices(cart);
@@ -3763,7 +3793,12 @@
             // This prevents the theme's own cart:updated handler from overwriting patches.
             if (sections['cart-drawer']) safelyUpdateDrawerFromSection(sections['cart-drawer'], cart, { allowFullReplace: true });
             if (sections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = sections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
-            if (sections['main-cart-items']) { console.log('[AI Upsell] 🔍 Looking for cart-items element'); var el3 = document.querySelector('cart-items'); console.log('[AI Upsell] cart-items found:', !!el3); if (el3) { var f3 = document.createElement('div'); f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart); var n3 = f3.querySelector('cart-items'); if (n3) el3.replaceWith(n3); } else { console.log('[AI Upsell] No cart-items found, calling updateLineItemDiscountedPrices directly'); updateLineItemDiscountedPrices(cart); } }
+            var replacedCart = replaceCartItemsSection(sections['main-cart-items'], cart);
+            if (!replacedCart && (window.location.pathname === '/cart' || window.location.pathname.indexOf('/cart') === 0)) {
+              console.log('[AI Upsell] Could not replace cart items section dynamically on cart page. Reloading...');
+              window.location.reload();
+              return;
+            }
             // Update the estimated total in the existing footer without replacing the element.
             restoreCartFooterVisibility();
             // Always ensure cart prices are patched after section updates
@@ -4274,7 +4309,12 @@
                 fetch(SHOPIFY_ROOT + '?sections=cart-drawer,cart-icon-bubble,main-cart-items').then(function (r) { return r.json(); }).then(function (sections) {
                   if (sections['cart-drawer']) safelyUpdateDrawerFromSection(sections['cart-drawer'], cart, { allowFullReplace: true });
                   if (sections['cart-icon-bubble']) { var el2 = document.getElementById('cart-icon-bubble'); if (el2) { var f2 = document.createElement('div'); f2.innerHTML = sections['cart-icon-bubble']; var n2 = f2.querySelector('#cart-icon-bubble'); if (n2) { el2.replaceWith(n2); updateCartCountBubble(cart.item_count); } } }
-                  if (sections['main-cart-items']) { var el3 = document.querySelector('cart-items'); if (el3) { var f3 = document.createElement('div'); f3.innerHTML = patchCartSectionHtml(sections['main-cart-items'], cart); var n3 = f3.querySelector('cart-items'); if (n3) el3.replaceWith(n3); } }
+                  var replacedCart = replaceCartItemsSection(sections['main-cart-items'], cart);
+                  if (!replacedCart) {
+                    console.log('[AI Upsell] Could not replace cart items section dynamically on cart page. Reloading...');
+                    window.location.reload();
+                    return;
+                  }
                   restoreCartFooterVisibility();
                   setTimeout(function () {
                     updateLineItemDiscountedPrices(cart);
