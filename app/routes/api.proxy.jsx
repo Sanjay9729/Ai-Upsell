@@ -145,7 +145,10 @@ export const loader = async ({ request }) => {
       const hasVariants = Array.isArray(rec?.variants) && rec.variants.length > 0;
       return !rec?.handle || (!hasVariants && (!variantId || variantId === productIdStr));
     });
-    if (cachedDoc && cacheAge < CACHE_FRESH_MS && cachedDoc.decision?.reason !== 'safety_mode_active' && !cachedCountLow && !cachedBundleVariantRisk) {
+    // Cached entries written before variants were added to the response shape have
+    // `variants: undefined` — treat as risky so they get refreshed and repaired.
+    const cachedVariantsMissing = Array.isArray(cachedDoc?.recommendations) && cachedDoc.recommendations.some((rec) => !Array.isArray(rec?.variants));
+    if (cachedDoc && cacheAge < CACHE_FRESH_MS && cachedDoc.decision?.reason !== 'safety_mode_active' && !cachedCountLow && !cachedBundleVariantRisk && !cachedVariantsMissing) {
       console.log(`⚡ Cache hit for product ${productId} (age: ${Math.round(cacheAge / 1000)}s)`);
       const cachedDiscountPct = cachedDoc.decision?.discountPercent ?? null;
       const filteredRecs = applyDisplayModeFilter(cachedDoc.recommendations, cachedGoal, cachedDisplayMode, cachedDiscountPct);
@@ -155,7 +158,7 @@ export const loader = async ({ request }) => {
       );
     }
 
-    if (cachedDoc && cacheAge < CACHE_STALE_MS && !cachedCountLow && !cachedBundleVariantRisk) {
+    if (cachedDoc && cacheAge < CACHE_STALE_MS && !cachedCountLow && !cachedBundleVariantRisk && !cachedVariantsMissing) {
       console.log(`⏱️ Stale cache for product ${productId} — serving stale, refreshing in background`);
       // Background refresh — fire and forget, never blocks response
       ;(async () => {
@@ -186,6 +189,13 @@ export const loader = async ({ request }) => {
               url: `/products/${product.handle}`,
               availableForSale: product.status?.toUpperCase() === 'ACTIVE',
               variantId: (product.variants || []).find(v => v?.inventoryPolicy === 'CONTINUE' || Number(v?.inventoryQuantity || 0) > 0)?.variantId || product.variants?.[0]?.variantId || null,
+              variants: (product.variants || []).map(v => ({
+                id: String(v.variantId),
+                title: v.title || 'Default Title',
+                price: String(v.price),
+                compareAtPrice: v.compareAtPrice ? String(v.compareAtPrice) : null,
+                available: (product.status?.toUpperCase() === 'ACTIVE') && (v.inventoryQuantity > 0 || v.inventoryPolicy !== 'DENY')
+              })),
               ...getOfferTypeExtras(offerType, baseDiscount),
             };
           });
