@@ -1361,7 +1361,7 @@
           : '<div class="ai-dc-img-ph"></div>';
         var offerType = p.offerType || 'addon_upsell';
         var discountPct = parseFloat(p.discountPercent || 0);
-        var hasV = Array.isArray(p.variants) && p.variants.length > 0 && !(p.variants.length === 1 && p.variants[0].title === 'Default Title');
+        var hasV = Array.isArray(p.variants) && p.variants.length > 0 && !(p.variants.length === 1 && (!p.variants[0].title || p.variants[0].title.toLowerCase() === 'default title' || p.variants[0].title.toLowerCase() === 'default' || p.variants[0].title.toLowerCase() === 'titre par défaut' || p.variants[0].title.toLowerCase() === 'standardtitel'));
         var first = hasV ? (p.variants.find(function (v) { return v.available; }) || p.variants[0]) : null;
         var eVid = (hasV ? (first && first.id) : null) || vid;
         var refPrice = (hasV && first && first.price) ? first.price : p.price;
@@ -2270,7 +2270,7 @@
     function buildCartBundleCardHTML(product) {
       var vid = product.variantId || product.id;
       if (typeof vid === 'string' && vid.includes('/')) vid = vid.split('/').pop();
-      var hasV = Array.isArray(product.variants) && product.variants.length > 0 && !(product.variants.length === 1 && product.variants[0].title === 'Default Title');
+      var hasV = Array.isArray(product.variants) && product.variants.length > 0 && !(product.variants.length === 1 && (!product.variants[0].title || product.variants[0].title.toLowerCase() === 'default title' || product.variants[0].title.toLowerCase() === 'default' || product.variants[0].title.toLowerCase() === 'titre par défaut' || product.variants[0].title.toLowerCase() === 'standardtitel'));
       var first = hasV ? (product.variants.find(function (v) { return v.available; }) || product.variants[0]) : null;
       var eVid = (hasV ? (first && first.id) : null) || vid;
       var dp = hasV && first && first.price ? first.price : product.price;
@@ -2660,7 +2660,7 @@
       if (product.offerType === 'bundle') return buildBundleCardHTML(product);
       var vid = product.variantId || product.id;
       if (typeof vid === 'string' && vid.includes('/')) vid = vid.split('/').pop();
-      var hasV = Array.isArray(product.variants) && product.variants.length > 0 && !(product.variants.length === 1 && product.variants[0].title === 'Default Title');
+      var hasV = Array.isArray(product.variants) && product.variants.length > 0 && !(product.variants.length === 1 && (!product.variants[0].title || product.variants[0].title.toLowerCase() === 'default title' || product.variants[0].title.toLowerCase() === 'default' || product.variants[0].title.toLowerCase() === 'titre par défaut' || product.variants[0].title.toLowerCase() === 'standardtitel'));
       var first = hasV ? (product.variants.find(function (v) { return v.available; }) || product.variants[0]) : null;
       var eVid = (hasV ? (first && first.id) : null) || vid;
       var dp = hasV && first && first.price ? first.price : product.price;

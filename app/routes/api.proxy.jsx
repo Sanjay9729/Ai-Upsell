@@ -238,11 +238,12 @@ export const loader = async ({ request }) => {
     if (admin?.graphql) {
       const existing = await getProductById(shop, productId);
       const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-      const stale = !existing || (Date.now() - updatedAt > 10 * 60 * 1000);
+      const hasMissingVariantTitles = existing && Array.isArray(existing.variants) && existing.variants.some(v => v.title === undefined || v.title === null || v.title === '');
+      const stale = !existing || hasMissingVariantTitles || (Date.now() - updatedAt > 10 * 60 * 1000);
       if (stale) {
         const refreshPromise = ensureProductFromAdminGraphQL(shop, admin.graphql, productId);
-        if (!existing) {
-          // Product not in DB yet — must wait before AI can find it
+        if (!existing || hasMissingVariantTitles) {
+          // Product not in DB yet or has missing variant titles — must wait before we serve it
           await refreshPromise;
         } else {
           // Product exists but stale — refresh in background, don't block response

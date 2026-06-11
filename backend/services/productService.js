@@ -119,6 +119,7 @@ export class ProductService {
           { variants: { $size: 0 } },
           { 'variants.inventoryItemId': { $exists: false } },
           { 'variants.inventoryQuantity': { $exists: false } },
+          { 'variants.title': { $exists: false } },
           { collectionIds: { $exists: false } },
           { collectionHandles: { $exists: false } }
         ]
