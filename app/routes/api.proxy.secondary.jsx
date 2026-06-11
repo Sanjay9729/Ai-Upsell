@@ -96,10 +96,13 @@ async function fetchLiveInventory(admin, productIds) {
             id
             status
             totalInventory
-            variants(first: 1) {
+            variants(first: 100) {
               edges {
                 node {
                   id
+                  title
+                  price
+                  compareAtPrice
                   inventoryPolicy
                   inventoryQuantity
                 }
@@ -116,14 +119,27 @@ async function fetchLiveInventory(admin, productIds) {
       if (!node || !node.id) continue;
       const numericId = node.id.match(/Product\/(\d+)/)?.[1];
       if (numericId) {
-        const variant = node.variants?.edges?.[0]?.node;
+        const variantEdges = node.variants?.edges || [];
+        const variant = variantEdges[0]?.node;
         const policy = variant?.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
         const totalInv = node.totalInventory ?? variant?.inventoryQuantity ?? 0;
+        const allVariants = variantEdges.map(e => {
+          const v = e.node;
+          const vPolicy = v.inventoryPolicy === 'DENY' ? 'deny' : 'continue';
+          return {
+            id: v.id.split('/').pop(),
+            title: v.title,
+            price: v.price,
+            compareAtPrice: v.compareAtPrice || null,
+            available: node.status === 'ACTIVE' && (v.inventoryQuantity > 0 || vPolicy === 'continue')
+          };
+        });
         inventoryMap[numericId] = {
           availableForSale: node.status === 'ACTIVE' && (totalInv > 0 || policy === 'continue'),
           inventoryQuantity: totalInv,
           inventoryPolicy: policy,
-          variantId: variant?.id || null
+          variantId: variant?.id || null,
+          variants: allVariants
         };
       }
     }
@@ -265,6 +281,7 @@ export const loader = async ({ request }) => {
         title: product.title,
         handle: product.handle,
         price: product.aiData?.price || "0",
+        compareAtPrice: product.aiData?.compareAtPrice || null,
         image: product.images?.[0]?.src || product.image?.src || "",
         reason,
         confidence,
@@ -273,7 +290,16 @@ export const loader = async ({ request }) => {
         availableForSale: live.availableForSale ?? (product.status?.toUpperCase() === 'ACTIVE'),
         inventoryQuantity: live.inventoryQuantity ?? 0,
         inventoryPolicy: live.inventoryPolicy ?? 'continue',
-        variantId: live.variantId || product.variants?.[0]?.id || null
+        variantId: live.variantId || (product.variants?.[0]?.variantId ? String(product.variants[0].variantId) : null),
+        variants: (live.variants && live.variants.length > 0)
+          ? live.variants
+          : (product.variants || []).map(v => ({
+              id: String(v.variantId),
+              title: v.title || 'Default Title',
+              price: String(v.price),
+              compareAtPrice: v.compareAtPrice ? String(v.compareAtPrice) : null,
+              available: (product.status?.toUpperCase() === 'ACTIVE') && (v.inventoryQuantity > 0 || v.inventoryPolicy !== 'DENY')
+            }))
       };
     });
 
