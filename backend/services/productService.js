@@ -257,6 +257,7 @@ export class ProductService {
   mapVariantsFromRest(variants) {
     return variants.map(variant => ({
       variantId: this.toNumber(variant.id, null),
+      title: variant.title || '',
       price: this.toNumber(variant.price, 0),
       compareAtPrice: this.toNumber(variant.compare_at_price, null),
       inventoryQuantity: this.toNumber(variant.inventory_quantity, null),
@@ -268,6 +269,7 @@ export class ProductService {
   mapVariantsFromGraphQL(variantEdges) {
     return variantEdges.map(({ node }) => ({
       variantId: this.toNumber(this.extractNumericId(node?.id), null),
+      title: node?.title || '',
       price: this.toNumber(node?.price, 0),
       compareAtPrice: this.toNumber(node?.compareAtPrice, null),
       inventoryQuantity: this.toNumber(node?.inventoryQuantity, null),

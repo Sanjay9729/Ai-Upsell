@@ -286,6 +286,13 @@ export const loader = async ({ request }) => {
       url: `/products/${product.handle}`,
       availableForSale: product.status?.toUpperCase() === 'ACTIVE',
       variantId: (product.variants || []).find(v => v?.inventoryPolicy === 'CONTINUE' || Number(v?.inventoryQuantity || 0) > 0)?.variantId || product.variants?.[0]?.variantId || null,
+      variants: (product.variants || []).map(v => ({
+        id: String(v.variantId),
+        title: v.title || 'Default Title',
+        price: String(v.price),
+        compareAtPrice: v.compareAtPrice ? String(v.compareAtPrice) : null,
+        available: (product.status?.toUpperCase() === 'ACTIVE') && (v.inventoryQuantity > 0 || v.inventoryPolicy !== 'DENY')
+      })),
       ...offerTypeExtras,
     })});
 
@@ -372,7 +379,7 @@ export const loader = async ({ request }) => {
                variantId: live.variantId || rec.variantId,
                price: livePrice,
                compareAtPrice: (live.variants && live.variants[0]?.compareAtPrice) || live.compareAtPrice || rec.compareAtPrice,
-               variants: live.variants || []
+               variants: live.variants || rec.variants || []
              };
            }
          });
