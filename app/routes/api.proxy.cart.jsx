@@ -287,8 +287,16 @@ export const loader = async ({ request }) => {
         availableForSale: live.availableForSale ?? (product.status?.toUpperCase() === 'ACTIVE'),
         inventoryQuantity: live.inventoryQuantity ?? 0,
         inventoryPolicy: live.inventoryPolicy ?? 'continue',
-        variantId: live.variantId || product.variants?.[0]?.id || null,
-        variants: live.variants || [],
+        variantId: live.variantId || (product.variants?.[0]?.variantId ? String(product.variants[0].variantId) : null),
+        variants: (live.variants && live.variants.length > 0)
+          ? live.variants
+          : (product.variants || []).map(v => ({
+              id: String(v.variantId),
+              title: v.title || 'Default Title',
+              price: String(v.price),
+              compareAtPrice: v.compareAtPrice ? String(v.compareAtPrice) : null,
+              available: (product.status?.toUpperCase() === 'ACTIVE') && (v.inventoryQuantity > 0 || v.inventoryPolicy !== 'DENY')
+            })),
         ...offerTypeExtras,
       };
     });

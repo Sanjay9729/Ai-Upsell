@@ -97,6 +97,7 @@ export async function syncProductsWithGraphQL(shopId, adminGraphQL, options = {}
                   edges {
                     node {
                       id
+                      title
                       price
                       compareAtPrice
                       inventoryQuantity
@@ -334,6 +335,7 @@ export async function ensureProductFromAdminGraphQL(shopId, adminGraphQL, produc
             edges {
               node {
                 id
+                title
                 price
                 compareAtPrice
                 inventoryQuantity
