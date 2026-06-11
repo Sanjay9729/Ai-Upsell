@@ -10,6 +10,11 @@
     if (meta.goal) window.__AI_UPSELL_GOAL__ = meta.goal;
   }
 
+  function isSafetyModeActive() {
+    var meta = window.__AI_UPSELL_LAST_DECISION__;
+    return !!(meta && meta.reason === 'safety_mode_active');
+  }
+
   function getCurrentGoal() {
     return window.__AI_UPSELL_GOAL__ || (window.__AI_UPSELL_LAST_DECISION__ && window.__AI_UPSELL_LAST_DECISION__.goal) || null;
   }
@@ -376,6 +381,10 @@
     window.__AI_UPSELL_SCRIPT_LOADED__ = true;
     var widget = null;
     var secondaryWidget = null;
+
+    // Prefetch cart drawer upsell recommendations as soon as the page loads,
+    // so they're ready instantly when the cart drawer is opened.
+    prefetchCartDrawerRecommendations();
 
     function pickWidgets() {
       var widgets = Array.from(document.querySelectorAll('.ai-upsell-widget'));
@@ -1352,13 +1361,18 @@
           : '<div class="ai-dc-img-ph"></div>';
         var offerType = p.offerType || 'addon_upsell';
         var discountPct = parseFloat(p.discountPercent || 0);
-        var priceInfo = applyAiDiscount(p.price, p.compareAtPrice, discountPct);
-        var basePrice = parseFloat(p.price || 0).toFixed(2);
-        var compareAtParsed = parseFloat(p.compareAtPrice);
+        var hasV = Array.isArray(p.variants) && p.variants.length > 0 && !(p.variants.length === 1 && p.variants[0].title === 'Default Title');
+        var first = hasV ? (p.variants.find(function (v) { return v.available; }) || p.variants[0]) : null;
+        var eVid = (hasV ? (first && first.id) : null) || vid;
+        var refPrice = (hasV && first && first.price) ? first.price : p.price;
+        var refCompareAt = (hasV && first && first.compareAtPrice) ? first.compareAtPrice : p.compareAtPrice;
+        var priceInfo = applyAiDiscount(refPrice, refCompareAt, discountPct);
+        var basePrice = parseFloat(refPrice || 0).toFixed(2);
+        var compareAtParsed = parseFloat(refCompareAt);
         var priceHtml;
         if (priceInfo.applied && priceInfo.compareAt !== priceInfo.price) {
           priceHtml = '<s class="ai-dc-cmp">Rs. ' + priceInfo.compareAt + '</s><span class="ai-dc-price">Rs. ' + priceInfo.price + '</span>';
-        } else if (isFinite(compareAtParsed) && compareAtParsed > parseFloat(p.price || 0) && compareAtParsed.toFixed(2) !== basePrice) {
+        } else if (isFinite(compareAtParsed) && compareAtParsed > parseFloat(refPrice || 0) && compareAtParsed.toFixed(2) !== basePrice) {
           priceHtml = '<s class="ai-dc-cmp">Rs. ' + compareAtParsed.toFixed(2) + '</s><span class="ai-dc-price">Rs. ' + basePrice + '</span>';
         } else {
           priceHtml = '<span class="ai-dc-price">Rs. ' + basePrice + '</span>';
@@ -1374,13 +1388,24 @@
         if (offerType === 'volume_discount' && Array.isArray(p.tiers) && p.tiers.length > 0) {
           tiersHtml = '<div class="ai-dc-tiers">' + p.tiers.map(function (t) { return t.quantity + '+ = ' + t.discountPercent + '% off'; }).join(' · ') + '</div>';
         }
-        return '<div class="ai-drawer-card">' +
+        var variantSelectHtml = hasV ? ('<div class="ai-dc-variant-wrap"><select class="ai-dc-variant-select">' + p.variants.map(function (v) {
+          var vInfo = applyAiDiscount(v.price, v.compareAtPrice || '', discountPct);
+          return '<option value="' + v.id + '" data-price="' + vInfo.price + '" data-compare="' + (vInfo.compareAt || '') + '"' + (!v.available ? ' disabled' : '') + (v.id === (first && first.id) ? ' selected' : '') + '>' + v.title + (!v.available ? ' - Sold out' : '') + '</option>';
+        }).join('') + '</select></div>') : '';
+        var qtyHtml = '<div class="ai-dc-qty">' +
+          '<button type="button" class="ai-dc-qty-btn ai-dc-qty-minus" aria-label="Decrease quantity">−</button>' +
+          '<input type="number" class="ai-dc-qty-input" value="1" min="1" max="99" readonly />' +
+          '<button type="button" class="ai-dc-qty-btn ai-dc-qty-plus" aria-label="Increase quantity">+</button>' +
+        '</div>';
+        return '<div class="ai-drawer-card" data-inventory-quantity="' + (p.inventoryQuantity !== undefined ? p.inventoryQuantity : 999) + '" data-inventory-policy="' + (p.inventoryPolicy || 'continue') + '">' +
           '<div class="ai-dc-img-wrap">' + imgHtml + badgeHtml + '</div>' +
           '<div class="ai-dc-body">' +
             '<div class="ai-dc-title">' + p.title + '</div>' +
             '<div class="ai-dc-prices">' + priceHtml + '</div>' +
             tiersHtml +
-            '<button class="ai-drawer-add-btn" data-variant-id="' + vid + '" data-product-id="' + (p.id || '') + '" data-offer-type="' + offerType + '" data-discount-percent="' + discountPct + '">Add</button>' +
+            variantSelectHtml +
+            qtyHtml +
+            '<button class="ai-drawer-add-btn" data-variant-id="' + eVid + '" data-product-id="' + (p.id || '') + '" data-offer-type="' + offerType + '" data-discount-percent="' + discountPct + '">Add</button>' +
           '</div>' +
         '</div>';
       }).join('');
@@ -1418,10 +1443,82 @@
 
       // Build a map of drawer products for volume discount lookups
       var drawerProductMap = new Map(products.map(function (p) { return [String(p.id), p]; }));
+
+      // Variant select: update price + add button's variant id when a different option is chosen
+      wrapper.querySelectorAll('.ai-dc-variant-select').forEach(function (select) {
+        select.addEventListener('change', function () {
+          var card = select.closest('.ai-drawer-card');
+          var btn = card.querySelector('.ai-drawer-add-btn');
+          var opt = select.options[select.selectedIndex];
+          btn.setAttribute('data-variant-id', select.value);
+          var np = opt.dataset.price, nc = opt.dataset.compare;
+          if (np) {
+            var priceEl = card.querySelector('.ai-dc-price');
+            var cmpEl = card.querySelector('.ai-dc-cmp');
+            var qtyInputSel = card.querySelector('.ai-dc-qty-input');
+            var qtySel = qtyInputSel ? (parseInt(qtyInputSel.value, 10) || 1) : 1;
+            if (priceEl) priceEl.textContent = 'Rs. ' + (parseFloat(np) * qtySel).toFixed(2);
+            if (cmpEl) {
+              if (nc && parseFloat(nc) > parseFloat(np)) cmpEl.textContent = 'Rs. ' + (parseFloat(nc) * qtySel).toFixed(2);
+              else cmpEl.remove();
+            }
+          }
+          var qtyInput = card.querySelector('.ai-dc-qty-input');
+          if (qtyInput) qtyInput.value = '1';
+          btn.disabled = !!opt.disabled;
+        });
+      });
+
+      // Quantity +/- controls
+      function updateDrawerCardPrice(card, qty) {
+        var priceEl = card.querySelector('.ai-dc-price');
+        if (!priceEl) return;
+        var orig = priceEl.getAttribute('data-original-price') || priceEl.textContent;
+        var m = orig.match(/[\d,]+\.?\d*/); if (!m) return;
+        var sym = (orig.match(/[^\d\s,\.]+/) || ['Rs. '])[0];
+        var base = parseFloat(m[0].replace(/,/g, ''));
+        priceEl.textContent = sym + (base * qty).toFixed(2);
+        if (!priceEl.hasAttribute('data-original-price')) priceEl.setAttribute('data-original-price', orig);
+        var cmpEl = card.querySelector('.ai-dc-cmp');
+        if (cmpEl) {
+          var co = cmpEl.getAttribute('data-original-price') || cmpEl.textContent;
+          var cm = co.match(/[\d,]+\.?\d*/);
+          if (cm) {
+            cmpEl.textContent = sym + (parseFloat(cm[0].replace(/,/g, '')) * qty).toFixed(2);
+            if (!cmpEl.hasAttribute('data-original-price')) cmpEl.setAttribute('data-original-price', co);
+          }
+        }
+      }
+      wrapper.querySelectorAll('.ai-dc-qty-minus').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          var card = btn.closest('.ai-drawer-card');
+          var input = card.querySelector('.ai-dc-qty-input');
+          var v = parseInt(input.value, 10);
+          if (v > 1) { input.value = v - 1; updateDrawerCardPrice(card, v - 1); }
+        });
+      });
+      wrapper.querySelectorAll('.ai-dc-qty-plus').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          var card = btn.closest('.ai-drawer-card');
+          var input = card.querySelector('.ai-dc-qty-input');
+          var v = parseInt(input.value, 10);
+          if (card.dataset.inventoryPolicy === 'deny' && v >= parseInt(card.dataset.inventoryQuantity, 10)) {
+            btn.style.opacity = '0.5'; setTimeout(function () { btn.style.opacity = '1'; }, 200); return;
+          }
+          if (v < 99) { input.value = v + 1; updateDrawerCardPrice(card, v + 1); }
+        });
+      });
+
       wrapper.querySelectorAll('.ai-drawer-add-btn').forEach(function (btn) {
         btn.addEventListener('click', async function (e) {
           e.preventDefault();
-          var varId = btn.getAttribute('data-variant-id');
+          var card = btn.closest('.ai-drawer-card');
+          var select = card.querySelector('.ai-dc-variant-select');
+          var varId = select ? select.value : btn.getAttribute('data-variant-id');
+          var qtyInput = card.querySelector('.ai-dc-qty-input');
+          var qty = qtyInput ? (parseInt(qtyInput.value, 10) || 1) : 1;
           var productId = btn.getAttribute('data-product-id');
           var productData = drawerProductMap.get(String(productId)) || {};
           if (!varId || varId === 'null' || varId === 'undefined' || varId === String(productId)) {
@@ -1455,7 +1552,7 @@
           await ensureCartGoalAttribute(currentGoalD);
           if (offerType === 'volume_discount') {
             var cartResD = await fetch('/cart.js'); cartDataD = await cartResD.json();
-            var totalQty = getCartTotalQuantity(cartDataD) + 1;
+            var totalQty = getCartTotalQuantity(cartDataD) + qty;
             discountPct = getVolumeDiscountPercent(productData, isImmediateDiscountGoal(currentGoalD) ? Math.max(totalQty, getMinVolumeQuantity(productData) || totalQty) : totalQty);
             var minQtyDrawer = getMinVolumeQuantity(productData);
             if (!isImmediateDiscountGoal(currentGoalD) && minQtyDrawer && totalQty < minQtyDrawer) discountPct = 0;
@@ -1465,7 +1562,7 @@
             // so we should pass the discount along to the upsell item.
           }
           discountPct = normalizeImmediateDiscount(offerType, productData, discountPct, currentGoalD);
-          var gateResultD = await applyGoalDiscountGate(currentGoalD, discountPct, cartDataD, 1);
+          var gateResultD = await applyGoalDiscountGate(currentGoalD, discountPct, cartDataD, qty);
           discountPct = gateResultD.discount;
           if (!cartDataD && gateResultD.cartData) cartDataD = gateResultD.cartData;
           var discountTargetsD = await buildDiscountTargets(allDiscountProductIds, cartDataD, currentGoalD);
@@ -1478,7 +1575,7 @@
           try {
             console.log('[AI Upsell] Primary: goal=' + currentGoalD + ' discount=' + discountPct);
             var discountCode = discountPct > 0 ? await getOrCreateDiscountCode(discountTargetsD, discountPct) : null;
-            var cartPayload = { id: varId, quantity: 1, sections: 'cart-drawer,cart-icon-bubble', ...offerPropsD };
+            var cartPayload = { id: varId, quantity: qty, sections: 'cart-drawer,cart-icon-bubble', ...offerPropsD };
             var addRes = await fetch(SHOPIFY_ROOT + 'cart/add.js', {
               method: 'POST',
               headers: {
@@ -2656,19 +2753,46 @@
       } catch (_) {}
     }
 
+    function buildCartDrawerRecommendationsUrl(gids) {
+      var userId = window.__AI_UPSELL_USER_ID__ || '';
+      var segment = window.__AI_UPSELL_SEGMENT__ || _C.customerSegment || '';
+      return '/apps/ai-upsell/cart?ids=' + encodeURIComponent(JSON.stringify(gids))
+        + (userId ? '&userId=' + encodeURIComponent(userId) : '')
+        + (segment ? '&segment=' + encodeURIComponent(segment) : '')
+        + '&_t=' + Date.now();
+    }
+
+    function prefetchCartDrawerRecommendations(cartItems) {
+      try {
+        var gidsPromise = cartItems
+          ? Promise.resolve(cartItems)
+          : fetch('/cart.js').then(function (res) { return res.ok ? res.json() : null; }).then(function (cart) {
+              return (cart && Array.isArray(cart.items)) ? cart.items : null;
+            });
+        gidsPromise.then(function (items) {
+          if (!items || items.length === 0) return;
+          var gids = items.map(function (i) { return 'gid://shopify/Product/' + i.product_id; });
+          window.__AI_CART_DRAWER_PREFETCH__ = fetch(buildCartDrawerRecommendationsUrl(gids));
+          window.__AI_CART_DRAWER_PREFETCH_GIDS__ = gids;
+        }).catch(function () {});
+      } catch (_) {}
+    }
+
     async function fetchCartDrawerRecommendations(cartItems) {
       try {
-        var userId = window.__AI_UPSELL_USER_ID__ || '';
-        var segment = window.__AI_UPSELL_SEGMENT__ || _C.customerSegment || '';
-        var ts = Date.now();
         var gids = cartItems.map(function (i) { return 'gid://shopify/Product/' + i.product_id; });
-        var url = '/apps/ai-upsell/cart?ids=' + encodeURIComponent(JSON.stringify(gids))
-          + (userId ? '&userId=' + encodeURIComponent(userId) : '')
-          + (segment ? '&segment=' + encodeURIComponent(segment) : '')
-          + '&_t=' + ts;
-        var res = await fetch(url);
+        var res;
+        var prefetch = window.__AI_CART_DRAWER_PREFETCH__;
+        var prefetchGids = window.__AI_CART_DRAWER_PREFETCH_GIDS__;
+        if (prefetch && prefetchGids && JSON.stringify(prefetchGids) === JSON.stringify(gids)) {
+          window.__AI_CART_DRAWER_PREFETCH__ = null;
+          res = await prefetch;
+        } else {
+          res = await fetch(buildCartDrawerRecommendationsUrl(gids));
+        }
         if (!res.ok) return null;
         var data = await res.json();
+        setDecisionMeta(data.decision);
         if (!data.success || !data.recommendations || data.recommendations.length === 0) return null;
         return data.recommendations;
       } catch (_) { return null; }
@@ -2725,7 +2849,15 @@
         var compareAtPrice = (compareAtCents && Number.isFinite(Number(compareAtCents)) && Number(compareAtCents) > priceCents)
           ? (Number(compareAtCents) / 100).toFixed(2) : null;
         var image = (p.featured_image && p.featured_image.url) || p.featured_image || (Array.isArray(p.images) ? p.images[0] : '');
-        return { id: p.id, title: p.title, handle: p.handle, price: price, compareAtPrice: compareAtPrice, image: image, reason: 'Recommended for you', confidence: 0.5, type: 'similar', url: '/products/' + p.handle, availableForSale: firstVariant.available !== undefined ? firstVariant.available : !!p.available, variantId: firstVariant.id || null, inventoryQuantity: 999, inventoryPolicy: 'continue' };
+        var mappedVariants = variants.map(function (v) {
+          var vPriceCents = typeof v.price === 'number' ? v.price : parseInt(v.price, 10);
+          var vPrice = Number.isFinite(vPriceCents) ? (vPriceCents / 100).toFixed(2) : price;
+          var vCompareCents = v.compare_at_price;
+          var vCompareAtPrice = (vCompareCents && Number.isFinite(Number(vCompareCents)) && Number(vCompareCents) > vPriceCents)
+            ? (Number(vCompareCents) / 100).toFixed(2) : null;
+          return { id: v.id, title: v.title, price: vPrice, compareAtPrice: vCompareAtPrice, available: v.available !== undefined ? !!v.available : true };
+        });
+        return { id: p.id, title: p.title, handle: p.handle, price: price, compareAtPrice: compareAtPrice, image: image, reason: 'Recommended for you', confidence: 0.5, type: 'similar', url: '/products/' + p.handle, availableForSale: firstVariant.available !== undefined ? firstVariant.available : !!p.available, variantId: firstVariant.id || null, variants: mappedVariants, inventoryQuantity: 999, inventoryPolicy: 'continue' };
       });
     }
 
@@ -4361,6 +4493,11 @@
         if (!response.ok) throw new Error('Failed');
         var data = await response.json();
         setDecisionMeta(data.decision);
+        if (isSafetyModeActive()) {
+          clearLoadingFallback(secondaryWidget);
+          secondaryWidget.style.display = 'none';
+          return;
+        }
         var products = (data.success && data.recommendations && data.recommendations.length > 0) ? uniqueSecondaryById(data.recommendations).slice(0, MAX_PRODUCTS) : [];
         products = await filterSecondaryAgainstCart(products, cartOverride);
 
@@ -4593,6 +4730,7 @@
     async function buildDrawerProducts(cartItems, cartOverride) {
       try {
         var products = await fetchCartDrawerRecommendations(cartItems);
+        if (isSafetyModeActive()) return [];
         if (!products || products.length === 0) {
           var fallbackId = cartItems[0] && cartItems[0].product_id;
           if (fallbackId) products = await fetchShopifyRecommendations(fallbackId, DRAWER_MAX_PRODUCTS * 2);
@@ -4638,6 +4776,8 @@
         _drawerProducts = products.slice(0, DRAWER_MAX_PRODUCTS);
         secondaryAllProducts = _drawerProducts;
         placeInCartDrawer();
+        // Refresh the prefetch with the current cart so the next drawer open is also instant
+        prefetchCartDrawerRecommendations(cartItems);
       } catch (_) {}
     }
 
