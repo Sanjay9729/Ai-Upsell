@@ -203,10 +203,11 @@ export const loader = async ({ request }) => {
         try {
           const existing = await getProductById(shop, productId);
           const updatedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-          const stale = !existing || (Date.now() - updatedAt > 10 * 60 * 1000);
+          const hasMissingVariantTitles = existing && Array.isArray(existing.variants) && existing.variants.some(v => v.title === undefined || v.title === null || v.title === '');
+          const stale = !existing || hasMissingVariantTitles || (Date.now() - updatedAt > 10 * 60 * 1000);
           if (stale) {
             const refreshPromise = ensureProductFromAdminGraphQL(shop, adminClient.graphql, productId);
-            if (!existing) {
+            if (!existing || hasMissingVariantTitles) {
               missingRefreshes.push(refreshPromise);
             } else {
               refreshPromise.catch(err => console.warn(`⚠️ Cart product background refresh failed for ${productId}:`, err.message));
@@ -216,7 +217,7 @@ export const loader = async ({ request }) => {
           console.warn(`⚠️ Cart product sync failed for ${productId}:`, syncErr.message);
         }
       }));
-      // Only wait for genuinely missing products
+      // Only wait for genuinely missing or incomplete products
       if (missingRefreshes.length > 0) {
         await Promise.all(missingRefreshes).catch(() => {});
       }
