@@ -462,6 +462,7 @@ cart-drawer.ai-has-upsell .drawer__footer > * {
 }
 .ai-slider-track {
   display: flex;
+  align-items: flex-start;
   gap: 10px;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
@@ -559,6 +560,65 @@ cart-drawer.ai-has-upsell .drawer__footer > * {
   margin-bottom: 5px;
   text-align: center;
 }
+.ai-dc-variant-wrap {
+  margin-top: 2px;
+}
+.ai-dc-variant-select {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--ai-text, #333);
+  background: #f5f5f5;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.ai-dc-variant-select:focus {
+  outline: none;
+  border-color: var(--ai-button-color, #008060);
+}
+.ai-dc-qty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.ai-dc-qty-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ai-text, #333);
+  transition: opacity 0.2s;
+}
+.ai-dc-qty-btn:hover {
+  opacity: 0.7;
+}
+.ai-dc-qty-input {
+  flex: 1;
+  width: 24px;
+  text-align: center;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ai-text, #333);
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.ai-dc-qty-input::-webkit-outer-spin-button,
+.ai-dc-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
 .ai-drawer-add-btn {
   width: 100%;
   padding: 5px 0;
