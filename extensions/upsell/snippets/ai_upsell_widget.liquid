@@ -166,6 +166,7 @@ window.__AI_UPSELL_CONFIG__ = {
 
 <style>
 :root {
+  --ai-max-width: {{ upsell_settings.container_max_width | default: 1440 }}px;
   --ai-mt: {{ upsell_settings.margin_top | default: 0 }}px;
   --ai-mb: {{ upsell_settings.margin_bottom | default: 0 }}px;
   --ai-pd: {{ upsell_settings.padding | default: 0 }}px;
