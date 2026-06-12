@@ -59,24 +59,24 @@
 @media (max-width: 750px) {
   .ai-upsell-grid-2, .ai-upsell-grid-3, .ai-upsell-grid-4 { grid-template-columns: repeat(var(--ai-mobile-columns, 1), 1fr); }
 
-  .ai-upsell-widget { padding: 12px; }
-  .ai-upsell-title { font-size: 18px; }
-  .ai-upsell-grid { gap: 10px; }
-  .ai-upsell-info { padding: 8px; }
-  .ai-upsell-product-title { font-size: 12px; margin: 0 0 4px 0; }
-  .ai-upsell-price-block { margin: 0 0 6px 0; gap: 4px; }
-  .ai-upsell-price, .ai-upsell-compare-price { font-size: 12px; }
-  .ai-upsell-discount-pill { font-size: 9px; padding: 1px 5px; }
-  .ai-upsell-reason { font-size: 11px; margin: 0 0 6px 0; }
-  .ai-variant-wrapper { margin-bottom: 6px; }
-  .ai-variant-select { font-size: 11px; padding: 4px 6px; }
-  .ai-upsell-quantity { padding: 3px 6px; gap: 4px; box-sizing: border-box; }
-  .ai-qty-label { font-size: 10px; }
-  .ai-qty-controls { gap: 2px; }
-  .ai-qty-btn { width: 20px; height: 20px; font-size: 14px; }
-  .ai-qty-input { font-size: 11px; width: 18px; }
-  .ai-upsell-actions { padding: 0 8px 8px; }
-  .ai-add-to-cart-btn { font-size: 12px; padding: 8px 12px; }
+  .ai-upsell-widget { padding: 12px !important; }
+  .ai-upsell-title { font-size: 18px !important; }
+  .ai-upsell-grid { gap: 10px !important; }
+  .ai-upsell-info { padding: 8px !important; }
+  .ai-upsell-product-title { font-size: 12px !important; margin: 0 0 4px 0 !important; }
+  .ai-upsell-price-block { margin: 0 0 6px 0 !important; gap: 4px !important; }
+  .ai-upsell-price, .ai-upsell-compare-price { font-size: 12px !important; }
+  .ai-upsell-discount-pill { font-size: 9px !important; padding: 1px 5px !important; }
+  .ai-upsell-reason { font-size: 11px !important; margin: 0 0 6px 0 !important; }
+  .ai-variant-wrapper { margin-bottom: 6px !important; }
+  .ai-variant-select { font-size: 11px !important; padding: 4px 6px !important; }
+  .ai-upsell-quantity { padding: 3px 6px !important; gap: 4px !important; box-sizing: border-box !important; }
+  .ai-qty-label { font-size: 10px !important; }
+  .ai-qty-controls { gap: 2px !important; }
+  .ai-qty-btn { width: 20px !important; height: 20px !important; font-size: 14px !important; }
+  .ai-qty-input { font-size: 11px !important; width: 18px !important; }
+  .ai-upsell-actions { padding: 0 8px 8px !important; }
+  .ai-add-to-cart-btn { font-size: 12px !important; padding: 8px 12px !important; }
 }
 
 .ai-upsell-card {
@@ -295,7 +295,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 0px;
   background: #f5f5f5;
   border: 1px solid #e0e0e0;
   border-radius: 4px;
