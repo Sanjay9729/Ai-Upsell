@@ -57,14 +57,14 @@
 }
 
 @media (max-width: 750px) {
-  .ai-upsell-grid-2, .ai-upsell-grid-3, .ai-upsell-grid-4 { grid-template-columns: 1fr; }
+  .ai-upsell-grid-2, .ai-upsell-grid-3, .ai-upsell-grid-4 { grid-template-columns: repeat(var(--ai-mobile-columns, 1), 1fr); }
 }
 
 .ai-upsell-card {
   flex: 0 0 260px;
   scroll-snap-align: start;
   background: var(--ai-card-bg, #fff);
-  border-radius: var(--ai-card-radius, 8px);
+  border-radius: var(--ai-card-radius, 0px);
   overflow: hidden;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
 }

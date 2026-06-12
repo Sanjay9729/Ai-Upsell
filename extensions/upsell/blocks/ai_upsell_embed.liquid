@@ -8,6 +8,90 @@
   "settings": [
     {
       "type": "header",
+      "content": "Layout"
+    },
+    {
+      "type": "range",
+      "id": "container_max_width",
+      "label": "Container Max Width",
+      "min": 600,
+      "max": 1920,
+      "step": 20,
+      "default": 1440,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "margin_top",
+      "label": "Margin Top",
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "default": 40,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "margin_bottom",
+      "label": "Margin Bottom",
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "default": 40,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "padding",
+      "label": "Container Padding",
+      "min": 0,
+      "max": 60,
+      "step": 5,
+      "default": 30,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "card_padding",
+      "label": "Card Padding",
+      "min": 8,
+      "max": 32,
+      "step": 2,
+      "default": 16,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "grid_gap",
+      "label": "Grid Gap",
+      "min": 10,
+      "max": 40,
+      "step": 5,
+      "default": 20,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "border_radius",
+      "label": "Container Radius",
+      "min": 0,
+      "max": 30,
+      "step": 2,
+      "default": 8,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "card_border_radius",
+      "label": "Card Radius",
+      "min": 0,
+      "max": 30,
+      "step": 2,
+      "default": 0,
+      "unit": "px"
+    },
+    {
+      "type": "header",
       "content": "Display"
     },
     {
@@ -34,6 +118,16 @@
       "max": 4,
       "step": 1,
       "default": 4
+    },
+    {
+      "type": "select",
+      "id": "mobile_columns",
+      "label": "Mobile Columns",
+      "options": [
+        { "value": "1", "label": "1 Column" },
+        { "value": "2", "label": "2 Columns" }
+      ],
+      "default": "1"
     },
     {
       "type": "checkbox",
@@ -106,7 +200,7 @@
     {
       "type": "color",
       "id": "add_to_cart_hover_bg",
-      "label": "Button Hover BG",
+      "label": "Button Hover Background",
       "default": "#006e52"
     },
     {
@@ -118,7 +212,7 @@
     {
       "type": "color",
       "id": "add_to_cart_disabled_bg",
-      "label": "Disabled BG",
+      "label": "Disabled Background",
       "default": "#e0e0e0"
     },
     {
@@ -126,80 +220,6 @@
       "id": "add_to_cart_disabled_text",
       "label": "Disabled Text",
       "default": "#999999"
-    },
-    {
-      "type": "header",
-      "content": "Layout"
-    },
-    {
-      "type": "range",
-      "id": "container_max_width",
-      "label": "Container Max Width",
-      "min": 600,
-      "max": 1920,
-      "step": 20,
-      "default": 1440,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "margin_top",
-      "label": "Margin Top",
-      "min": 0,
-      "max": 100,
-      "step": 5,
-      "default": 40,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "margin_bottom",
-      "label": "Margin Bottom",
-      "min": 0,
-      "max": 100,
-      "step": 5,
-      "default": 40,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "padding",
-      "label": "Container Padding",
-      "min": 0,
-      "max": 60,
-      "step": 5,
-      "default": 30,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "card_padding",
-      "label": "Card Padding",
-      "min": 8,
-      "max": 32,
-      "step": 2,
-      "default": 16,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "grid_gap",
-      "label": "Grid Gap",
-      "min": 10,
-      "max": 40,
-      "step": 5,
-      "default": 20,
-      "unit": "px"
-    },
-    {
-      "type": "range",
-      "id": "border_radius",
-      "label": "Container Radius",
-      "min": 0,
-      "max": 30,
-      "step": 2,
-      "default": 8,
-      "unit": "px"
     },
     {
       "type": "header",
