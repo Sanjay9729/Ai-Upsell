@@ -1,5 +1,6 @@
 .ai-upsell-widget {
-  margin: var(--ai-mt, 0px) 0 var(--ai-mb, 0px) 0;
+  max-width: var(--ai-max-width, 1440px);
+  margin: var(--ai-mt, 0px) auto var(--ai-mb, 0px) auto;
   padding: var(--ai-pd, 0px);
   background: var(--ai-bg, transparent);
   border-radius: var(--ai-br, 0px);
